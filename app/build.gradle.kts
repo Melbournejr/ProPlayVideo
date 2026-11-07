@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val appVersionName = project.findProperty("versionName")?.toString() ?: "1.0.2"
-val appVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 2
+val appVersionName = project.findProperty("versionName")?.toString() ?: "1.0.6"
+val appVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 6
 val repoName = project.findProperty("repoName")?.toString() ?: "ProPlayVideo"
 
 android {
@@ -20,9 +20,25 @@ android {
         setProperty("archivesBaseName", "${repoName}-v${appVersionName}")
     }
 
+    signingConfigs {
+        named("debug") {
+            val ksFile = file("ota-signing.jks")
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = "androidpassword"
+                keyAlias = "otakey"
+                keyPassword = "androidpassword"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
