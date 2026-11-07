@@ -1,51 +1,70 @@
-﻿package com.videoplayer.app.ui.main
+package com.videoplayer.app.ui.main
 
 import android.Manifest
-import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.videoplayer.app.R
+import com.videoplayer.app.data.local.readGithubRepo
+import com.videoplayer.app.data.local.saveGithubRepo
+import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.ui.player.PlayerScreen
 import com.videoplayer.app.ui.stream.NetworkStreamScreen
 import com.videoplayer.app.ui.theme.VideoPlayerTheme
+import com.videoplayer.app.update.GitHubRelease
+import com.videoplayer.app.update.UpdateManager
 import com.videoplayer.app.util.PermissionHelper
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val requestStoragePermission = registerForActivityResult(RequestMultiplePermissions()) { granted ->
-        // Kết quả quyền được xử lý tại các màn hình nếu cần
-    }
+    private val requestStoragePermission = registerForActivityResult(RequestMultiplePermissions()) { }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         if (!PermissionHelper.hasStoragePermission(this)) {
-            requestStoragePermission.launch(arrayOf(
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ))
+            val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            requestStoragePermission.launch(perms)
         }
 
         setContent {
             VideoPlayerTheme {
                 var screen by remember { mutableStateOf(Screen.Home) }
-                var selectedVideo by remember { mutableStateOf<com.videoplayer.app.data.model.VideoItem?>(null) }
-                var streamUrl by remember { mutableStateOf("") }
+                var selectedVideo by remember { mutableStateOf<VideoItem?>(null) }
+                var streamUrl by remember { mutableStateOf<String?>(null) }
 
                 Scaffold(
                     topBar = {
-                        TopAppBar(
-                            title = { Text(text = "Video Player Pro") },
-                            colors = TopAppBarDefaults.mediumTopAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                        if (screen != Screen.Player) {
+                            TopAppBar(
+                                title = { Text("Video Player Pro (v1.0.0)") },
+                                actions = {
+                                    IconButton(onClick = { screen = Screen.Home }) {
+                                        Icon(Icons.Default.Home, contentDescription = "Trang chủ")
+                                    }
+                                    IconButton(onClick = { screen = Screen.Settings }) {
+                                        Icon(Icons.Default.Settings, contentDescription = "Cài đặt & OTA")
+                                    }
+                                }
                             )
-                        )
+                        }
                     }
                 ) { padding ->
                     when (screen) {
@@ -53,41 +72,116 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(padding),
                             onVideoClick = { video ->
                                 selectedVideo = video
+                                streamUrl = null
                                 screen = Screen.Player
                             },
                             onStreamClick = { screen = Screen.Stream },
                             onSettingsClick = { screen = Screen.Settings }
                         )
-                        Screen.Player -> selectedVideo?.let { video ->
-                            PlayerScreen(
-                                video = video,
-                                onBack = { screen = Screen.Home; selectedVideo = null }
-                            )
-                        }
+                        Screen.Player -> PlayerScreen(
+                            video = selectedVideo,
+                            streamUrl = streamUrl,
+                            onBack = {
+                                screen = Screen.Home
+                                selectedVideo = null
+                                streamUrl = null
+                            }
+                        )
                         Screen.Stream -> NetworkStreamScreen(
                             modifier = Modifier.padding(padding),
                             onPlayClick = { url ->
+                                selectedVideo = null
                                 streamUrl = url
                                 screen = Screen.Player
                             }
                         )
-                        Screen.Settings -> SettingsScreen()
+                        Screen.Settings -> OtaSettingsScreen(modifier = Modifier.padding(padding))
                     }
                 }
             }
         }
     }
 
-    private enum class Screen {
-        Home, Player, Stream, Settings
-    }
+    private enum class Screen { Home, Player, Stream, Settings }
+}
 
-    @Composable
-    private fun SettingsScreen() = Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp)
+@Composable
+fun OtaSettingsScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updateManager = remember { UpdateManager(context) }
+
+    val savedRepo by context.readGithubRepo("your-github-username/VideoPlayerApp").collectAsState(initial = "your-github-username/VideoPlayerApp")
+    var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
+    var statusText by remember { mutableStateOf("Nhập đúng 'Tên_GitHub/Tên_Repo' của bạn rồi bấm Kiểm tra cập nhật.") }
+    var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
+    var downloadProgress by remember { mutableIntStateOf(-1) }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = "Cài đặt", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "Chức năng cài đặt sẽ được bổ sung trong phiên bản sau.")
+        Text("Cập nhật OTA qua GitHub Releases", style = MaterialTheme.typography.titleLarge)
+        OutlinedTextField(
+            value = repoInput,
+            onValueChange = { repoInput = it },
+            label = { Text("GitHub Repository (owner/repo)") },
+            placeholder = { Text("Ví dụ: vuvanluong/VideoPlayerApp") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            onClick = {
+                scope.launch {
+                    context.saveGithubRepo(repoInput)
+                    statusText = "Đang kiểm tra bản phát hành mới trên GitHub..."
+                    val result = updateManager.checkLatestRelease(repoInput)
+                    result.onSuccess { release ->
+                        latestRelease = release
+                        statusText = "Tìm thấy bản phát hành: ${release.tag_name} (${release.name})"
+                    }.onFailure { err ->
+                        statusText = "Lỗi: ${err.message}"
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Kiểm tra bản cập nhật mới")
+        }
+
+        Text(text = statusText, style = MaterialTheme.typography.bodyMedium)
+
+        latestRelease?.let { release ->
+            val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
+            if (apkAsset != null) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("File APK: ${apkAsset.name}", style = MaterialTheme.typography.titleMedium)
+                        if (downloadProgress in 0..100) {
+                            LinearProgressIndicator(progress = downloadProgress / 100f, modifier = Modifier.fillMaxWidth())
+                            Text("Đang tải xuống: $downloadProgress%")
+                        }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    downloadProgress = 0
+                                    val dl = updateManager.downloadApk(apkAsset.browser_download_url) { p ->
+                                        downloadProgress = p
+                                    }
+                                    dl.onSuccess { file ->
+                                        statusText = "Đã tải xong! Đang mở trình cài đặt..."
+                                        updateManager.installApk(file)
+                                    }.onFailure { err ->
+                                        statusText = "Lỗi tải APK: ${err.message}"
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Tải xuống & Cài đặt ngay (OTA)")
+                        }
+                    }
+                }
+            }
+        }
     }
 }

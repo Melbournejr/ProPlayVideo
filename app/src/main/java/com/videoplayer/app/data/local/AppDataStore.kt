@@ -1,23 +1,19 @@
-﻿package com.videoplayer.app.data.local
+package com.videoplayer.app.data.local
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.preferencesDataStore
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import kotlinx.coroutines.flow.FirstFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.datastore by preferencesDataStore(name = "videoplayer_prefs")
 
-val Context.appStore: androidx.datastore.preferences.core.DataStore<androidx.datastore.preferences.core.Preferences>
-    get() = datastore
-
 private val themeModeKey = stringPreferencesKey("theme_mode")
-private val playbackSpeedKey = stringPreferencesKey("playback_speed")
-private val lockUiKey = booleanPreferencesKey("lock_ui")
+private val githubRepoKey = stringPreferencesKey("github_repo")
 
 suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
     val key = longPreferencesKey("last_position_$videoId")
@@ -26,29 +22,13 @@ suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
 
 suspend fun Context.readLastPosition(videoId: String): Long {
     val key = longPreferencesKey("last_position_$videoId")
-    return datastore.data.first().getLong(key) ?: 0L
+    return datastore.data.first()[key] ?: 0L
 }
 
-suspend fun Context.saveThemeMode(mode: String) {
-    datastore.edit { it[themeModeKey] = mode }
+suspend fun Context.saveGithubRepo(ownerAndRepo: String) {
+    datastore.edit { it[githubRepoKey] = ownerAndRepo }
 }
 
-fun Context.readThemeMode(): FirstFlow<String> {
-    return datastore.data.map { it[themeModeKey] ?: "light" }
-}
-
-suspend fun Context.savePlaybackSpeed(speed: String) {
-    datastore.edit { it[playbackSpeedKey] = speed }
-}
-
-fun Context.readPlaybackSpeed(): FirstFlow<String> {
-    return datastore.data.map { it[playbackSpeedKey] ?: "1.0" }
-}
-
-suspend fun Context.saveLockUi(locked: Boolean) {
-    datastore.edit { it[lockUiKey] = locked }
-}
-
-fun Context.readLockUi(): FirstFlow<Boolean> {
-    return datastore.data.map { it[lockUiKey] ?: false }
+fun Context.readGithubRepo(defaultRepo: String): Flow<String> {
+    return datastore.data.map { it[githubRepoKey] ?: defaultRepo }
 }

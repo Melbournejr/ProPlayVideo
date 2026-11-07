@@ -1,10 +1,11 @@
-﻿package com.videoplayer.app.ui.theme
+package com.videoplayer.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.sp
 
 @Composable
 fun VideoPlayerTheme(
@@ -13,37 +14,19 @@ fun VideoPlayerTheme(
 ) {
     val colorScheme = if (darkTheme) {
         darkColorScheme(
-            primary = Color(0xFF6200EE),
-            primaryContainer = Color(0xFFEADDFF),
+            primary = Color(0xFFBB86FC),
             secondary = Color(0xFF03DAC6),
-            surface = Color(0xFF000000),
-            background = Color(0xFF000000),
-            error = Color(0xFFB00020),
-            onPrimary = Color(0xFFFFFFFF),
-            onBackground = Color(0xFFFFFFFF),
-            onSurface = Color(0xFFFFFFFF),
-            onError = Color(0xFFFFFFFF)
+            background = Color(0xFF121212),
+            surface = Color(0xFF1E1E1E)
         )
     } else {
         lightColorScheme(
             primary = Color(0xFF6200EE),
-            primaryContainer = Color(0xFFEADDFF),
-            secondary = Color(0xFF03DAC6),
-            surface = Color(0xFFFFFFFF),
-            background = Color(0xFFFFFFFF),
-            error = Color(0xFFB00020),
-            onPrimary = Color(0xFFFFFFFF),
-            onBackground = Color(0xFF000000),
-            onSurface = Color(0xFF000000),
-            onError = Color(0xFFFFFFFF)
+            secondary = Color(0xFF03DAC6)
         )
     }
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography(
-            body1 = TextStyle(fontSize = 16.sp),
-            labelLarge = TextStyle(fontSize = 14.sp)
-        ),
         content = content
     )
 }

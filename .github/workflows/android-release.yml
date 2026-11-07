@@ -1,4 +1,4 @@
-﻿name: Android Release CI/CD
+name: Android Release CI/CD
 
 on:
   push:
@@ -21,36 +21,30 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: gradle
 
-      - name: Tạo Gradle Wrapper nếu chưa có
+      - name: Tạo Gradle Wrapper và Build APK
         run: |
           if [ ! -f gradlew ]; then
-            echo "Gradle Wrapper chưa tồn tại, đang tạo..."
-            wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle.zip
+            wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
             unzip -q /tmp/gradle.zip -d /tmp
-            export PATH=$PATH:/tmp/gradle-8.2/bin
-            gradle wrapper --gradle-version 8.2
+            /tmp/gradle-8.4/bin/gradle wrapper --gradle-version 8.4
           fi
-        shell: bash
-
-      - name: Build APK Debug
-        run: ./gradlew assembleDebug
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
         shell: bash
 
       - name: Lấy đường dẫn APK
         id: apk_path
         run: echo "apk_path=$(find app/build/outputs/apk -name '*.apk' | head -n 1)" >> $GITHUB_OUTPUT
 
-      - name: Tạo GitHub Release và tải APK lên
+      - name: Tạo GitHub Release và tải APK lên cho OTA
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('build-{0}', github.run_id) }}
-          name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('Build #{0}', github.run_id) }}
-          body: Phát hành tự động từ GitHub Actions. Tải APK về để cập nhật OTA trong ứng dụng.
+          tag_name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('Release v1.0.{0}', github.run_number) }}
+          body: "Bản build tự động từ GitHub Actions. Hỗ trợ cập nhật OTA trực tiếp trong ứng dụng."
           files: ${{ steps.apk_path.outputs.apk_path }}
-          generate_release_notes: true
           draft: false
-          prerelease: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
