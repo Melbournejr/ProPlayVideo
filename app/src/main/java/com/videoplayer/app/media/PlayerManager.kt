@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -27,8 +28,8 @@ class PlayerManager(private val context: Context) {
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var currentBoostPercent: Int = 0
 
-    private var currentVideoUri: Uri? = null
-    private var activeSubtitles = mutableListOf<ExternalSubtitleItem>()
+    private var currentPlaylist: List<VideoItem> = emptyList()
+    private val customSubtitlesByVideoId = mutableMapOf<String, MutableList<ExternalSubtitleItem>>()
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .setTrackSelector(trackSelector)
@@ -42,6 +43,7 @@ class PlayerManager(private val context: Context) {
         .build()
 
     init {
+        player.repeatMode = Player.REPEAT_MODE_OFF
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 setupLoudnessEnhancer(audioSessionId)
@@ -102,7 +104,6 @@ class PlayerManager(private val context: Context) {
                     val mime = subExtensions[ext]
                     if (mime != null) {
                         val fileBase = file.nameWithoutExtension.lowercase()
-                        // Khớp chính xác tên video hoặc dạng tên_video.vi.srt / tên_video.en.srt
                         if (fileBase == baseName || fileBase.startsWith("$baseName.")) {
                             result.add(ExternalSubtitleItem(file.name, Uri.fromFile(file), mime))
                         }
@@ -113,42 +114,16 @@ class PlayerManager(private val context: Context) {
         return result
     }
 
-    fun playLocal(video: VideoItem, startPositionMs: Long = 0L): List<ExternalSubtitleItem> {
+    fun getSubtitlesForVideo(video: VideoItem): List<ExternalSubtitleItem> {
+        val custom = customSubtitlesByVideoId[video.id] ?: emptyList()
+        val folderSubs = findMatchingSubtitlesInFolder(video)
+        return (custom + folderSubs).distinctBy { it.uri }
+    }
+
+    private fun buildMediaItemForVideo(video: VideoItem): MediaItem {
         val vUri = Uri.fromFile(File(video.path))
-        currentVideoUri = vUri
-        activeSubtitles.clear()
-
-        val matchedSubs = findMatchingSubtitlesInFolder(video)
-        activeSubtitles.addAll(matchedSubs)
-
-        buildAndPrepareMediaItem(vUri, startPositionMs)
-        return matchedSubs
-    }
-
-    /**
-     * Nạp thêm file phụ đề do người dùng chọn từ bộ nhớ máy
-     */
-    fun attachExternalSubtitle(uri: Uri, displayName: String) {
-        val vUri = currentVideoUri ?: return
-        val curPos = getCurrentPosition()
-        val lower = displayName.lowercase()
-        val mime = when {
-            lower.endsWith(".ass") || lower.endsWith(".ssa") -> MimeTypes.TEXT_SSA
-            lower.endsWith(".vtt") -> MimeTypes.TEXT_VTT
-            else -> MimeTypes.APPLICATION_SUBRIP
-        }
-        val newSub = ExternalSubtitleItem(displayName, uri, mime)
-        activeSubtitles.removeAll { it.uri == uri }
-        activeSubtitles.add(0, newSub)
-
-        toggleSubtitles(true)
-        buildAndPrepareMediaItem(vUri, curPos)
-    }
-
-    fun getLoadedSubtitles(): List<ExternalSubtitleItem> = activeSubtitles.toList()
-
-    private fun buildAndPrepareMediaItem(videoUri: Uri, positionMs: Long) {
-        val subConfigs = activeSubtitles.map { sub ->
+        val subs = getSubtitlesForVideo(video)
+        val subConfigs = subs.map { sub ->
             MediaItem.SubtitleConfiguration.Builder(sub.uri)
                 .setMimeType(sub.mimeType)
                 .setLanguage("vi")
@@ -157,26 +132,104 @@ class PlayerManager(private val context: Context) {
                 .build()
         }
 
-        val mediaItem = MediaItem.Builder()
-            .setUri(videoUri)
+        return MediaItem.Builder()
+            .setMediaId(video.id)
+            .setUri(vUri)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(video.displayName)
+                    .build()
+            )
             .setSubtitleConfigurations(subConfigs)
             .build()
+    }
 
-        player.setMediaItem(mediaItem, positionMs)
+    /**
+     * Nạp toàn bộ danh sách video vào ExoPlayer Native Playlist để tự động chuyển tập và bấm Next/Prev mượt tức thì
+     */
+    fun playPlaylist(playlist: List<VideoItem>, startIndex: Int, startPositionMs: Long = 0L): List<ExternalSubtitleItem> {
+        val safeList = if (playlist.isEmpty()) emptyList() else playlist
+        currentPlaylist = safeList
+        if (safeList.isEmpty()) return emptyList()
+
+        val validIndex = startIndex.coerceIn(0, safeList.size - 1)
+        val mediaItems = safeList.map { buildMediaItemForVideo(it) }
+
+        player.stop()
+        player.clearMediaItems()
+        player.setMediaItems(mediaItems, validIndex, startPositionMs)
         player.prepare()
+        player.playWhenReady = true
         player.play()
+
         if (player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
             setupLoudnessEnhancer(player.audioSessionId)
         }
+        return getSubtitlesForVideo(safeList[validIndex])
+    }
+
+    fun playNextInPlaylist(startPositionMs: Long = 0L): VideoItem? {
+        if (currentPlaylist.isEmpty()) return null
+        val nextIndex = player.currentMediaItemIndex + 1
+        if (nextIndex in currentPlaylist.indices) {
+            player.seekTo(nextIndex, startPositionMs)
+            player.prepare()
+            player.playWhenReady = true
+            player.play()
+            return currentPlaylist[nextIndex]
+        }
+        return null
+    }
+
+    fun playPreviousInPlaylist(startPositionMs: Long = 0L): VideoItem? {
+        if (currentPlaylist.isEmpty()) return null
+        val prevIndex = player.currentMediaItemIndex - 1
+        if (prevIndex in currentPlaylist.indices) {
+            player.seekTo(prevIndex, startPositionMs)
+            player.prepare()
+            player.playWhenReady = true
+            player.play()
+            return currentPlaylist[prevIndex]
+        }
+        return null
+    }
+
+    /**
+     * Nạp thêm file phụ đề rời do người dùng chọn từ bộ nhớ máy cho video đang phát
+     */
+    fun attachExternalSubtitleToCurrent(video: VideoItem, uri: Uri, displayName: String): List<ExternalSubtitleItem> {
+        val curPos = getCurrentPosition()
+        val curIndex = player.currentMediaItemIndex.coerceAtLeast(0)
+        val lower = displayName.lowercase()
+        val mime = when {
+            lower.endsWith(".ass") || lower.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+            lower.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+            else -> MimeTypes.APPLICATION_SUBRIP
+        }
+        val list = customSubtitlesByVideoId.getOrPut(video.id) { mutableListOf() }
+        list.removeAll { it.uri == uri }
+        list.add(0, ExternalSubtitleItem(displayName, uri, mime))
+
+        val updatedItem = buildMediaItemForVideo(video)
+        if (curIndex < player.mediaItemCount) {
+            player.replaceMediaItem(curIndex, updatedItem)
+            player.seekTo(curIndex, curPos)
+            player.prepare()
+            player.play()
+        }
+        toggleSubtitles(true)
+        return getSubtitlesForVideo(video)
     }
 
     fun playStream(url: String) {
+        currentPlaylist = emptyList()
         val uri = Uri.parse(url)
-        currentVideoUri = uri
-        activeSubtitles.clear()
         val mediaItem = MediaItem.fromUri(uri)
+        player.stop()
+        player.clearMediaItems()
         player.setMediaItem(mediaItem)
         player.prepare()
+        player.playWhenReady = true
         player.play()
     }
 

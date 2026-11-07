@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val context = LocalContext.current
-            val themeId by context.observeGlassTheme().collectAsState(initial = "cyan_nebula")
+            val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
             val activePalette = remember(themeId) { getGlassPaletteById(themeId) }
 
             VideoPlayerTheme(palette = activePalette) {
@@ -113,11 +113,10 @@ class MainActivity : ComponentActivity() {
 
                 if (screen == Screen.Player) {
                     PlayerScreen(
-                        video = selectedVideo,
+                        initialVideo = selectedVideo,
                         playlist = currentPlaylist,
                         streamUrl = streamUrl,
                         onVideoChanged = { updatedVid ->
-                            selectedVideo = updatedVid
                             lastViewedVideoId = updatedVid.id
                         },
                         onBack = {
@@ -244,7 +243,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val updateManager = remember { UpdateManager(context) }
 
-    val currentThemeId by context.observeGlassTheme().collectAsState(initial = "cyan_nebula")
+    val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
     var selectedMirror by remember { mutableIntStateOf(0) }
