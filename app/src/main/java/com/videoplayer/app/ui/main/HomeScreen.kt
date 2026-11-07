@@ -1,5 +1,6 @@
 package com.videoplayer.app.ui.main
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,41 +23,57 @@ import com.videoplayer.app.data.local.observeLastPlayedVideoId
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.ui.components.VideoThumbnailView
+import com.videoplayer.app.util.FileOperationHelper
+import kotlinx.coroutines.launch
+import java.io.File
 
 data class FolderSummary(
     val name: String,
+    val folderPath: String,
     val count: Int,
     val totalSize: Long,
     val previewVideo: VideoItem
 )
+
+private enum class FileDialogType {
+    NONE, INFO, RENAME, COPY, MOVE, DELETE
+}
 
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
     selectedFolder: String?,
     onSelectFolder: (String?) -> Unit,
-    onVideoClick: (VideoItem) -> Unit,
+    onVideoClick: (VideoItem, List<VideoItem>) -> Unit,
     onStreamClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var refreshTrigger by remember { mutableIntStateOf(0) }
     val repository = remember(context) { VideoRepository(context) }
     val videos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
 
-    // Xử lý nút Back vật lý trên điện thoại khi đang ở trong 1 thư mục
+    // State phục vụ Quản lý File
+    var activeVideoForAction by remember { mutableStateOf<VideoItem?>(null) }
+    var dialogType by remember { mutableStateOf(FileDialogType.NONE) }
+    var showBottomSheetFor by remember { mutableStateOf<VideoItem?>(null) }
+
     BackHandler(enabled = selectedFolder != null) {
         onSelectFolder(null)
     }
 
     val folders = remember(videos) {
         videos.groupBy { it.folder }.map { (folderName, list) ->
+            val firstVideo = list.first()
+            val parentDir = File(firstVideo.path).parent ?: "/storage/emulated/0/Movies"
             FolderSummary(
                 name = folderName,
+                folderPath = parentDir,
                 count = list.size,
                 totalSize = list.sumOf { it.size },
-                previewVideo = list.first()
+                previewVideo = firstVideo
             )
         }.sortedBy { it.name.lowercase() }
     }
@@ -87,16 +104,18 @@ fun HomeScreen(
                 contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Thẻ "Tiếp tục xem" nếu có video đang xem dở
                 lastPlayedVideo?.let { recent ->
                     val pos = savedPositions[recent.id] ?: 0L
                     if (pos > 2000L) {
                         item {
+                            val recentPlaylist = remember(videos, recent.folder) {
+                                videos.filter { it.folder == recent.folder }
+                            }
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onVideoClick(recent) }
+                                    .clickable { onVideoClick(recent, recentPlaylist) }
                             ) {
                                 Row(
                                     modifier = Modifier.padding(12.dp),
@@ -133,12 +152,20 @@ fun HomeScreen(
                 }
 
                 item {
-                    Text(
-                        text = "Thư mục video (${folders.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Thư mục video (${folders.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(onClick = { refreshTrigger++ }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Làm mới")
+                        }
+                    }
                 }
 
                 items(folders, key = { it.name }) { folder ->
@@ -178,7 +205,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "${folder.count} video",
+                                    text = "${folder.count} video • ${folder.previewVideo.let { formatFolderSize(folder.totalSize) }}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -211,7 +238,7 @@ fun HomeScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onVideoClick(video) }
+                            .clickable { onVideoClick(video, folderVideos) }
                     ) {
                         Row(
                             modifier = Modifier.padding(10.dp),
@@ -219,7 +246,7 @@ fun HomeScreen(
                         ) {
                             VideoThumbnailView(
                                 video = video,
-                                modifier = Modifier.size(width = 112.dp, height = 66.dp)
+                                modifier = Modifier.size(width = 110.dp, height = 64.dp)
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                                 Text(
@@ -247,6 +274,9 @@ fun HomeScreen(
                                     )
                                 }
                             }
+                            IconButton(onClick = { showBottomSheetFor = video }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Quản lý file")
+                            }
                         }
                     }
                 }
@@ -260,4 +290,227 @@ fun HomeScreen(
             Icon(imageVector = Icons.Default.Stream, contentDescription = "Stream URL")
         }
     }
+
+    // ================= MENU QUẢN LÝ FILE (KHI BẤM NÚT 3 CHẤM) =================
+    showBottomSheetFor?.let { targetVideo ->
+        AlertDialog(
+            onDismissRequest = { showBottomSheetFor = null },
+            title = { Text(targetVideo.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (!FileOperationHelper.hasAllFilesAccess()) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable {
+                                FileOperationHelper.requestAllFilesAccess(context)
+                            }
+                        ) {
+                            Text(
+                                "⚠️ Chạm vào đây để cấp quyền 'Quản lý tất cả tệp' trước khi Đổi tên / Copy / Di chuyển / Xóa.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                    ListItem(
+                        headlineContent = { Text("Xem thông tin chi tiết") },
+                        leadingContent = { Icon(Icons.Default.Info, null) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.INFO
+                            showBottomSheetFor = null
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Đổi tên video") },
+                        leadingContent = { Icon(Icons.Default.Edit, null) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.RENAME
+                            showBottomSheetFor = null
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Sao chép (Copy) sang thư mục khác") },
+                        leadingContent = { Icon(Icons.Default.ContentCopy, null) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.COPY
+                            showBottomSheetFor = null
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Di chuyển (Move) sang thư mục khác") },
+                        leadingContent = { Icon(Icons.Default.DriveFileMove, null) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.MOVE
+                            showBottomSheetFor = null
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Xóa vĩnh viễn", color = MaterialTheme.colorScheme.error) },
+                        leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.DELETE
+                            showBottomSheetFor = null
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBottomSheetFor = null }) { Text("Đóng") }
+            }
+        )
+    }
+
+    // ================= CÁC HỘP THOẠI XỬ LÝ FILE =================
+    activeVideoForAction?.let { video ->
+        when (dialogType) {
+            FileDialogType.INFO -> {
+                AlertDialog(
+                    onDismissRequest = { dialogType = FileDialogType.NONE },
+                    title = { Text("Thông tin chi tiết Video") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("• Tên tệp: ${video.displayName}")
+                            Text("• Thư mục: ${video.folder}")
+                            Text("• Đường dẫn: ${video.path}")
+                            Text("• Dung lượng: ${video.sizeFormatted} (${video.size} bytes)")
+                            Text("• Thời lượng: ${video.durationFormatted}")
+                            Text("• Định dạng: ${video.mimeType}")
+                            Text("• Ngày thêm: ${FileOperationHelper.formatDate(video.dateAdded)}")
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Đóng") }
+                    }
+                )
+            }
+            FileDialogType.RENAME -> {
+                var newName by remember(video) { mutableStateOf(File(video.path).nameWithoutExtension) }
+                AlertDialog(
+                    onDismissRequest = { dialogType = FileDialogType.NONE },
+                    title = { Text("Đổi tên Video") },
+                    text = {
+                        OutlinedTextField(
+                            value = newName,
+                            onValueChange = { newName = it },
+                            label = { Text("Tên mới (không cần gõ đuôi .mp4)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            scope.launch {
+                                val res = FileOperationHelper.renameVideo(context, video, newName)
+                                res.onSuccess {
+                                    Toast.makeText(context, "Đã đổi tên thành: ${it.name}", Toast.LENGTH_SHORT).show()
+                                    dialogType = FileDialogType.NONE
+                                    kotlinx.coroutines.delay(400)
+                                    refreshTrigger++
+                                }.onFailure { err ->
+                                    Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }) { Text("Lưu tên mới") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Hủy") }
+                    }
+                )
+            }
+            FileDialogType.COPY, FileDialogType.MOVE -> {
+                val isMove = (dialogType == FileDialogType.MOVE)
+                var targetPath by remember(video) {
+                    mutableStateOf(File(video.path).parent ?: "/storage/emulated/0/Movies")
+                }
+                AlertDialog(
+                    onDismissRequest = { dialogType = FileDialogType.NONE },
+                    title = { Text(if (isMove) "Di chuyển Video tới..." else "Sao chép Video tới...") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Chọn nhanh thư mục có sẵn hoặc nhập đường dẫn thư mục mới:", style = MaterialTheme.typography.bodySmall)
+                            LazyColumn(modifier = Modifier.heightIn(max = 180.dp)) {
+                                items(folders) { f ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp).clickable {
+                                            targetPath = f.folderPath
+                                        }
+                                    ) {
+                                        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column {
+                                                Text(f.name, fontWeight = FontWeight.SemiBold)
+                                                Text(f.folderPath, style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = targetPath,
+                                onValueChange = { targetPath = it },
+                                label = { Text("Đường dẫn thư mục đích") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            scope.launch {
+                                val res = FileOperationHelper.copyOrMoveVideo(context, video, targetPath, isMove)
+                                res.onSuccess {
+                                    Toast.makeText(context, if (isMove) "Đã di chuyển xong!" else "Đã sao chép xong!", Toast.LENGTH_SHORT).show()
+                                    dialogType = FileDialogType.NONE
+                                    kotlinx.coroutines.delay(500)
+                                    refreshTrigger++
+                                }.onFailure { err ->
+                                    Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }) { Text(if (isMove) "Di chuyển ngay" else "Sao chép ngay") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Hủy") }
+                    }
+                )
+            }
+            FileDialogType.DELETE -> {
+                AlertDialog(
+                    onDismissRequest = { dialogType = FileDialogType.NONE },
+                    title = { Text("Xác nhận xóa vĩnh viễn") },
+                    text = { Text("Bạn có chắc chắn muốn xóa tệp '${video.displayName}' khỏi bộ nhớ điện thoại không?") },
+                    confirmButton = {
+                        Button(
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            onClick = {
+                                scope.launch {
+                                    val res = FileOperationHelper.deleteVideo(context, video)
+                                    res.onSuccess {
+                                        Toast.makeText(context, "Đã xóa tệp!", Toast.LENGTH_SHORT).show()
+                                        dialogType = FileDialogType.NONE
+                                        refreshTrigger++
+                                    }.onFailure { err ->
+                                        Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        ) { Text("Xóa vĩnh viễn") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Hủy") }
+                    }
+                )
+            }
+            FileDialogType.NONE -> {}
+        }
+    }
+}
+
+private fun formatFolderSize(bytes: Long): String {
+    val mb = bytes / (1024 * 1024)
+    return if (mb < 1024) "$mb MB" else "%.1f GB".format(mb / 1024f)
 }

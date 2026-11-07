@@ -1,15 +1,29 @@
 package com.videoplayer.app.update
 
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 data class GitHubRelease(
     val tag_name: String = "",
@@ -25,8 +39,22 @@ data class GitHubAsset(
 )
 
 class UpdateManager(private val context: Context) {
-    private val client = OkHttpClient()
+
+    private val client = OkHttpClient.Builder()
+        .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
+
     private val gson = Gson()
+
+    private val mirrors = listOf(
+        "", // Trực tiếp GitHub
+        "https://ghfast.top/",
+        "https://mirror.ghproxy.com/"
+    )
 
     suspend fun checkLatestRelease(repoFullName: String): Result<GitHubRelease> = withContext(Dispatchers.IO) {
         try {
@@ -34,48 +62,204 @@ class UpdateManager(private val context: Context) {
             val request = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "ProPlayVideo-OTA")
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(Exception("HTTP ${response.code}: Không tìm thấy bản Release nào trên repo $repoFullName"))
+                    return@withContext Result.failure(Exception("HTTP ${response.code}: Không tìm thấy bản Release"))
                 }
                 val body = response.body?.string() ?: return@withContext Result.failure(Exception("Dữ liệu trống"))
-                val release = gson.fromJson(body, GitHubRelease::class.java)
-                Result.success(release)
+                Result.success(gson.fromJson(body, GitHubRelease::class.java))
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    suspend fun downloadApk(downloadUrl: String, onProgress: (Int) -> Unit): Result<File> = withContext(Dispatchers.IO) {
+    /**
+     * Tải bằng 8 luồng song song (8-Thread Parallel Downloader) + Báo cáo tốc độ thực tế MB/s
+     */
+    suspend fun downloadApkMultiThread(
+        rawUrl: String,
+        expectedSize: Long = 0L,
+        mirrorIndex: Int = 0,
+        onProgress: (percent: Int, speedText: String) -> Unit
+    ): Result<File> = withContext(Dispatchers.IO) {
         try {
+            val prefix = mirrors.getOrElse(mirrorIndex) { "" }
+            val downloadUrl = if (prefix.isNotEmpty() && rawUrl.startsWith("https://github.com/")) {
+                "$prefix$rawUrl"
+            } else {
+                rawUrl
+            }
+
             val apkFile = File(context.cacheDir, "update_ota.apk")
             if (apkFile.exists()) apkFile.delete()
-            val request = Request.Builder().url(downloadUrl).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext Result.failure(Exception("Tải thất bại: HTTP ${response.code}"))
-                val body = response.body ?: return@withContext Result.failure(Exception("File rỗng"))
-                val total = body.contentLength()
-                var downloaded = 0L
-                body.byteStream().use { input ->
-                    FileOutputStream(apkFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            if (total > 0) {
-                                onProgress(((downloaded * 100) / total).toInt())
+
+            val totalSize = if (expectedSize > 0L) expectedSize else fetchContentLength(downloadUrl)
+            val startTimeMs = System.currentTimeMillis()
+
+            if (totalSize > 1_000_000L) {
+                RandomAccessFile(apkFile, "rw").use { raf ->
+                    raf.setLength(totalSize)
+                }
+
+                val threadCount = 8
+                val chunkSize = totalSize / threadCount
+                val totalDownloaded = AtomicLong(0L)
+                val lastReportedPercent = AtomicInteger(-1)
+
+                coroutineScope {
+                    val jobs = (0 until threadCount).map { index ->
+                        val start = index * chunkSize
+                        val end = if (index == threadCount - 1) totalSize - 1 else (start + chunkSize - 1)
+
+                        async(Dispatchers.IO) {
+                            downloadChunk(downloadUrl, apkFile, start, end) { bytesRead ->
+                                val currentTotal = totalDownloaded.addAndGet(bytesRead)
+                                val percent = ((currentTotal * 100L) / totalSize).toInt().coerceIn(0, 100)
+                                val prev = lastReportedPercent.get()
+                                if (percent > prev && lastReportedPercent.compareAndSet(prev, percent)) {
+                                    val elapsedSec = ((System.currentTimeMillis() - startTimeMs) / 1000f).coerceAtLeast(0.2f)
+                                    val speedMb = (currentTotal / (1024f * 1024f)) / elapsedSec
+                                    onProgress(percent, "%.2f MB/s".format(speedMb))
+                                }
                             }
                         }
-                        output.flush()
                     }
+                    jobs.awaitAll()
                 }
+            } else {
+                downloadSingleStream(downloadUrl, apkFile, totalSize, startTimeMs, onProgress)
             }
+
             Result.success(apkFile)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Tải bằng trình DownloadManager cấp hệ thống của Android (Tự động tối ưu hóa phần cứng mạng & tự mở cài đặt)
+     */
+    fun downloadWithSystemManager(rawUrl: String, fileName: String, useMirror: Boolean): Long {
+        val downloadUrl = if (useMirror && rawUrl.startsWith("https://github.com/")) {
+            "https://ghfast.top/$rawUrl"
+        } else {
+            rawUrl
+        }
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+        if (destFile.exists()) destFile.delete()
+
+        val request = DownloadManager.Request(Uri.parse(downloadUrl))
+            .setTitle("Đang cập nhật $fileName")
+            .setDescription("Tải bản cập nhật OTA bằng trình tăng tốc hệ thống")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationUri(Uri.fromFile(destFile))
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        val downloadId = dm.enqueue(request)
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
+                if (id == downloadId) {
+                    try { context.unregisterReceiver(this) } catch (_: Exception) {}
+                    if (destFile.exists()) {
+                        installApk(destFile)
+                    }
+                }
+            }
+        }
+
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED
+        )
+
+        return downloadId
+    }
+
+    private fun fetchContentLength(url: String): Long {
+        return try {
+            val req = Request.Builder().url(url).head().header("User-Agent", "ProPlayVideo-OTA").build()
+            client.newCall(req).execute().use { resp ->
+                resp.header("Content-Length")?.toLongOrNull() ?: -1L
+            }
+        } catch (_: Exception) { -1L }
+    }
+
+    private fun downloadChunk(
+        url: String,
+        file: File,
+        start: Long,
+        end: Long,
+        onBytes: (Long) -> Unit
+    ) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=$start-$end")
+            .header("User-Agent", "ProPlayVideo-OTA")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) {
+                throw Exception("HTTP ${response.code}")
+            }
+            val body = response.body ?: throw Exception("Rỗng")
+            body.byteStream().use { input ->
+                RandomAccessFile(file, "rw").use { raf ->
+                    raf.seek(start)
+                    val buffer = ByteArray(128 * 1024) // Bộ đệm 128KB siêu tốc
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        raf.write(buffer, 0, read)
+                        onBytes(read.toLong())
+                    }
+                }
+            }
+        }
+    }
+
+    private fun downloadSingleStream(
+        url: String,
+        file: File,
+        totalSize: Long,
+        startTimeMs: Long,
+        onProgress: (Int, String) -> Unit
+    ) {
+        val request = Request.Builder().url(url).header("User-Agent", "ProPlayVideo-OTA").build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
+            val body = response.body ?: throw Exception("File rỗng")
+            val contentLen = if (totalSize > 0) totalSize else body.contentLength()
+            var downloaded = 0L
+            var lastPercent = -1
+
+            body.byteStream().use { input ->
+                file.outputStream().buffered(128 * 1024).use { output ->
+                    val buffer = ByteArray(128 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        if (contentLen > 0) {
+                            val percent = ((downloaded * 100L) / contentLen).toInt().coerceIn(0, 100)
+                            if (percent > lastPercent) {
+                                lastPercent = percent
+                                val elapsedSec = ((System.currentTimeMillis() - startTimeMs) / 1000f).coerceAtLeast(0.2f)
+                                val speedMb = (downloaded / (1024f * 1024f)) / elapsedSec
+                                onProgress(percent, "%.2f MB/s".format(speedMb))
+                            }
+                        }
+                    }
+                    output.flush()
+                }
+            }
         }
     }
 
