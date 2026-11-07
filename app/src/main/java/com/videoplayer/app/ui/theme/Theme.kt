@@ -3,29 +3,36 @@ package com.videoplayer.app.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-
-private val LiquidGlassColorScheme = darkColorScheme(
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color(0xFF002633),
-    primaryContainer = Color(0xFF0F2942),
-    onPrimaryContainer = Color(0xFFB8F4FF),
-    secondary = Color(0xFFC77DFF),
-    onSecondary = Color(0xFF240046),
-    background = Color(0xFF070B19),
-    onBackground = Color(0xFFF4F8FF),
-    surface = Color(0xFF101930),
-    onSurface = Color(0xFFF4F8FF),
-    onSurfaceVariant = Color(0xFFA7B8D8),
-    error = Color(0xFFFF5C8A)
-)
+import com.videoplayer.app.ui.components.GlassThemePalette
+import com.videoplayer.app.ui.components.GlassThemePresets
+import com.videoplayer.app.ui.components.LocalGlassPalette
 
 @Composable
 fun VideoPlayerTheme(
+    palette: GlassThemePalette = GlassThemePresets.first(),
     content: @Composable () -> Unit
 ) {
-    MaterialTheme(
-        colorScheme = LiquidGlassColorScheme,
-        content = content
+    val scheme = darkColorScheme(
+        primary = palette.primaryGlow,
+        onPrimary = Color(0xFF001F29),
+        primaryContainer = palette.deepBgMid,
+        onPrimaryContainer = Color.White,
+        secondary = palette.secondaryGlow,
+        onSecondary = Color.White,
+        background = palette.deepBgTop,
+        onBackground = Color(0xFFF4F8FF),
+        surface = palette.deepBgMid,
+        onSurface = Color(0xFFF4F8FF),
+        onSurfaceVariant = Color(0xFFB0C4DE),
+        error = Color(0xFFFF5C8A)
     )
+
+    CompositionLocalProvider(LocalGlassPalette provides palette) {
+        MaterialTheme(
+            colorScheme = scheme,
+            content = content
+        )
+    }
 }

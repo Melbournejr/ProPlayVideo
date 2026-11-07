@@ -9,29 +9,43 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.BuildConfig
+import com.videoplayer.app.data.local.observeGlassTheme
 import com.videoplayer.app.data.local.readGithubRepo
 import com.videoplayer.app.data.local.saveGithubRepo
+import com.videoplayer.app.data.local.saveGlassTheme
 import com.videoplayer.app.data.model.VideoItem
+import com.videoplayer.app.ui.components.GlassThemePresets
 import com.videoplayer.app.ui.components.LiquidAmbientBackground
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
+import com.videoplayer.app.ui.components.LocalGlassPalette
+import com.videoplayer.app.ui.components.getGlassPaletteById
 import com.videoplayer.app.ui.player.PlayerScreen
 import com.videoplayer.app.ui.stream.NetworkStreamScreen
 import com.videoplayer.app.ui.theme.VideoPlayerTheme
@@ -72,12 +86,26 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            VideoPlayerTheme {
+            val context = LocalContext.current
+            val themeId by context.observeGlassTheme().collectAsState(initial = "cyan_nebula")
+            val activePalette = remember(themeId) { getGlassPaletteById(themeId) }
+
+            VideoPlayerTheme(palette = activePalette) {
                 var screen by remember { mutableStateOf(Screen.Home) }
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
                 var selectedVideo by remember { mutableStateOf<VideoItem?>(null) }
+                var lastViewedVideoId by remember { mutableStateOf<String?>(null) }
                 var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
                 var streamUrl by remember { mutableStateOf<String?>(null) }
+
+                // Lưu giữ trạng thái vị trí cuộn của danh sách Thư mục & từng Thư mục Video
+                // để khi từ Player thoát ra vẫn đứng ở đúng vị trí video vừa xem!
+                val folderListState = remember { LazyListState() }
+                val videoListStates = remember { mutableStateMapOf<String, LazyListState>() }
+                val activeVideoListState = remember(selectedFolder) {
+                    val key = selectedFolder ?: "__ROOT__"
+                    videoListStates.getOrPut(key) { LazyListState() }
+                }
 
                 LaunchedEffect(screen) {
                     isCurrentlyInPlayerScreen = (screen == Screen.Player)
@@ -88,6 +116,10 @@ class MainActivity : ComponentActivity() {
                         video = selectedVideo,
                         playlist = currentPlaylist,
                         streamUrl = streamUrl,
+                        onVideoChanged = { updatedVid ->
+                            selectedVideo = updatedVid
+                            lastViewedVideoId = updatedVid.id
+                        },
                         onBack = {
                             screen = Screen.Home
                             selectedVideo = null
@@ -126,7 +158,7 @@ class MainActivity : ComponentActivity() {
                                     val titleText = when {
                                         screen == Screen.Home && selectedFolder != null -> selectedFolder!!
                                         screen == Screen.Stream -> "Stream Mạng"
-                                        screen == Screen.Settings -> "Cài đặt & OTA"
+                                        screen == Screen.Settings -> "Giao diện & Cập nhật OTA"
                                         else -> "ProPlayVideo"
                                     }
 
@@ -142,7 +174,7 @@ class MainActivity : ComponentActivity() {
                                         Text(
                                             text = "Liquid Glass UI • v${BuildConfig.VERSION_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFF00E5FF)
+                                            color = activePalette.primaryGlow
                                         )
                                     }
 
@@ -153,27 +185,30 @@ class MainActivity : ComponentActivity() {
                                         Icon(
                                             Icons.Default.Home,
                                             contentDescription = "Thư mục gốc",
-                                            tint = if (screen == Screen.Home && selectedFolder == null) Color(0xFF00F0FF) else Color.White
+                                            tint = if (screen == Screen.Home && selectedFolder == null) activePalette.primaryGlow else Color.White
                                         )
                                     }
                                     IconButton(onClick = { screen = Screen.Settings }) {
                                         Icon(
                                             Icons.Default.Settings,
                                             contentDescription = "Cài đặt & OTA",
-                                            tint = if (screen == Screen.Settings) Color(0xFF00F0FF) else Color.White
+                                            tint = if (screen == Screen.Settings) activePalette.primaryGlow else Color.White
                                         )
                                     }
                                 }
                             }
 
-                            // Nội dung từng trang
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                 when (screen) {
                                     Screen.Home -> HomeScreen(
                                         selectedFolder = selectedFolder,
+                                        folderListState = folderListState,
+                                        videoListState = activeVideoListState,
+                                        lastViewedVideoId = lastViewedVideoId,
                                         onSelectFolder = { folder -> selectedFolder = folder },
                                         onVideoClick = { video, playlist ->
                                             selectedVideo = video
+                                            lastViewedVideoId = video.id
                                             currentPlaylist = playlist
                                             streamUrl = null
                                             screen = Screen.Player
@@ -205,14 +240,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val palette = LocalGlassPalette.current
     val scope = rememberCoroutineScope()
     val updateManager = remember { UpdateManager(context) }
 
+    val currentThemeId by context.observeGlassTheme().collectAsState(initial = "cyan_nebula")
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
     var selectedMirror by remember { mutableIntStateOf(0) }
-    var statusText by remember { mutableStateOf("Phiên bản hiện tại: v${BuildConfig.VERSION_NAME} (Giao diện Liquid Glass)") }
+    var statusText by remember { mutableStateOf("Phiên bản đang dùng: v${BuildConfig.VERSION_NAME}") }
     var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
+    var isNewerAvailable by remember { mutableStateOf(false) }
+    var forceShowReinstall by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableIntStateOf(-1) }
     var speedInfo by remember { mutableStateOf("") }
     var isDownloading by remember { mutableStateOf(false) }
@@ -224,6 +263,76 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // ================= 1. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG & GRADIENT =================
+        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Palette, contentDescription = null, tint = palette.primaryGlow)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Tông màu Ánh sáng & Gradient Kính Lỏng",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                GlassThemePresets.forEach { preset ->
+                    val isSelected = (preset.id == currentThemeId)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) Brush.horizontalGradient(
+                                    listOf(preset.primaryGlow.copy(alpha = 0.28f), preset.secondaryGlow.copy(alpha = 0.28f))
+                                ) else Brush.horizontalGradient(
+                                    listOf(Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.03f))
+                                )
+                            )
+                            .border(
+                                width = if (isSelected) 1.5.dp else 0.8.dp,
+                                brush = Brush.horizontalGradient(
+                                    listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)
+                                ),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .clickable {
+                                scope.launch { context.saveGlassTheme(preset.id) }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)
+                                        )
+                                    )
+                                    .border(1.dp, Color.White, CircleShape)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = preset.name,
+                                color = Color.White,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        if (isSelected) {
+                            Text("Đang dùng ✓", color = preset.primaryGlow, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= 2. TRUNG TÂM CẬP NHẬT OTA NHẬN DIỆN ĐÚNG PHIÊN BẢN =================
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
@@ -274,11 +383,18 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         if (!isDownloading) {
                             scope.launch {
                                 context.saveGithubRepo(repoInput)
-                                statusText = "Đang kiểm tra bản phát hành mới trên GitHub..."
+                                statusText = "Đang kiểm tra phiên bản trên GitHub..."
+                                forceShowReinstall = false
                                 val result = updateManager.checkLatestRelease(repoInput)
                                 result.onSuccess { release ->
                                     latestRelease = release
-                                    statusText = "Tìm thấy bản phát hành mới nhất: ${release.tag_name} (${release.name})"
+                                    val newer = updateManager.isRemoteVersionNewer(BuildConfig.VERSION_NAME, release.tag_name)
+                                    isNewerAvailable = newer
+                                    statusText = if (newer) {
+                                        "🎉 Phát hiện phiên bản mới: ${release.tag_name} (Hiện tại: v${BuildConfig.VERSION_NAME})"
+                                    } else {
+                                        "✅ Bạn đang sử dụng phiên bản mới nhất (v${BuildConfig.VERSION_NAME})!"
+                                    }
                                 }.onFailure { err ->
                                     statusText = "Lỗi: ${err.message}"
                                 }
@@ -290,86 +406,102 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     Text("🔍 Kiểm tra bản cập nhật mới", color = Color.White, fontWeight = FontWeight.Bold)
                 }
 
-                Text(text = statusText, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFB8F4FF))
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isNewerAvailable) palette.primaryGlow else Color(0xFF80FFDB),
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                // Nếu đang ở bản mới nhất nhưng người dùng vẫn muốn cài đè lại
+                if (latestRelease != null && !isNewerAvailable && !forceShowReinstall) {
+                    TextButton(onClick = { forceShowReinstall = true }) {
+                        Text("Vẫn hiển thị tùy chọn tải lại bản v${BuildConfig.VERSION_NAME}", color = Color(0xFFA7B8D8))
+                    }
+                }
             }
         }
 
+        // Chỉ hiển thị khung tải xuống khi CÓ BẢN MỚI HƠN (hoặc khi người dùng bấm nút tải lại)
         latestRelease?.let { release ->
-            val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
-            if (apkAsset != null) {
-                val sizeMb = "%.2f MB".format(apkAsset.size / (1024f * 1024f))
-                LiquidGlassCard(
-                    cornerRadius = 24.dp,
-                    tintColor = Color(0xFF00E5FF),
-                    surfaceAlpha = 0.16f,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            "📦 ${apkAsset.name} ($sizeMb)",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (downloadProgress in 0..100) {
-                            LinearProgressIndicator(
-                                progress = downloadProgress / 100f,
-                                color = Color(0xFF00F0FF),
-                                trackColor = Color.White.copy(alpha = 0.15f),
-                                modifier = Modifier.fillMaxWidth().height(6.dp)
-                            )
-                            Text("Đang tải 8 luồng: $downloadProgress% ($speedInfo)", color = Color(0xFF00F0FF))
-                        }
-                        LiquidGlassPill(
-                            active = true,
-                            onClick = {
-                                if (!isDownloading) {
-                                    scope.launch {
-                                        isDownloading = true
-                                        downloadProgress = 0
-                                        speedInfo = "Đang kết nối..."
-                                        statusText = "Đang mở 8 luồng tải song song..."
-                                        val dl = updateManager.downloadApkMultiThread(
-                                            rawUrl = apkAsset.browser_download_url,
-                                            expectedSize = apkAsset.size,
-                                            mirrorIndex = selectedMirror
-                                        ) { p, spd ->
-                                            downloadProgress = p
-                                            speedInfo = spd
-                                        }
-                                        isDownloading = false
-                                        dl.onSuccess { file ->
-                                            statusText = "Đã tải xong 100%! Đang mở trình cài đặt..."
-                                            updateManager.installApk(file)
-                                        }.onFailure { err ->
-                                            statusText = "Lỗi: ${err.message}. Hãy thử chọn CDN 1 hoặc nút Trình tải Hệ thống."
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+            if (isNewerAvailable || forceShowReinstall) {
+                val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
+                if (apkAsset != null) {
+                    val sizeMb = "%.2f MB".format(apkAsset.size / (1024f * 1024f))
+                    LiquidGlassCard(
+                        cornerRadius = 24.dp,
+                        tintColor = palette.primaryGlow,
+                        surfaceAlpha = 0.16f,
+                        highlighted = true,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                if (isDownloading) "⏳ Đang tải 8 luồng..." else "⚡ Tải Siêu tốc 8 luồng & Cài đặt",
+                                "📦 ${apkAsset.name} ($sizeMb)",
+                                style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
-                        }
-
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = {
-                                updateManager.downloadWithSystemManager(
-                                    rawUrl = apkAsset.browser_download_url,
-                                    fileName = apkAsset.name,
-                                    useMirror = (selectedMirror != 0)
+                            if (downloadProgress in 0..100) {
+                                LinearProgressIndicator(
+                                    progress = downloadProgress / 100f,
+                                    color = palette.primaryGlow,
+                                    trackColor = Color.White.copy(alpha = 0.15f),
+                                    modifier = Modifier.fillMaxWidth().height(6.dp)
                                 )
-                                Toast.makeText(context, "Đã chuyển sang Trình tải Hệ thống!", Toast.LENGTH_LONG).show()
-                                statusText = "Đang tải ngầm bằng System DownloadManager. Khi xong máy sẽ tự mở bảng cài đặt!"
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("🚀 Tải ngầm bằng Hệ thống (System DownloadManager)", color = Color.White)
+                                Text("Đang tải 8 luồng: $downloadProgress% ($speedInfo)", color = palette.primaryGlow)
+                            }
+                            LiquidGlassPill(
+                                active = true,
+                                onClick = {
+                                    if (!isDownloading) {
+                                        scope.launch {
+                                            isDownloading = true
+                                            downloadProgress = 0
+                                            speedInfo = "Đang kết nối..."
+                                            statusText = "Đang mở 8 luồng tải song song..."
+                                            val dl = updateManager.downloadApkMultiThread(
+                                                rawUrl = apkAsset.browser_download_url,
+                                                expectedSize = apkAsset.size,
+                                                mirrorIndex = selectedMirror
+                                            ) { p, spd ->
+                                                downloadProgress = p
+                                                speedInfo = spd
+                                            }
+                                            isDownloading = false
+                                            dl.onSuccess { file ->
+                                                statusText = "Đã tải xong 100%! Đang mở trình cài đặt..."
+                                                updateManager.installApk(file)
+                                            }.onFailure { err ->
+                                                statusText = "Lỗi: ${err.message}. Hãy thử chọn CDN 1 hoặc nút Trình tải Hệ thống."
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    if (isDownloading) "⏳ Đang tải 8 luồng..." else "⚡ Tải Siêu tốc 8 luồng & Cài đặt",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            LiquidGlassPill(
+                                active = false,
+                                onClick = {
+                                    updateManager.downloadWithSystemManager(
+                                        rawUrl = apkAsset.browser_download_url,
+                                        fileName = apkAsset.name,
+                                        useMirror = (selectedMirror != 0)
+                                    )
+                                    Toast.makeText(context, "Đã chuyển sang Trình tải Hệ thống!", Toast.LENGTH_LONG).show()
+                                    statusText = "Đang tải ngầm bằng System DownloadManager. Khi xong máy sẽ tự mở bảng cài đặt!"
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("🚀 Tải ngầm bằng Hệ thống (System DownloadManager)", color = Color.White)
+                            }
                         }
                     }
                 }

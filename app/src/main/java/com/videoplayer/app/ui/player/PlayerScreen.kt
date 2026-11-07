@@ -4,13 +4,18 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import android.util.Rational
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,8 +60,10 @@ import androidx.media3.ui.PlayerView
 import com.videoplayer.app.data.local.readLastPosition
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
+import com.videoplayer.app.media.ExternalSubtitleItem
 import com.videoplayer.app.media.PlayerManager
 import com.videoplayer.app.ui.components.LiquidGlassPill
+import com.videoplayer.app.ui.components.LocalGlassPalette
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -77,6 +84,22 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+private fun Context.resolveUriFileName(uri: Uri): String {
+    var result: String? = null
+    if (uri.scheme == "content") {
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) result = cursor.getString(idx)
+            }
+        }
+    }
+    if (result == null) {
+        result = uri.path?.substringAfterLast('/') ?: "subtitle.srt"
+    }
+    return result!!
+}
+
 private fun formatTimeMs(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0L)
     val h = totalSec / 3600
@@ -91,9 +114,11 @@ fun PlayerScreen(
     video: VideoItem?,
     playlist: List<VideoItem>,
     streamUrl: String?,
+    onVideoChanged: (VideoItem) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val palette = LocalGlassPalette.current
     val activity = remember(context) { context.findActivity() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -112,6 +137,7 @@ fun PlayerScreen(
     var isLocked by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var subtitlesEnabled by remember { mutableStateOf(true) }
+    var loadedSubtitles by remember { mutableStateOf<List<ExternalSubtitleItem>>(emptyList()) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var gestureHint by remember { mutableStateOf<String?>(null) }
     var isInPipMode by remember { mutableStateOf(false) }
@@ -124,12 +150,33 @@ fun PlayerScreen(
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showSleepMenu by remember { mutableStateOf(false) }
     var showZoomMenu by remember { mutableStateOf(false) }
+    var showSubtitleMenu by remember { mutableStateOf(false) }
 
     var zoomScale by remember { mutableFloatStateOf(1.0f) }
     var zoomOffsetX by remember { mutableFloatStateOf(0f) }
     var zoomOffsetY by remember { mutableFloatStateOf(0f) }
 
     var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
+
+    // Trình chọn file Phụ đề từ bộ nhớ ngoài (.srt, .ass, .ssa, .vtt)
+    val subtitlePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            val fileName = context.resolveUriFileName(uri)
+            playerManager.attachExternalSubtitle(uri, fileName)
+            loadedSubtitles = playerManager.getLoadedSubtitles()
+            subtitlesEnabled = true
+            gestureHint = "💬 Đã nạp phụ đề: $fileName"
+            scope.launch { delay(1800); gestureHint = null }
+        }
+    }
 
     fun resetZoom() {
         zoomScale = 1.0f
@@ -151,8 +198,10 @@ fun PlayerScreen(
         if (playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1) {
             persistCurrentPosition()
             resetZoom()
-            currentVideo = playlist[currentIndex + 1]
-            gestureHint = "⏭️ Đang phát: ${currentVideo?.displayName}"
+            val nextVid = playlist[currentIndex + 1]
+            currentVideo = nextVid
+            onVideoChanged(nextVid)
+            gestureHint = "⏭️ Đang phát: ${nextVid.displayName}"
             scope.launch { delay(1500); gestureHint = null }
         }
     }
@@ -161,8 +210,10 @@ fun PlayerScreen(
         if (playlist.isNotEmpty() && currentIndex > 0) {
             persistCurrentPosition()
             resetZoom()
-            currentVideo = playlist[currentIndex - 1]
-            gestureHint = "⏮️ Đang phát: ${currentVideo?.displayName}"
+            val prevVid = playlist[currentIndex - 1]
+            currentVideo = prevVid
+            onVideoChanged(prevVid)
+            gestureHint = "⏮️ Đang phát: ${prevVid.displayName}"
             scope.launch { delay(1500); gestureHint = null }
         }
     }
@@ -236,11 +287,18 @@ fun PlayerScreen(
 
     LaunchedEffect(currentVideo, streamUrl) {
         if (currentVideo != null) {
+            onVideoChanged(currentVideo!!)
             val savedPos = context.readLastPosition(currentVideo!!.id)
-            playerManager.playLocal(currentVideo!!, savedPos)
+            val autoMatchedSubs = playerManager.playLocal(currentVideo!!, savedPos)
+            loadedSubtitles = autoMatchedSubs
             currentPos = savedPos
+            if (autoMatchedSubs.isNotEmpty()) {
+                gestureHint = "💬 Tự động nạp phụ đề: ${autoMatchedSubs.first().name}"
+                scope.launch { delay(1800); if (gestureMode == GestureMode.NONE) gestureHint = null }
+            }
         } else if (!streamUrl.isNullOrEmpty()) {
             playerManager.playStream(streamUrl)
+            loadedSubtitles = emptyList()
         }
     }
 
@@ -498,7 +556,7 @@ fun PlayerScreen(
                 }
         )
 
-        // Hiển thị thông báo Gesture dạng Viên nang Kính Lỏng ở giữa màn hình
+        // Hiển thị thông báo Gesture dạng Viên nang Kính Lỏng
         if (!isInPipMode) {
             gestureHint?.let { hint ->
                 val pillShape = RoundedCornerShape(50)
@@ -509,8 +567,8 @@ fun PlayerScreen(
                         .background(
                             Brush.linearGradient(
                                 colors = listOf(
-                                    Color(0xFF101B35).copy(alpha = 0.85f),
-                                    Color(0xFF070C1A).copy(alpha = 0.88f)
+                                    palette.deepBgMid.copy(alpha = 0.88f),
+                                    palette.deepBgTop.copy(alpha = 0.90f)
                                 )
                             )
                         )
@@ -518,7 +576,7 @@ fun PlayerScreen(
                             BorderStroke(
                                 1.2.dp,
                                 Brush.linearGradient(
-                                    colors = listOf(Color.White.copy(alpha = 0.6f), Color(0xFF00E5FF).copy(alpha = 0.5f))
+                                    colors = listOf(Color.White.copy(alpha = 0.6f), palette.primaryGlow.copy(alpha = 0.6f))
                                 )
                             ),
                             pillShape
@@ -527,7 +585,7 @@ fun PlayerScreen(
                 ) {
                     Text(
                         text = hint,
-                        color = if (audioBoostPercent > 0 && gestureMode == GestureMode.VOLUME) Color(0xFF00F0FF) else Color.White,
+                        color = if (audioBoostPercent > 0 && gestureMode == GestureMode.VOLUME) palette.primaryGlow else Color.White,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -535,7 +593,6 @@ fun PlayerScreen(
             }
         }
 
-        // Nút mở khóa dạng Kính Lỏng khi đang bật Child Lock
         if (isLocked && showControls && !isInPipMode) {
             LiquidGlassPill(
                 active = true,
@@ -560,8 +617,8 @@ fun PlayerScreen(
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                Color(0xFF162442).copy(alpha = 0.78f),
-                                Color(0xFF0A1122).copy(alpha = 0.86f)
+                                palette.deepBgMid.copy(alpha = 0.80f),
+                                palette.deepBgTop.copy(alpha = 0.88f)
                             ),
                             start = Offset(0f, 0f),
                             end = Offset(800f, 600f)
@@ -573,8 +630,8 @@ fun PlayerScreen(
                             Brush.linearGradient(
                                 colors = listOf(
                                     Color.White.copy(alpha = 0.55f),
-                                    Color.White.copy(alpha = 0.12f),
-                                    Color(0xFF00E5FF).copy(alpha = 0.45f)
+                                    palette.secondaryGlow.copy(alpha = 0.35f),
+                                    palette.primaryGlow.copy(alpha = 0.55f)
                                 )
                             )
                         ),
@@ -610,7 +667,7 @@ fun PlayerScreen(
                             active = true,
                             modifier = Modifier.padding(start = 6.dp)
                         ) {
-                            Text("🔊 ${100 + audioBoostPercent}%", color = Color(0xFF00F0FF), style = MaterialTheme.typography.labelSmall)
+                            Text("🔊 ${100 + audioBoostPercent}%", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -624,8 +681,8 @@ fun PlayerScreen(
                     onValueChangeFinished = { persistCurrentPosition() },
                     valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
                     colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFF00F0FF),
-                        activeTrackColor = Color(0xFF00E5FF),
+                        thumbColor = palette.primaryGlow,
+                        activeTrackColor = palette.primaryGlow,
                         inactiveTrackColor = Color.White.copy(alpha = 0.20f)
                     )
                 )
@@ -634,7 +691,7 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatTimeMs(currentPos), color = Color(0xFF00F0FF), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text(formatTimeMs(currentPos), color = palette.primaryGlow, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     if (sleepRemainingSec > 0) {
                         Text("💤 Tắt sau ${formatTimeMs(sleepRemainingSec * 1000L)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.bodySmall)
                     }
@@ -643,7 +700,6 @@ fun PlayerScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Hàng nút điều khiển Kính Lỏng
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -662,14 +718,13 @@ fun PlayerScreen(
                             tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
                         )
                     }
-                    // Nút Play/Pause tròn phát sáng tâm điểm
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(Color(0xFF00E5FF), Color(0xFF7B2CBF))
+                                    colors = listOf(palette.primaryGlow, palette.secondaryGlow)
                                 )
                             )
                             .border(1.dp, Color.White.copy(alpha = 0.7f), CircleShape),
@@ -740,7 +795,7 @@ fun PlayerScreen(
                             Icon(
                                 Icons.Default.ZoomIn,
                                 contentDescription = "Thu phóng video",
-                                tint = if (zoomScale > 1.01f) Color(0xFF00F0FF) else Color.White
+                                tint = if (zoomScale > 1.01f) palette.primaryGlow else Color.White
                             )
                         }
                         DropdownMenu(
@@ -797,7 +852,7 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.Headphones,
                             contentDescription = "Nghe nền",
-                            tint = if (backgroundAudioEnabled) Color(0xFF00F0FF) else Color.White
+                            tint = if (backgroundAudioEnabled) palette.primaryGlow else Color.White
                         )
                     }
 
@@ -835,6 +890,59 @@ fun PlayerScreen(
                         }
                     }
 
+                    // 4. MENU PHỤ ĐỀ (TỰ ĐỘNG NẠP CÙNG THƯ MỤC + CHỌN FILE TỪ BỘ NHỚ MÁY)
+                    Box {
+                        IconButton(onClick = { showSubtitleMenu = true }) {
+                            Icon(
+                                Icons.Default.Subtitles,
+                                contentDescription = "Phụ đề",
+                                tint = if (subtitlesEnabled) palette.primaryGlow else Color.White.copy(alpha = 0.35f)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showSubtitleMenu,
+                            onDismissRequest = { showSubtitleMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (subtitlesEnabled) "✓ Đang bật hiển thị phụ đề" else "    Bật hiển thị phụ đề",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                onClick = {
+                                    subtitlesEnabled = !subtitlesEnabled
+                                    playerManager.toggleSubtitles(subtitlesEnabled)
+                                    showSubtitleMenu = false
+                                    gestureHint = if (subtitlesEnabled) "💬 Đã bật Phụ đề" else "💬 Đã tắt Phụ đề"
+                                    scope.launch { delay(1000); gestureHint = null }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("📂 Chọn file phụ đề (.srt, .ass, .vtt) từ máy...") },
+                                onClick = {
+                                    showSubtitleMenu = false
+                                    subtitlePickerLauncher.launch(arrayOf("*/*"))
+                                }
+                            )
+                            if (loadedSubtitles.isNotEmpty()) {
+                                Divider()
+                                loadedSubtitles.forEach { sub ->
+                                    DropdownMenuItem(
+                                        text = { Text("📄 ${sub.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        onClick = {
+                                            subtitlesEnabled = true
+                                            playerManager.toggleSubtitles(true)
+                                            showSubtitleMenu = false
+                                            gestureHint = "💬 Đang dùng: ${sub.name}"
+                                            scope.launch { delay(1000); gestureHint = null }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     IconButton(onClick = {
                         val curOrient = activity?.requestedOrientation
                         if (curOrient == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
@@ -854,19 +962,6 @@ fun PlayerScreen(
                         }
                     }) {
                         Icon(Icons.Default.AspectRatio, contentDescription = "Tỷ lệ khung hình", tint = Color.White)
-                    }
-
-                    IconButton(onClick = {
-                        subtitlesEnabled = !subtitlesEnabled
-                        playerManager.toggleSubtitles(subtitlesEnabled)
-                        gestureHint = if (subtitlesEnabled) "💬 Đã bật Phụ đề (Subtitles)" else "💬 Đã tắt Phụ đề"
-                        scope.launch { delay(1000); gestureHint = null }
-                    }) {
-                        Icon(
-                            Icons.Default.Subtitles,
-                            contentDescription = "Phụ đề",
-                            tint = if (subtitlesEnabled) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.35f)
-                        )
                     }
 
                     IconButton(onClick = { enterPip() }) {

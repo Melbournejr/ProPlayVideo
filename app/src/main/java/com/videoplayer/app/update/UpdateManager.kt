@@ -271,4 +271,20 @@ class UpdateManager(private val context: Context) {
         }
         context.startActivity(intent)
     }
+    fun isRemoteVersionNewer(currentVersion: String, remoteTag: String): Boolean {
+        val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V")
+        val cleanRemote = remoteTag.trim().removePrefix("v").removePrefix("V")
+        if (cleanCurrent == cleanRemote) return false
+
+        val curParts = cleanCurrent.split(".", "-").mapNotNull { it.toIntOrNull() }
+        val remParts = cleanRemote.split(".", "-").mapNotNull { it.toIntOrNull() }
+        val maxLen = maxOf(curParts.size, remParts.size)
+        for (i in 0 until maxLen) {
+            val c = curParts.getOrElse(i) { 0 }
+            val r = remParts.getOrElse(i) { 0 }
+            if (r > c) return true
+            if (r < c) return false
+        }
+        return cleanRemote != cleanCurrent
+    }
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +29,7 @@ import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
+import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.ui.components.VideoThumbnailView
 import com.videoplayer.app.util.FileOperationHelper
 import kotlinx.coroutines.launch
@@ -50,11 +51,15 @@ private enum class FileDialogType {
 fun HomeScreen(
     modifier: Modifier = Modifier,
     selectedFolder: String?,
+    folderListState: LazyListState,
+    videoListState: LazyListState,
+    lastViewedVideoId: String?,
     onSelectFolder: (String?) -> Unit,
     onVideoClick: (VideoItem, List<VideoItem>) -> Unit,
     onStreamClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val palette = LocalGlassPalette.current
     val scope = rememberCoroutineScope()
     var refreshTrigger by remember { mutableIntStateOf(0) }
     val repository = remember(context) { VideoRepository(context) }
@@ -100,7 +105,7 @@ fun HomeScreen(
                             Icons.Default.VideoLibrary,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
-                            tint = Color(0xFF00E5FF)
+                            tint = palette.primaryGlow
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
@@ -118,8 +123,9 @@ fun HomeScreen(
                 }
             }
         } else if (selectedFolder == null) {
-            // ================= TRANG ĐẦU TIÊN: DANH SÁCH THƯ MỤC LIQUID GLASS =================
+            // ================= TRANG ĐẦU TIÊN: DANH SÁCH THƯ MỤC =================
             LazyColumn(
+                state = folderListState,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -132,8 +138,9 @@ fun HomeScreen(
                                 videos.filter { it.folder == recent.folder }
                             }
                             LiquidGlassCard(
-                                tintColor = Color(0xFF00E5FF),
+                                tintColor = palette.primaryGlow,
                                 surfaceAlpha = 0.16f,
+                                highlighted = true,
                                 cornerRadius = 24.dp,
                                 onClick = { onVideoClick(recent, recentPlaylist) },
                                 modifier = Modifier.fillMaxWidth()
@@ -168,7 +175,7 @@ fun HomeScreen(
                                         val progress = (pos.toFloat() / recent.duration.coerceAtLeast(1L)).coerceIn(0f, 1f)
                                         LinearProgressIndicator(
                                             progress = progress,
-                                            color = Color(0xFF00F0FF),
+                                            color = palette.primaryGlow,
                                             trackColor = Color.White.copy(alpha = 0.15f),
                                             modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp))
                                         )
@@ -192,7 +199,7 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold
                         )
                         LiquidGlassPill(onClick = { refreshTrigger++ }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Làm mới", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
@@ -217,7 +224,7 @@ fun HomeScreen(
                                 Box(
                                     modifier = Modifier
                                         .padding(4.dp)
-                                        .background(Color(0xFF00E5FF).copy(alpha = 0.85f), CircleShape)
+                                        .background(palette.primaryGlow.copy(alpha = 0.9f), CircleShape)
                                         .padding(4.dp)
                                 ) {
                                     Icon(
@@ -242,7 +249,7 @@ fun HomeScreen(
                                     Text(
                                         text = "${folder.count} video",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF00E5FF),
+                                        color = palette.primaryGlow,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
@@ -274,7 +281,23 @@ fun HomeScreen(
             val folderVideos = remember(videos, selectedFolder) {
                 videos.filter { it.folder == selectedFolder }
             }
+
+            // Nếu vừa xem xong 1 video (kể cả khi đã Next sang video khác trong lúc xem),
+            // tự động giữ hoặc cuộn tới đúng vị trí video đó nếu nó nằm ngoài khung nhìn hiện tại
+            LaunchedEffect(lastViewedVideoId, folderVideos.size) {
+                if (lastViewedVideoId != null && folderVideos.isNotEmpty()) {
+                    val idx = folderVideos.indexOfFirst { it.id == lastViewedVideoId }
+                    if (idx >= 0) {
+                        val visibleIndices = videoListState.layoutInfo.visibleItemsInfo.map { it.index }
+                        if (visibleIndices.isEmpty() || idx !in visibleIndices) {
+                            videoListState.scrollToItem((idx - 1).coerceAtLeast(0))
+                        }
+                    }
+                }
+            }
+
             LazyColumn(
+                state = videoListState,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -284,9 +307,11 @@ fun HomeScreen(
                     val progress = if (video.duration > 0 && savedPos > 1000L) {
                         (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
                     } else 0f
+                    val isJustWatched = (video.id == lastViewedVideoId)
 
                     LiquidGlassCard(
                         cornerRadius = 20.dp,
+                        highlighted = isJustWatched,
                         onClick = { onVideoClick(video, folderVideos) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -302,8 +327,8 @@ fun HomeScreen(
                                 Text(
                                     text = video.displayName,
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isJustWatched) palette.primaryGlow else Color.White,
+                                    fontWeight = if (isJustWatched) FontWeight.Bold else FontWeight.SemiBold,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -315,13 +340,13 @@ fun HomeScreen(
                                         video.sizeFormatted
                                     },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (savedPos > 2000L) Color(0xFF00F0FF) else Color(0xFFA7B8D8)
+                                    color = if (savedPos > 2000L) palette.primaryGlow else Color(0xFFA7B8D8)
                                 )
                                 if (progress > 0f) {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     LinearProgressIndicator(
                                         progress = progress,
-                                        color = Color(0xFF00F0FF),
+                                        color = palette.primaryGlow,
                                         trackColor = Color.White.copy(alpha = 0.12f),
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
                                     )
@@ -336,7 +361,6 @@ fun HomeScreen(
             }
         }
 
-        // Nút Floating Action Button phong cách Viên nang Kính Lỏng phát sáng
         LiquidGlassPill(
             active = true,
             onClick = onStreamClick,
@@ -354,7 +378,7 @@ fun HomeScreen(
     showBottomSheetFor?.let { targetVideo ->
         AlertDialog(
             onDismissRequest = { showBottomSheetFor = null },
-            containerColor = Color(0xFF0E172C).copy(alpha = 0.96f),
+            containerColor = palette.deepBgMid.copy(alpha = 0.96f),
             title = { Text(targetVideo.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -375,7 +399,7 @@ fun HomeScreen(
                     }
                     ListItem(
                         headlineContent = { Text("Xem thông tin chi tiết") },
-                        leadingContent = { Icon(Icons.Default.Info, null, tint = Color(0xFF00E5FF)) },
+                        leadingContent = { Icon(Icons.Default.Info, null, tint = palette.primaryGlow) },
                         modifier = Modifier.clickable {
                             activeVideoForAction = targetVideo
                             dialogType = FileDialogType.INFO
@@ -384,7 +408,7 @@ fun HomeScreen(
                     )
                     ListItem(
                         headlineContent = { Text("Đổi tên video") },
-                        leadingContent = { Icon(Icons.Default.Edit, null, tint = Color(0xFF00E5FF)) },
+                        leadingContent = { Icon(Icons.Default.Edit, null, tint = palette.primaryGlow) },
                         modifier = Modifier.clickable {
                             activeVideoForAction = targetVideo
                             dialogType = FileDialogType.RENAME
@@ -393,7 +417,7 @@ fun HomeScreen(
                     )
                     ListItem(
                         headlineContent = { Text("Sao chép (Copy) sang thư mục khác") },
-                        leadingContent = { Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF00E5FF)) },
+                        leadingContent = { Icon(Icons.Default.ContentCopy, null, tint = palette.primaryGlow) },
                         modifier = Modifier.clickable {
                             activeVideoForAction = targetVideo
                             dialogType = FileDialogType.COPY
@@ -402,7 +426,7 @@ fun HomeScreen(
                     )
                     ListItem(
                         headlineContent = { Text("Di chuyển (Move) sang thư mục khác") },
-                        leadingContent = { Icon(Icons.Default.DriveFileMove, null, tint = Color(0xFF00E5FF)) },
+                        leadingContent = { Icon(Icons.Default.DriveFileMove, null, tint = palette.primaryGlow) },
                         modifier = Modifier.clickable {
                             activeVideoForAction = targetVideo
                             dialogType = FileDialogType.MOVE
@@ -432,7 +456,7 @@ fun HomeScreen(
             FileDialogType.INFO -> {
                 AlertDialog(
                     onDismissRequest = { dialogType = FileDialogType.NONE },
-                    containerColor = Color(0xFF0E172C),
+                    containerColor = palette.deepBgMid,
                     title = { Text("Thông tin chi tiết Video") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -454,7 +478,7 @@ fun HomeScreen(
                 var newName by remember(video) { mutableStateOf(File(video.path).nameWithoutExtension) }
                 AlertDialog(
                     onDismissRequest = { dialogType = FileDialogType.NONE },
-                    containerColor = Color(0xFF0E172C),
+                    containerColor = palette.deepBgMid,
                     title = { Text("Đổi tên Video") },
                     text = {
                         OutlinedTextField(
@@ -491,7 +515,7 @@ fun HomeScreen(
                 }
                 AlertDialog(
                     onDismissRequest = { dialogType = FileDialogType.NONE },
-                    containerColor = Color(0xFF0E172C),
+                    containerColor = palette.deepBgMid,
                     title = { Text(if (isMove) "Di chuyển Video tới..." else "Sao chép Video tới...") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -504,7 +528,7 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                                     ) {
                                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Folder, null, tint = Color(0xFF00E5FF))
+                                            Icon(Icons.Default.Folder, null, tint = palette.primaryGlow)
                                             Spacer(Modifier.width(8.dp))
                                             Column {
                                                 Text(f.name, fontWeight = FontWeight.SemiBold, color = Color.White)
@@ -545,7 +569,7 @@ fun HomeScreen(
             FileDialogType.DELETE -> {
                 AlertDialog(
                     onDismissRequest = { dialogType = FileDialogType.NONE },
-                    containerColor = Color(0xFF0E172C),
+                    containerColor = palette.deepBgMid,
                     title = { Text("Xác nhận xóa vĩnh viễn") },
                     text = { Text("Bạn có chắc chắn muốn xóa tệp '${video.displayName}' khỏi bộ nhớ điện thoại không?") },
                     confirmButton = {

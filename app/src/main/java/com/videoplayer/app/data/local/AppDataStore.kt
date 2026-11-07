@@ -14,6 +14,7 @@ private val Context.datastore by preferencesDataStore(name = "videoplayer_prefs"
 
 private val githubRepoKey = stringPreferencesKey("github_repo")
 private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
+private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 
 typealias PositionMap = Map<String, Long>
 
@@ -60,5 +61,17 @@ suspend fun Context.saveGithubRepo(ownerAndRepo: String) {
 fun Context.readGithubRepo(defaultRepo: String): Flow<String> {
     return this.datastore.data.map { prefs: Preferences ->
         prefs[githubRepoKey] ?: defaultRepo
+    }
+}
+
+suspend fun Context.saveGlassTheme(themeId: String) {
+    this.datastore.edit { prefs ->
+        prefs[glassThemeKey] = themeId
+    }
+}
+
+fun Context.observeGlassTheme(): Flow<String> {
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[glassThemeKey] ?: "cyan_nebula"
     }
 }
