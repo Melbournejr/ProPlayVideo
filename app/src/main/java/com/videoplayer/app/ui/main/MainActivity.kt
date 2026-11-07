@@ -83,9 +83,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val context = LocalContext.current
+            val scope = rememberCoroutineScope()
             val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
             val tintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
             val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
+            val savedVaultPin by context.observeVaultPin().collectAsState(initial = null)
 
             val styleConfig = remember(themeId, tintId, frostAlpha) {
                 GlassStyleConfig(
@@ -100,8 +102,6 @@ class MainActivity : ComponentActivity() {
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
                 var isVaultUnlocked by remember { mutableStateOf(false) }
                 var showVaultPinDialog by remember { mutableStateOf(false) }
-                val savedVaultPin by context.observeVaultPin().collectAsState(initial = null)
-                val scope = rememberCoroutineScope()
                 var selectedVideo by remember { mutableStateOf<VideoItem?>(null) }
                 var lastViewedVideoId by remember { mutableStateOf<String?>(null) }
                 var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
@@ -109,8 +109,8 @@ class MainActivity : ComponentActivity() {
 
                 val folderListState = remember { LazyListState() }
                 val videoListStates = remember { mutableStateMapOf<String, LazyListState>() }
-                val activeVideoListState = remember(selectedFolder) {
-                    val key = selectedFolder ?: "__ROOT__"
+                val activeVideoListState = remember(selectedFolder, isVaultUnlocked) {
+                    val key = if (isVaultUnlocked) "__VAULT__" else (selectedFolder ?: "__ROOT__")
                     videoListStates.getOrPut(key) { LazyListState() }
                 }
 
@@ -147,9 +147,12 @@ class MainActivity : ComponentActivity() {
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (screen == Screen.Home && selectedFolder != null) {
-                                        IconButton(onClick = { selectedFolder = null }) {
-                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại thư mục", tint = Color.White)
+                                    if (screen == Screen.Home && (selectedFolder != null || isVaultUnlocked)) {
+                                        IconButton(onClick = {
+                                            if (isVaultUnlocked) isVaultUnlocked = false
+                                            else selectedFolder = null
+                                        }) {
+                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
                                         }
                                     } else if (screen != Screen.Home) {
                                         IconButton(onClick = { screen = Screen.Home }) {
@@ -183,6 +186,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
 
+                                    // Nút mở Kho Video Riêng Tư (Ổ khóa Kính Lỏng)
                                     IconButton(onClick = {
                                         if (isVaultUnlocked) {
                                             isVaultUnlocked = false
@@ -196,6 +200,7 @@ class MainActivity : ComponentActivity() {
                                             tint = if (isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
+
                                     IconButton(onClick = {
                                         screen = Screen.Home
                                         selectedFolder = null
@@ -204,9 +209,10 @@ class MainActivity : ComponentActivity() {
                                         Icon(
                                             Icons.Default.Home,
                                             contentDescription = "Thư mục gốc",
-                                            tint = if (screen == Screen.Home && selectedFolder == null) styleConfig.palette.primaryGlow else Color.White
+                                            tint = if (screen == Screen.Home && selectedFolder == null && !isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
+
                                     IconButton(onClick = { screen = Screen.Settings }) {
                                         Icon(
                                             Icons.Default.Settings,
@@ -248,66 +254,68 @@ class MainActivity : ComponentActivity() {
                                     else -> {}
                                 }
                             }
-                            if (showVaultPinDialog) {
-                                var pinInput by remember { mutableStateOf("") }
-                                val isSettingNewPin = savedVaultPin.isNullOrBlank()
-                                AlertDialog(
-                                    onDismissRequest = { showVaultPinDialog = false },
-                                    containerColor = styleConfig.palette.deepBgMid,
-                                    title = {
+                        }
+
+                        // Hộp thoại thiết lập / nhập Mã PIN Kho Riêng Tư
+                        if (showVaultPinDialog) {
+                            var pinInput by remember { mutableStateOf("") }
+                            val isSettingNewPin = savedVaultPin.isNullOrBlank()
+                            AlertDialog(
+                                onDismissRequest = { showVaultPinDialog = false },
+                                containerColor = styleConfig.palette.deepBgMid,
+                                title = {
+                                    Text(
+                                        if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho Riêng Tư" else "🔒 Mở Kho Video Riêng Tư",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho Riêng Tư" else "🔒 Mở Kho Video Riêng Tư",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold
+                                            if (isSettingNewPin) "Nhập mã PIN (từ 4 ký tự trở lên) để bảo vệ các video riêng tư của bạn:"
+                                            else "Nhập mã PIN của bạn để xem các video đã ẩn:",
+                                            color = Color.White
                                         )
-                                    },
-                                    text = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                if (isSettingNewPin) "Nhập mã PIN (4-6 số) để bảo vệ các video riêng tư của bạn:"
-                                                else "Nhập mã PIN của bạn để xem các video đã ẩn:",
-                                                color = Color.White
-                                            )
-                                            OutlinedTextField(
-                                                value = pinInput,
-                                                onValueChange = { pinInput = it },
-                                                label = { Text("Mã PIN") },
-                                                singleLine = true,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    },
-                                    confirmButton = {
-                                        Button(onClick = {
-                                            if (isSettingNewPin) {
-                                                if (pinInput.trim().length >= 4) {
-                                                    scope.launch {
-                                                        context.saveVaultPin(pinInput.trim())
-                                                        isVaultUnlocked = true
-                                                        screen = Screen.Home
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "Mã PIN phải từ 4 ký tự trở lên!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                if (pinInput.trim() == savedVaultPin) {
+                                        OutlinedTextField(
+                                            value = pinInput,
+                                            onValueChange = { pinInput = it },
+                                            label = { Text("Mã PIN") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = {
+                                        if (isSettingNewPin) {
+                                            if (pinInput.trim().length >= 4) {
+                                                scope.launch {
+                                                    context.saveVaultPin(pinInput.trim())
                                                     isVaultUnlocked = true
                                                     screen = Screen.Home
                                                     showVaultPinDialog = false
-                                                } else {
-                                                    Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
                                                 }
+                                            } else {
+                                                Toast.makeText(context, "Mã PIN phải từ 4 ký tự trở lên!", Toast.LENGTH_SHORT).show()
                                             }
-                                        }) {
-                                            Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
+                                        } else {
+                                            if (pinInput.trim() == savedVaultPin) {
+                                                isVaultUnlocked = true
+                                                screen = Screen.Home
+                                                showVaultPinDialog = false
+                                            } else {
+                                                Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
+                                    }) {
+                                        Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
                                     }
-                                )
-                            }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
+                                }
+                            )
                         }
                     }
                 }
@@ -347,7 +355,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ================= 1. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH =================
+        // 1. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -423,73 +431,13 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         }
                         if (isSelected) {
                             Text("✓", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
-                            if (showVaultPinDialog) {
-                                var pinInput by remember { mutableStateOf("") }
-                                val isSettingNewPin = savedVaultPin.isNullOrBlank()
-                                AlertDialog(
-                                    onDismissRequest = { showVaultPinDialog = false },
-                                    containerColor = styleConfig.palette.deepBgMid,
-                                    title = {
-                                        Text(
-                                            if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho Riêng Tư" else "🔒 Mở Kho Video Riêng Tư",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    },
-                                    text = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                if (isSettingNewPin) "Nhập mã PIN (4-6 số) để bảo vệ các video riêng tư của bạn:"
-                                                else "Nhập mã PIN của bạn để xem các video đã ẩn:",
-                                                color = Color.White
-                                            )
-                                            OutlinedTextField(
-                                                value = pinInput,
-                                                onValueChange = { pinInput = it },
-                                                label = { Text("Mã PIN") },
-                                                singleLine = true,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    },
-                                    confirmButton = {
-                                        Button(onClick = {
-                                            if (isSettingNewPin) {
-                                                if (pinInput.trim().length >= 4) {
-                                                    scope.launch {
-                                                        context.saveVaultPin(pinInput.trim())
-                                                        isVaultUnlocked = true
-                                                        screen = Screen.Home
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "Mã PIN phải từ 4 ký tự trở lên!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                if (pinInput.trim() == savedVaultPin) {
-                                                    isVaultUnlocked = true
-                                                    screen = Screen.Home
-                                                    showVaultPinDialog = false
-                                                } else {
-                                                    Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }) {
-                                            Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
-                                    }
-                                )
-                            }
                         }
                     }
                 }
             }
         }
 
-        // ================= 2. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN & GRADIENT =================
+        // 2. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN & GRADIENT
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -552,73 +500,13 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         }
                         if (isSelected) {
                             Text("Đang dùng ✓", color = preset.primaryGlow, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                            if (showVaultPinDialog) {
-                                var pinInput by remember { mutableStateOf("") }
-                                val isSettingNewPin = savedVaultPin.isNullOrBlank()
-                                AlertDialog(
-                                    onDismissRequest = { showVaultPinDialog = false },
-                                    containerColor = styleConfig.palette.deepBgMid,
-                                    title = {
-                                        Text(
-                                            if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho Riêng Tư" else "🔒 Mở Kho Video Riêng Tư",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    },
-                                    text = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                if (isSettingNewPin) "Nhập mã PIN (4-6 số) để bảo vệ các video riêng tư của bạn:"
-                                                else "Nhập mã PIN của bạn để xem các video đã ẩn:",
-                                                color = Color.White
-                                            )
-                                            OutlinedTextField(
-                                                value = pinInput,
-                                                onValueChange = { pinInput = it },
-                                                label = { Text("Mã PIN") },
-                                                singleLine = true,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    },
-                                    confirmButton = {
-                                        Button(onClick = {
-                                            if (isSettingNewPin) {
-                                                if (pinInput.trim().length >= 4) {
-                                                    scope.launch {
-                                                        context.saveVaultPin(pinInput.trim())
-                                                        isVaultUnlocked = true
-                                                        screen = Screen.Home
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "Mã PIN phải từ 4 ký tự trở lên!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                if (pinInput.trim() == savedVaultPin) {
-                                                    isVaultUnlocked = true
-                                                    screen = Screen.Home
-                                                    showVaultPinDialog = false
-                                                } else {
-                                                    Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }) {
-                                            Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
-                                    }
-                                )
-                            }
                         }
                     }
                 }
             }
         }
 
-        // ================= 3. TRUNG TÂM CẬP NHẬT OTA NHẬN DIỆN ĐÚNG PHIÊN BẢN =================
+        // 3. TRUNG TÂM CẬP NHẬT OTA NHẬN DIỆN ĐÚNG PHIÊN BẢN
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
@@ -784,66 +672,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("🚀 Tải ngầm bằng Hệ thống (System DownloadManager)", color = Color.White)
-                            }
-                            if (showVaultPinDialog) {
-                                var pinInput by remember { mutableStateOf("") }
-                                val isSettingNewPin = savedVaultPin.isNullOrBlank()
-                                AlertDialog(
-                                    onDismissRequest = { showVaultPinDialog = false },
-                                    containerColor = styleConfig.palette.deepBgMid,
-                                    title = {
-                                        Text(
-                                            if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho Riêng Tư" else "🔒 Mở Kho Video Riêng Tư",
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    },
-                                    text = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                if (isSettingNewPin) "Nhập mã PIN (4-6 số) để bảo vệ các video riêng tư của bạn:"
-                                                else "Nhập mã PIN của bạn để xem các video đã ẩn:",
-                                                color = Color.White
-                                            )
-                                            OutlinedTextField(
-                                                value = pinInput,
-                                                onValueChange = { pinInput = it },
-                                                label = { Text("Mã PIN") },
-                                                singleLine = true,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    },
-                                    confirmButton = {
-                                        Button(onClick = {
-                                            if (isSettingNewPin) {
-                                                if (pinInput.trim().length >= 4) {
-                                                    scope.launch {
-                                                        context.saveVaultPin(pinInput.trim())
-                                                        isVaultUnlocked = true
-                                                        screen = Screen.Home
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "Mã PIN phải từ 4 ký tự trở lên!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                if (pinInput.trim() == savedVaultPin) {
-                                                    isVaultUnlocked = true
-                                                    screen = Screen.Home
-                                                    showVaultPinDialog = false
-                                                } else {
-                                                    Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }) {
-                                            Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
-                                    }
-                                )
                             }
                         }
                     }
