@@ -1,0 +1,56 @@
+﻿name: Android Release CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Cài đặt JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Tạo Gradle Wrapper nếu chưa có
+        run: |
+          if [ ! -f gradlew ]; then
+            echo "Gradle Wrapper chưa tồn tại, đang tạo..."
+            wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp
+            export PATH=$PATH:/tmp/gradle-8.2/bin
+            gradle wrapper --gradle-version 8.2
+          fi
+        shell: bash
+
+      - name: Build APK Debug
+        run: ./gradlew assembleDebug
+        shell: bash
+
+      - name: Lấy đường dẫn APK
+        id: apk_path
+        run: echo "apk_path=$(find app/build/outputs/apk -name '*.apk' | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Tạo GitHub Release và tải APK lên
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('build-{0}', github.run_id) }}
+          name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('Build #{0}', github.run_id) }}
+          body: Phát hành tự động từ GitHub Actions. Tải APK về để cập nhật OTA trong ứng dụng.
+          files: ${{ steps.apk_path.outputs.apk_path }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
