@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 
 object LiquidGlassColors {
     val DeepSpace = Color(0xFF070B19)
-    valCyanGlow = Color(0xFF00F0FF)
+    val CyanGlow = Color(0xFF00F0FF)
     val VioletGlow = Color(0xFF8A2BE2)
     val BlueGlow = Color(0xFF0066FF)
     val TextPrimary = Color(0xFFF5F9FF)
