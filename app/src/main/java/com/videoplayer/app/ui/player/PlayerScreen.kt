@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.util.Rational
 import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -20,17 +21,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.Player
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.videoplayer.app.data.local.readLastPosition
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.PlayerManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+private enum class GestureMode {
+    NONE, SEEK, BRIGHTNESS, VOLUME
+}
+
+private fun formatTimeMs(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0L)
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+}
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
@@ -40,6 +59,7 @@ fun PlayerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val playerManager = remember { PlayerManager(context) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -54,29 +74,70 @@ fun PlayerScreen(
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var gestureHint by remember { mutableStateOf<String?>(null) }
 
+    // Biến trạng thái phục vụ Khóa trục Gesture (Chống nhảy qua lại giữa Tua và Âm lượng/Độ sáng)
+    var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
+    var startTouchX by remember { mutableFloatStateOf(0f) }
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+    var totalDragY by remember { mutableFloatStateOf(0f) }
+    var initialSeekPos by remember { mutableLongStateOf(0L) }
+    var targetSeekPos by remember { mutableLongStateOf(0L) }
+    var initialBrightness by remember { mutableFloatStateOf(0.5f) }
+    var initialVolume by remember { mutableFloatStateOf(0f) }
+
+    fun persistCurrentPosition() {
+        if (video != null) {
+            val pos = playerManager.getCurrentPosition()
+            val dur = playerManager.getDuration()
+            // Nếu xem gần hết (>98%) thì đặt lại về 0 cho lần xem sau, ngược lại lưu đúng vị trí đang chạy
+            val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
+            CoroutineScope(Dispatchers.IO).launch {
+                context.saveLastPosition(video.id, posToSave)
+            }
+        }
+    }
+
+    BackHandler {
+        persistCurrentPosition()
+        onBack()
+    }
+
     LaunchedEffect(video, streamUrl) {
         if (video != null) {
             val savedPos = context.readLastPosition(video.id)
             playerManager.playLocal(video, savedPos)
+            currentPos = savedPos
         } else if (!streamUrl.isNullOrEmpty()) {
             playerManager.playStream(streamUrl)
         }
     }
 
-    LaunchedEffect(Unit) {
+    // Lưu vị trí định kỳ mỗi 1 giây khi đang phát
+    LaunchedEffect(video) {
         while (true) {
             isPlaying = playerManager.isPlaying()
-            currentPos = playerManager.getCurrentPosition()
+            if (gestureMode != GestureMode.SEEK) {
+                currentPos = playerManager.getCurrentPosition()
+            }
             duration = playerManager.getDuration().coerceAtLeast(1L)
             if (video != null && isPlaying) {
                 context.saveLastPosition(video.id, currentPos)
             }
-            delay(500)
+            delay(1000)
         }
     }
 
-    DisposableEffect(Unit) {
+    // Lưu vị trí ngay khi người dùng bấm Home / tắt màn hình / thoát trình phát
+    DisposableEffect(lifecycleOwner, video) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                persistCurrentPosition()
+                playerManager.pause()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            persistCurrentPosition()
+            lifecycleOwner.lifecycle.removeObserver(observer)
             playerManager.release()
         }
     }
@@ -106,62 +167,118 @@ fun PlayerScreen(
                             if (!isLocked) {
                                 val width = size.width
                                 val cur = playerManager.getCurrentPosition()
+                                val dur = playerManager.getDuration().coerceAtLeast(1L)
                                 if (offset.x < width / 2f) {
-                                    playerManager.seekTo((cur - 10_000L).coerceAtLeast(0L))
-                                    gestureHint = "⏪ -10 giây"
+                                    val next = (cur - 10_000L).coerceAtLeast(0L)
+                                    playerManager.seekTo(next)
+                                    currentPos = next
+                                    gestureHint = "⏪ -10 giây (${formatTimeMs(next)})"
                                 } else {
-                                    playerManager.seekTo((cur + 10_000L).coerceAtMost(duration))
-                                    gestureHint = "⏩ +10 giây"
+                                    val next = (cur + 10_000L).coerceAtMost(dur)
+                                    playerManager.seekTo(next)
+                                    currentPos = next
+                                    gestureHint = "⏩ +10 giây (${formatTimeMs(next)})"
                                 }
-                                scope.launch { delay(800); gestureHint = null }
+                                persistCurrentPosition()
+                                scope.launch { delay(800); if (gestureMode == GestureMode.NONE) gestureHint = null }
                             }
                         },
                         onLongPress = {
                             if (!isLocked) {
                                 playerManager.setPlaybackSpeed(2.0f)
                                 gestureHint = "⚡ Tốc độ 2.0x"
-                                scope.launch { delay(1200); gestureHint = null }
+                                scope.launch { delay(1200); if (gestureMode == GestureMode.NONE) gestureHint = null }
                             }
                         }
                     )
                 }
                 .pointerInput(isLocked) {
                     detectDragGestures(
-                        onDragEnd = { gestureHint = null },
+                        onDragStart = { startOffset ->
+                            if (isLocked) return@detectDragGestures
+                            gestureMode = GestureMode.NONE
+                            startTouchX = startOffset.x
+                            totalDragX = 0f
+                            totalDragY = 0f
+                            initialSeekPos = playerManager.getCurrentPosition()
+                            targetSeekPos = initialSeekPos
+
+                            val activity = context as? Activity
+                            val winBright = activity?.window?.attributes?.screenBrightness ?: -1f
+                            initialBrightness = if (winBright in 0.01f..1.0f) winBright else 0.5f
+
+                            initialVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+                        },
+                        onDragEnd = {
+                            if (gestureMode == GestureMode.SEEK) {
+                                playerManager.seekTo(targetSeekPos)
+                                currentPos = targetSeekPos
+                                persistCurrentPosition()
+                            }
+                            gestureMode = GestureMode.NONE
+                            gestureHint = null
+                        },
+                        onDragCancel = {
+                            gestureMode = GestureMode.NONE
+                            gestureHint = null
+                        },
                         onDrag = { change, dragAmount ->
                             if (isLocked) return@detectDragGestures
-                            val width = size.width.toFloat()
-                            val touchX = change.position.x
-                            val dx = dragAmount.x
-                            val dy = dragAmount.y
+                            change.consume()
 
-                            if (kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
-                                if (touchX < width / 2f) {
-                                    // Vuốt dọc bên trái: Độ sáng
+                            val screenWidth = size.width.toFloat().coerceAtLeast(1f)
+                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
+
+                            totalDragX += dragAmount.x
+                            totalDragY += dragAmount.y
+
+                            // KHÓA TRỤC: Chỉ quyết định chế độ 1 lần duy nhất khi vượt ngưỡng 18px
+                            if (gestureMode == GestureMode.NONE) {
+                                val threshold = 18f
+                                if (abs(totalDragX) > threshold || abs(totalDragY) > threshold) {
+                                    gestureMode = if (abs(totalDragX) > abs(totalDragY) * 1.2f) {
+                                        GestureMode.SEEK
+                                    } else {
+                                        if (startTouchX < screenWidth / 2f) GestureMode.BRIGHTNESS else GestureMode.VOLUME
+                                    }
+                                    // Đặt lại tổng quãng đường tính từ thời điểm khóa trục để mượt tuyệt đối
+                                    totalDragX = 0f
+                                    totalDragY = 0f
+                                }
+                            }
+
+                            when (gestureMode) {
+                                GestureMode.SEEK -> {
+                                    val dur = playerManager.getDuration().coerceAtLeast(1L)
+                                    // Vuốt hết chiều ngang màn hình tương đương tua tối đa 120 giây (hoặc 1/2 thời lượng video ngắn)
+                                    val maxSeekRange = minOf(dur, 120_000L).coerceAtLeast(30_000L)
+                                    val seekDelta = ((totalDragX / screenWidth) * maxSeekRange).toLong()
+                                    targetSeekPos = (initialSeekPos + seekDelta).coerceIn(0L, dur)
+                                    currentPos = targetSeekPos
+                                    val diffSec = (targetSeekPos - initialSeekPos) / 1000
+                                    val sign = if (diffSec >= 0) "+${diffSec}s" else "${diffSec}s"
+                                    gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} / ${formatTimeMs(dur)} ($sign)"
+                                }
+                                GestureMode.BRIGHTNESS -> {
                                     val activity = context as? Activity ?: return@detectDragGestures
                                     val window = activity.window
                                     val attrs = window.attributes
-                                    val curBright = if (attrs.screenBrightness < 0) 0.5f else attrs.screenBrightness
-                                    val newBright = (curBright - dy / 600f).coerceIn(0.05f, 1.0f)
+                                    val deltaBright = -totalDragY / (screenHeight * 0.75f)
+                                    val newBright = (initialBrightness + deltaBright).coerceIn(0.02f, 1.0f)
                                     attrs.screenBrightness = newBright
                                     window.attributes = attrs
-                                    gestureHint = "☀️ Độ sáng: ${(newBright * 100).toInt()}%"
-                                } else {
-                                    // Vuốt dọc bên phải: Âm lượng
-                                    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                    val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                    val delta = if (dy < -10) 1 else if (dy > 10) -1 else 0
-                                    if (delta != 0) {
-                                        val newVol = (curVol + delta).coerceIn(0, maxVol)
-                                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-                                        gestureHint = "🔊 Âm lượng: ${(newVol * 100) / maxVol}%"
-                                    }
+                                    gestureHint = "☀️ Độ sáng: ${(newBright * 100).roundToInt()}%"
                                 }
-                            } else {
-                                // Vuốt ngang: Tua video
-                                val newPos = (playerManager.getCurrentPosition() + (dx * 150).toLong()).coerceIn(0L, duration)
-                                playerManager.seekTo(newPos)
-                                gestureHint = "⏱️ ${newPos / 1000}s / ${duration / 1000}s"
+                                GestureMode.VOLUME -> {
+                                    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    val deltaVol = (-totalDragY / (screenHeight * 0.75f)) * maxVol
+                                    val newVolFloat = (initialVolume + deltaVol).coerceIn(0f, maxVol.toFloat())
+                                    val newVolInt = newVolFloat.roundToInt().coerceIn(0, maxVol)
+                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolInt, 0)
+                                    val percent = ((newVolFloat / maxVol) * 100).roundToInt().coerceIn(0, 100)
+                                    gestureHint = "🔊 Âm lượng: $percent%"
+                                }
+                                GestureMode.NONE -> {}
                             }
                         }
                     )
@@ -171,7 +288,7 @@ fun PlayerScreen(
         // Hiển thị thông báo Gesture ở giữa màn hình
         gestureHint?.let { hint ->
             Surface(
-                color = Color.Black.copy(alpha = 0.7f),
+                color = Color.Black.copy(alpha = 0.75f),
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.align(Alignment.Center)
             ) {
@@ -179,7 +296,7 @@ fun PlayerScreen(
                     text = hint,
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
                 )
             }
         }
@@ -216,14 +333,17 @@ fun PlayerScreen(
                         currentPos = it.toLong()
                         playerManager.seekTo(currentPos)
                     },
+                    onValueChangeFinished = {
+                        persistCurrentPosition()
+                    },
                     valueRange = 0f..duration.toFloat().coerceAtLeast(1f)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("${currentPos / 1000}s", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                    Text("${duration / 1000}s", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    Text(formatTimeMs(currentPos), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    Text(formatTimeMs(duration), color = Color.White, style = MaterialTheme.typography.bodySmall)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
@@ -231,11 +351,19 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        persistCurrentPosition()
+                        onBack()
+                    }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
                     }
                     IconButton(onClick = {
-                        if (isPlaying) playerManager.pause() else playerManager.resume()
+                        if (isPlaying) {
+                            playerManager.pause()
+                            persistCurrentPosition()
+                        } else {
+                            playerManager.resume()
+                        }
                         isPlaying = !isPlaying
                     }) {
                         Icon(
@@ -274,6 +402,7 @@ fun PlayerScreen(
                     }
                     IconButton(onClick = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            persistCurrentPosition()
                             (context as? Activity)?.enterPictureInPictureMode(
                                 PictureInPictureParams.Builder()
                                     .setAspectRatio(Rational(16, 9))

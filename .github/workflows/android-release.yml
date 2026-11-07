@@ -22,6 +22,21 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Xác định tên Repo và Phiên bản
+        id: meta
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER_NAME="${GITHUB_REF#refs/tags/v}"
+          else
+            VER_NAME="1.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "repo_name=${REPO_NAME}" >> $GITHUB_OUTPUT
+          echo "version_name=${VER_NAME}" >> $GITHUB_OUTPUT
+          echo "tag_name=v${VER_NAME}" >> $GITHUB_OUTPUT
+          echo "apk_name=${REPO_NAME}-v${VER_NAME}.apk" >> $GITHUB_OUTPUT
+        shell: bash
+
       - name: Tạo Gradle Wrapper và Build APK
         run: |
           if [ ! -f gradlew ]; then
@@ -30,20 +45,25 @@ jobs:
             /tmp/gradle-8.4/bin/gradle wrapper --gradle-version 8.4
           fi
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug -PrepoName="${{ steps.meta.outputs.repo_name }}" -PversionName="${{ steps.meta.outputs.version_name }}" -PversionCode="${{ github.run_number }}" --no-daemon
         shell: bash
 
-      - name: Lấy đường dẫn APK
-        id: apk_path
-        run: echo "apk_path=$(find app/build/outputs/apk -name '*.apk' | head -n 1)" >> $GITHUB_OUTPUT
+      - name: Đổi tên file APK theo chuẩn Repo + Phiên bản
+        id: rename_apk
+        run: |
+          RAW_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          TARGET_APK="app/build/outputs/apk/debug/${{ steps.meta.outputs.apk_name }}"
+          cp "$RAW_APK" "$TARGET_APK"
+          echo "apk_path=$TARGET_APK" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Tạo GitHub Release và tải APK lên cho OTA
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('v1.0.{0}', github.run_number) }}
-          name: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && github.ref_name || format('Release v1.0.{0}', github.run_number) }}
-          body: "Bản build tự động từ GitHub Actions. Hỗ trợ cập nhật OTA trực tiếp trong ứng dụng."
-          files: ${{ steps.apk_path.outputs.apk_path }}
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: "${{ steps.meta.outputs.repo_name }} ${{ steps.meta.outputs.tag_name }}"
+          body: "Bản phát hành tự động **${{ steps.meta.outputs.apk_name }}**. Hỗ trợ tải và cập nhật OTA trực tiếp trong ứng dụng."
+          files: ${{ steps.rename_apk.outputs.apk_path }}
           draft: false
           prerelease: false
         env:

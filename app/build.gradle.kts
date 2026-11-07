@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val appVersionName = project.findProperty("versionName")?.toString() ?: "1.0.2"
+val appVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 2
+val repoName = project.findProperty("repoName")?.toString() ?: "ProPlayVideo"
+
 android {
     namespace = "com.videoplayer.app"
     compileSdk = 34
@@ -11,8 +15,9 @@ android {
         applicationId = "com.videoplayer.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+        setProperty("archivesBaseName", "${repoName}-v${appVersionName}")
     }
 
     buildTypes {
@@ -27,6 +32,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
