@@ -3,10 +3,12 @@ package com.videoplayer.app.ui.player
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.ContextWrapper
 import android.media.AudioManager
 import android.os.Build
 import android.util.Rational
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -24,6 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -43,6 +48,15 @@ private enum class GestureMode {
     NONE, SEEK, BRIGHTNESS, VOLUME
 }
 
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 private fun formatTimeMs(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0L)
     val h = totalSec / 3600
@@ -59,6 +73,7 @@ fun PlayerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val playerManager = remember { PlayerManager(context) }
@@ -73,8 +88,9 @@ fun PlayerScreen(
     var subtitlesEnabled by remember { mutableStateOf(true) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var gestureHint by remember { mutableStateOf<String?>(null) }
+    var isInPipMode by remember { mutableStateOf(false) }
 
-    // Biến trạng thái phục vụ Khóa trục Gesture (Chống nhảy qua lại giữa Tua và Âm lượng/Độ sáng)
+    // Biến trạng thái phục vụ Khóa trục Gesture
     var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
     var startTouchX by remember { mutableFloatStateOf(0f) }
     var totalDragX by remember { mutableFloatStateOf(0f) }
@@ -88,10 +104,44 @@ fun PlayerScreen(
         if (video != null) {
             val pos = playerManager.getCurrentPosition()
             val dur = playerManager.getDuration()
-            // Nếu xem gần hết (>98%) thì đặt lại về 0 cho lần xem sau, ngược lại lưu đúng vị trí đang chạy
             val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
             CoroutineScope(Dispatchers.IO).launch {
                 context.saveLastPosition(video.id, posToSave)
+            }
+        }
+    }
+
+    fun enterPip() {
+        val act = activity ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                persistCurrentPosition()
+                showControls = false
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                act.enterPictureInPictureMode(params)
+                isInPipMode = true
+            } catch (_: Exception) {}
+        }
+    }
+
+    // 1. Giữ màn hình luôn sáng (FLAG_KEEP_SCREEN_ON) & Ẩn thanh thông báo Fullscreen (Immersive Mode)
+    DisposableEffect(activity) {
+        val window = activity?.window
+        if (window != null) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            if (window != null) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
             }
         }
     }
@@ -111,10 +161,13 @@ fun PlayerScreen(
         }
     }
 
-    // Lưu vị trí định kỳ mỗi 1 giây khi đang phát
+    // Cập nhật tiến trình & kiểm tra trạng thái PiP mỗi 500ms
     LaunchedEffect(video) {
         while (true) {
             isPlaying = playerManager.isPlaying()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity != null) {
+                isInPipMode = activity.isInPictureInPictureMode
+            }
             if (gestureMode != GestureMode.SEEK) {
                 currentPos = playerManager.getCurrentPosition()
             }
@@ -122,16 +175,30 @@ fun PlayerScreen(
             if (video != null && isPlaying) {
                 context.saveLastPosition(video.id, currentPos)
             }
-            delay(1000)
+            delay(500)
         }
     }
 
-    // Lưu vị trí ngay khi người dùng bấm Home / tắt màn hình / thoát trình phát
+    // 2. Xử lý Lifecycle chuẩn cho PiP: Chỉ dừng video ở ON_STOP khi KHÔNG ở chế độ PiP
     DisposableEffect(lifecycleOwner, video) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                persistCurrentPosition()
-                playerManager.pause()
+            val inPip = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                activity?.isInPictureInPictureMode == true
+            } else false
+            isInPipMode = inPip
+
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    persistCurrentPosition()
+                    // Lưu ý: KHÔNG pause video ở ON_PAUSE vì khi vừa vào PiP Android sẽ gọi ON_PAUSE
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    persistCurrentPosition()
+                    if (!inPip) {
+                        playerManager.pause()
+                    }
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -150,17 +217,20 @@ fun PlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    keepScreenOn = true
                     player = playerManager.player
                     useController = false
                     setResizeMode(resizeMode)
                 }
             },
             update = { view ->
+                view.keepScreenOn = isPlaying
                 view.resizeMode = resizeMode
             },
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(isLocked) {
+                .pointerInput(isLocked, isInPipMode) {
+                    if (isInPipMode) return@pointerInput
                     detectTapGestures(
                         onTap = { showControls = !showControls },
                         onDoubleTap = { offset ->
@@ -192,7 +262,8 @@ fun PlayerScreen(
                         }
                     )
                 }
-                .pointerInput(isLocked) {
+                .pointerInput(isLocked, isInPipMode) {
+                    if (isInPipMode) return@pointerInput
                     detectDragGestures(
                         onDragStart = { startOffset ->
                             if (isLocked) return@detectDragGestures
@@ -203,7 +274,6 @@ fun PlayerScreen(
                             initialSeekPos = playerManager.getCurrentPosition()
                             targetSeekPos = initialSeekPos
 
-                            val activity = context as? Activity
                             val winBright = activity?.window?.attributes?.screenBrightness ?: -1f
                             initialBrightness = if (winBright in 0.01f..1.0f) winBright else 0.5f
 
@@ -232,7 +302,6 @@ fun PlayerScreen(
                             totalDragX += dragAmount.x
                             totalDragY += dragAmount.y
 
-                            // KHÓA TRỤC: Chỉ quyết định chế độ 1 lần duy nhất khi vượt ngưỡng 18px
                             if (gestureMode == GestureMode.NONE) {
                                 val threshold = 18f
                                 if (abs(totalDragX) > threshold || abs(totalDragY) > threshold) {
@@ -241,7 +310,6 @@ fun PlayerScreen(
                                     } else {
                                         if (startTouchX < screenWidth / 2f) GestureMode.BRIGHTNESS else GestureMode.VOLUME
                                     }
-                                    // Đặt lại tổng quãng đường tính từ thời điểm khóa trục để mượt tuyệt đối
                                     totalDragX = 0f
                                     totalDragY = 0f
                                 }
@@ -250,7 +318,6 @@ fun PlayerScreen(
                             when (gestureMode) {
                                 GestureMode.SEEK -> {
                                     val dur = playerManager.getDuration().coerceAtLeast(1L)
-                                    // Vuốt hết chiều ngang màn hình tương đương tua tối đa 120 giây (hoặc 1/2 thời lượng video ngắn)
                                     val maxSeekRange = minOf(dur, 120_000L).coerceAtLeast(30_000L)
                                     val seekDelta = ((totalDragX / screenWidth) * maxSeekRange).toLong()
                                     targetSeekPos = (initialSeekPos + seekDelta).coerceIn(0L, dur)
@@ -260,8 +327,8 @@ fun PlayerScreen(
                                     gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} / ${formatTimeMs(dur)} ($sign)"
                                 }
                                 GestureMode.BRIGHTNESS -> {
-                                    val activity = context as? Activity ?: return@detectDragGestures
-                                    val window = activity.window
+                                    val act = activity ?: return@detectDragGestures
+                                    val window = act.window
                                     val attrs = window.attributes
                                     val deltaBright = -totalDragY / (screenHeight * 0.75f)
                                     val newBright = (initialBrightness + deltaBright).coerceIn(0.02f, 1.0f)
@@ -285,24 +352,26 @@ fun PlayerScreen(
                 }
         )
 
-        // Hiển thị thông báo Gesture ở giữa màn hình
-        gestureHint?.let { hint ->
-            Surface(
-                color = Color.Black.copy(alpha = 0.75f),
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.align(Alignment.Center)
-            ) {
-                Text(
-                    text = hint,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
-                )
+        // Hiển thị thông báo Gesture ở giữa màn hình (ẩn khi ở chế độ PiP)
+        if (!isInPipMode) {
+            gestureHint?.let { hint ->
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Text(
+                        text = hint,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                    )
+                }
             }
         }
 
         // Nút mở khóa khi đang bật Child Lock
-        if (isLocked && showControls) {
+        if (isLocked && showControls && !isInPipMode) {
             FloatingActionButton(
                 onClick = { isLocked = false },
                 modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
@@ -311,8 +380,8 @@ fun PlayerScreen(
             }
         }
 
-        // Bảng điều khiển đầy đủ
-        if (showControls && !isLocked) {
+        // Bảng điều khiển đầy đủ (Tự động ẩn khi vào chế độ PiP)
+        if (showControls && !isLocked && !isInPipMode) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -400,16 +469,7 @@ fun PlayerScreen(
                             tint = if (subtitlesEnabled) MaterialTheme.colorScheme.primary else Color.Gray
                         )
                     }
-                    IconButton(onClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            persistCurrentPosition()
-                            (context as? Activity)?.enterPictureInPictureMode(
-                                PictureInPictureParams.Builder()
-                                    .setAspectRatio(Rational(16, 9))
-                                    .build()
-                            )
-                        }
-                    }) {
+                    IconButton(onClick = { enterPip() }) {
                         Icon(Icons.Default.PictureInPictureAlt, contentDescription = "PiP", tint = Color.White)
                     }
                     IconButton(onClick = { isLocked = true }) {

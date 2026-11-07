@@ -1,8 +1,10 @@
 package com.videoplayer.app.ui.main
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
@@ -32,6 +34,21 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private val requestStoragePermission = registerForActivityResult(RequestMultiplePermissions()) { }
+    private var isCurrentlyInPlayerScreen = false
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Tự động vào chế độ Hình trong hình (PiP) khi người dùng vuốt về màn hình chính lúc đang xem video
+        if (isCurrentlyInPlayerScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                enterPictureInPictureMode(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                )
+            } catch (_: Exception) {}
+        }
+    }
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,9 +70,24 @@ class MainActivity : ComponentActivity() {
                 var selectedVideo by remember { mutableStateOf<VideoItem?>(null) }
                 var streamUrl by remember { mutableStateOf<String?>(null) }
 
-                Scaffold(
-                    topBar = {
-                        if (screen != Screen.Player) {
+                LaunchedEffect(screen) {
+                    isCurrentlyInPlayerScreen = (screen == Screen.Player)
+                }
+
+                if (screen == Screen.Player) {
+                    // Render trực tiếp không qua Scaffold để tràn viền 100% không dính khoảng đệm StatusBar
+                    PlayerScreen(
+                        video = selectedVideo,
+                        streamUrl = streamUrl,
+                        onBack = {
+                            screen = Screen.Home
+                            selectedVideo = null
+                            streamUrl = null
+                        }
+                    )
+                } else {
+                    Scaffold(
+                        topBar = {
                             TopAppBar(
                                 navigationIcon = {
                                     if (screen == Screen.Home && selectedFolder != null) {
@@ -90,38 +122,30 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
-                    }
-                ) { padding ->
-                    when (screen) {
-                        Screen.Home -> HomeScreen(
-                            modifier = Modifier.padding(padding),
-                            selectedFolder = selectedFolder,
-                            onSelectFolder = { folder -> selectedFolder = folder },
-                            onVideoClick = { video ->
-                                selectedVideo = video
-                                streamUrl = null
-                                screen = Screen.Player
-                            },
-                            onStreamClick = { screen = Screen.Stream }
-                        )
-                        Screen.Player -> PlayerScreen(
-                            video = selectedVideo,
-                            streamUrl = streamUrl,
-                            onBack = {
-                                screen = Screen.Home
-                                selectedVideo = null
-                                streamUrl = null
-                            }
-                        )
-                        Screen.Stream -> NetworkStreamScreen(
-                            modifier = Modifier.padding(padding),
-                            onPlayClick = { url ->
-                                selectedVideo = null
-                                streamUrl = url
-                                screen = Screen.Player
-                            }
-                        )
-                        Screen.Settings -> OtaSettingsScreen(modifier = Modifier.padding(padding))
+                    ) { padding ->
+                        when (screen) {
+                            Screen.Home -> HomeScreen(
+                                modifier = Modifier.padding(padding),
+                                selectedFolder = selectedFolder,
+                                onSelectFolder = { folder -> selectedFolder = folder },
+                                onVideoClick = { video ->
+                                    selectedVideo = video
+                                    streamUrl = null
+                                    screen = Screen.Player
+                                },
+                                onStreamClick = { screen = Screen.Stream }
+                            )
+                            Screen.Stream -> NetworkStreamScreen(
+                                modifier = Modifier.padding(padding),
+                                onPlayClick = { url ->
+                                    selectedVideo = null
+                                    streamUrl = url
+                                    screen = Screen.Player
+                                }
+                            )
+                            Screen.Settings -> OtaSettingsScreen(modifier = Modifier.padding(padding))
+                            else -> {}
+                        }
                     }
                 }
             }
