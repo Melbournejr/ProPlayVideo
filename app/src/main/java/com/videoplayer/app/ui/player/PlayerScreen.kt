@@ -323,7 +323,7 @@ fun PlayerScreen(
         }
     }
 
-    DisposableEffect(playerManager, effectivePlaylist) {
+        DisposableEffect(playerManager, effectivePlaylist) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
@@ -335,34 +335,26 @@ fun PlayerScreen(
                 }
             }
 
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
                     currentVideo?.let { finishedVid ->
                         CoroutineScope(Dispatchers.IO).launch {
                             context.saveLastPosition(finishedVid.id, 0L)
                         }
                     }
-                }
-
-                val newIndex = playerManager.player.currentMediaItemIndex
-                if (newIndex in effectivePlaylist.indices) {
-                    val newVid = effectivePlaylist[newIndex]
-                    if (currentVideo?.id != newVid.id) {
+                    val nextIdx = playerManager.currentIndex + 1
+                    if (nextIdx in effectivePlaylist.indices) {
+                        val nextVid = effectivePlaylist[nextIdx]
                         resetZoom()
-                        currentVideo = newVid
-                        loadedSubtitles = playerManager.getSubtitlesForVideo(newVid)
-                        onVideoChanged(newVid)
-
-                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                            scope.launch {
-                                val savedPos = context.readLastPosition(newVid.id)
-                                if (savedPos > 2000L) {
-                                    playerManager.seekTo(savedPos)
-                                }
-                                gestureHint = "⏭️ Tự phát tiếp: ${newVid.displayName}"
-                                delay(1800)
-                                if (gestureMode == GestureMode.NONE) gestureHint = null
-                            }
+                        scope.launch {
+                            val savedPos = context.readLastPosition(nextVid.id)
+                            playerManager.playVideoAtIndex(nextIdx, savedPos)
+                            currentVideo = nextVid
+                            loadedSubtitles = playerManager.getSubtitlesForVideo(nextVid)
+                            onVideoChanged(nextVid)
+                            gestureHint = "⏭️ Tự phát tiếp: ${nextVid.displayName}"
+                            delay(1800)
+                            if (gestureMode == GestureMode.NONE) gestureHint = null
                         }
                     }
                 }
@@ -373,8 +365,7 @@ fun PlayerScreen(
             playerManager.player.removeListener(listener)
         }
     }
-
-    BackHandler {
+BackHandler {
         if (showEqualizerPanel) {
             showEqualizerPanel = false
         } else {
@@ -446,7 +437,10 @@ fun PlayerScreen(
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                (android.view.LayoutInflater.from(ctx).inflate(
+                    com.videoplayer.app.R.layout.exo_texture_player_view,
+                    null
+                ) as PlayerView).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
