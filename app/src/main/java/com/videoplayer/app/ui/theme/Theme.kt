@@ -1,32 +1,31 @@
 package com.videoplayer.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+private val LiquidGlassColorScheme = darkColorScheme(
+    primary = Color(0xFF00E5FF),
+    onPrimary = Color(0xFF002633),
+    primaryContainer = Color(0xFF0F2942),
+    onPrimaryContainer = Color(0xFFB8F4FF),
+    secondary = Color(0xFFC77DFF),
+    onSecondary = Color(0xFF240046),
+    background = Color(0xFF070B19),
+    onBackground = Color(0xFFF4F8FF),
+    surface = Color(0xFF101930),
+    onSurface = Color(0xFFF4F8FF),
+    onSurfaceVariant = Color(0xFFA7B8D8),
+    error = Color(0xFFFF5C8A)
+)
+
 @Composable
 fun VideoPlayerTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) {
-        darkColorScheme(
-            primary = Color(0xFFBB86FC),
-            secondary = Color(0xFF03DAC6),
-            background = Color(0xFF121212),
-            surface = Color(0xFF1E1E1E)
-        )
-    } else {
-        lightColorScheme(
-            primary = Color(0xFF6200EE),
-            secondary = Color(0xFF03DAC6)
-        )
-    }
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = LiquidGlassColorScheme,
         content = content
     )
 }

@@ -11,22 +11,28 @@ import android.util.Rational
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -50,6 +56,7 @@ import com.videoplayer.app.data.local.readLastPosition
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.PlayerManager
+import com.videoplayer.app.ui.components.LiquidGlassPill
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -109,7 +116,6 @@ fun PlayerScreen(
     var gestureHint by remember { mutableStateOf<String?>(null) }
     var isInPipMode by remember { mutableStateOf(false) }
 
-    // Combo 4 States + Popup Menus
     var audioBoostPercent by remember { mutableIntStateOf(0) }
     var backgroundAudioEnabled by remember { mutableStateOf(false) }
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
@@ -119,12 +125,10 @@ fun PlayerScreen(
     var showSleepMenu by remember { mutableStateOf(false) }
     var showZoomMenu by remember { mutableStateOf(false) }
 
-    // Trạng thái Phóng to / Thu nhỏ (Zoom & Pan)
     var zoomScale by remember { mutableFloatStateOf(1.0f) }
     var zoomOffsetX by remember { mutableFloatStateOf(0f) }
     var zoomOffsetY by remember { mutableFloatStateOf(0f) }
 
-    // Biến trạng thái Khóa trục Gesture
     var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
 
     fun resetZoom() {
@@ -179,7 +183,6 @@ fun PlayerScreen(
         }
     }
 
-    // 1. Giữ màn hình sáng + Immersive Fullscreen
     DisposableEffect(activity) {
         val window = activity?.window
         if (window != null) {
@@ -200,7 +203,6 @@ fun PlayerScreen(
         }
     }
 
-    // 2. Smart Auto-Rotate & Auto-Play Next
     DisposableEffect(playerManager, currentIndex, playlist) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -242,7 +244,6 @@ fun PlayerScreen(
         }
     }
 
-    // Đồng hồ đếm ngược Hẹn giờ tắt
     LaunchedEffect(sleepTimerMinutes) {
         if (sleepTimerMinutes > 0) {
             sleepRemainingSec = sleepTimerMinutes * 60
@@ -361,9 +362,6 @@ fun PlayerScreen(
                         }
                     )
                 }
-                // Bộ xử lý Cử chỉ Đa điểm hợp nhất:
-                // - 2 ngón tay: Phóng to / Thu nhỏ (Pinch-to-Zoom 1.0x -> 4.0x) & Kéo vùng xem (Pan)
-                // - 1 ngón tay: Khóa trục Tua ngang / Độ sáng trái / Âm lượng phải (0-200%)
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
                     awaitEachGesture {
@@ -395,7 +393,6 @@ fun PlayerScreen(
                             val pressedCount = event.changes.count { it.pressed }
 
                             if (pressedCount >= 2) {
-                                // CHẾ ĐỘ 2 NGÓN TAY: ZOOM & PAN VIDEO
                                 gestureMode = GestureMode.ZOOM
                                 val zoomChange = event.calculateZoom()
                                 val panChange = event.calculatePan()
@@ -416,7 +413,6 @@ fun PlayerScreen(
                                 }
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             } else if (pressedCount == 1 && gestureMode != GestureMode.ZOOM) {
-                                // CHẾ ĐỘ 1 NGÓN TAY: TUA NGANG / ĐỘ SÁNG / ÂM LƯỢNG
                                 val change = event.changes.firstOrNull { it.pressed } ?: continue
                                 val dragX = change.position.x - change.previousPosition.x
                                 val dragY = change.position.y - change.previousPosition.y
@@ -502,43 +498,89 @@ fun PlayerScreen(
                 }
         )
 
-        // Hiển thị thông báo Gesture ở giữa màn hình
+        // Hiển thị thông báo Gesture dạng Viên nang Kính Lỏng ở giữa màn hình
         if (!isInPipMode) {
             gestureHint?.let { hint ->
-                Surface(
-                    color = Color.Black.copy(alpha = 0.78f),
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.align(Alignment.Center)
+                val pillShape = RoundedCornerShape(50)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .clip(pillShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF101B35).copy(alpha = 0.85f),
+                                    Color(0xFF070C1A).copy(alpha = 0.88f)
+                                )
+                            )
+                        )
+                        .border(
+                            BorderStroke(
+                                1.2.dp,
+                                Brush.linearGradient(
+                                    colors = listOf(Color.White.copy(alpha = 0.6f), Color(0xFF00E5FF).copy(alpha = 0.5f))
+                                )
+                            ),
+                            pillShape
+                        )
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     Text(
                         text = hint,
-                        color = if (audioBoostPercent > 0 && gestureMode == GestureMode.VOLUME) Color(0xFF00E5FF) else Color.White,
+                        color = if (audioBoostPercent > 0 && gestureMode == GestureMode.VOLUME) Color(0xFF00F0FF) else Color.White,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
 
-        // Nút mở khóa khi đang bật Child Lock
+        // Nút mở khóa dạng Kính Lỏng khi đang bật Child Lock
         if (isLocked && showControls && !isInPipMode) {
-            FloatingActionButton(
+            LiquidGlassPill(
+                active = true,
                 onClick = { isLocked = false },
                 modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
             ) {
-                Icon(Icons.Default.LockOpen, contentDescription = "Mở khóa")
+                Icon(Icons.Default.LockOpen, contentDescription = "Mở khóa", tint = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text("Chạm để Mở khóa", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Bảng điều khiển đầy đủ
+        // ================= FLOATING LIQUID GLASS PLAYER HUD =================
         if (showControls && !isLocked && !isInPipMode) {
+            val hudShape = RoundedCornerShape(28.dp)
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.78f))
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .clip(hudShape)
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFF162442).copy(alpha = 0.78f),
+                                Color(0xFF0A1122).copy(alpha = 0.86f)
+                            ),
+                            start = Offset(0f, 0f),
+                            end = Offset(800f, 600f)
+                        )
+                    )
+                    .border(
+                        BorderStroke(
+                            1.2.dp,
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.55f),
+                                    Color.White.copy(alpha = 0.12f),
+                                    Color(0xFF00E5FF).copy(alpha = 0.45f)
+                                )
+                            )
+                        ),
+                        hudShape
+                    )
+                    .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -549,22 +591,27 @@ fun PlayerScreen(
                         text = currentVideo?.displayName ?: (streamUrl ?: "Đang phát"),
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
                     if (zoomScale > 1.01f) {
-                        TextButton(onClick = { resetZoom() }) {
-                            Text("🔍 ${(zoomScale * 100).roundToInt()}% (Đặt lại)", color = Color(0xFFFFD54F))
+                        LiquidGlassPill(
+                            active = true,
+                            onClick = { resetZoom() },
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
+                            Text("🔍 ${(zoomScale * 100).roundToInt()}% ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     if (audioBoostPercent > 0) {
-                        Text(
-                            text = "🔊 ${100 + audioBoostPercent}%",
-                            color = Color(0xFF00E5FF),
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
+                        LiquidGlassPill(
+                            active = true,
+                            modifier = Modifier.padding(start = 6.dp)
+                        ) {
+                            Text("🔊 ${100 + audioBoostPercent}%", color = Color(0xFF00F0FF), style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
 
@@ -575,23 +622,28 @@ fun PlayerScreen(
                         playerManager.seekTo(currentPos)
                     },
                     onValueChangeFinished = { persistCurrentPosition() },
-                    valueRange = 0f..duration.toFloat().coerceAtLeast(1f)
+                    valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF00F0FF),
+                        activeTrackColor = Color(0xFF00E5FF),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.20f)
+                    )
                 )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatTimeMs(currentPos), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    Text(formatTimeMs(currentPos), color = Color(0xFF00F0FF), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     if (sleepRemainingSec > 0) {
                         Text("💤 Tắt sau ${formatTimeMs(sleepRemainingSec * 1000L)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.bodySmall)
                     }
-                    Text(formatTimeMs(duration), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    Text(formatTimeMs(duration), color = Color(0xFFA7B8D8), style = MaterialTheme.typography.bodySmall)
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Hàng nút điều khiển có thanh cuộn ngang + Popup Menu nhỏ
+                // Hàng nút điều khiển Kính Lỏng
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -607,24 +659,37 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.SkipPrevious,
                             contentDescription = "Video trước",
-                            tint = if (currentIndex > 0) Color.White else Color.Gray
+                            tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
                         )
                     }
-                    IconButton(onClick = {
-                        if (isPlaying) {
-                            playerManager.pause()
-                            persistCurrentPosition()
-                        } else {
-                            playerManager.resume()
+                    // Nút Play/Pause tròn phát sáng tâm điểm
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(Color(0xFF00E5FF), Color(0xFF7B2CBF))
+                                )
+                            )
+                            .border(1.dp, Color.White.copy(alpha = 0.7f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        IconButton(onClick = {
+                            if (isPlaying) {
+                                playerManager.pause()
+                                persistCurrentPosition()
+                            } else {
+                                playerManager.resume()
+                            }
+                            isPlaying = !isPlaying
+                        }) {
+                            Icon(
+                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Phát/Tạm dừng",
+                                tint = Color.White
+                            )
                         }
-                        isPlaying = !isPlaying
-                    }) {
-                        Icon(
-                            if (isPlaying) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
-                            contentDescription = "Phát/Tạm dừng",
-                            tint = Color.White,
-                            modifier = Modifier.size(40.dp)
-                        )
                     }
                     IconButton(
                         onClick = { playNextVideo() },
@@ -633,13 +698,16 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.SkipNext,
                             contentDescription = "Video tiếp theo",
-                            tint = if (playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1) Color.White else Color.Gray
+                            tint = if (playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1) Color.White else Color.White.copy(alpha = 0.3f)
                         )
                     }
 
-                    // ================= 1. MENU NHỎ CHỌN TỐC ĐỘ CHẠY VIDEO =================
+                    // 1. MENU CHỌN TỐC ĐỘ PHÁT
                     Box {
-                        TextButton(onClick = { showSpeedMenu = true }) {
+                        LiquidGlassPill(
+                            active = playbackSpeed != 1.0f,
+                            onClick = { showSpeedMenu = true }
+                        ) {
                             Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                         DropdownMenu(
@@ -666,13 +734,13 @@ fun PlayerScreen(
                         }
                     }
 
-                    // ================= 2. MENU NHỎ CHỌN MỨC ZOOM VIDEO =================
+                    // 2. MENU CHỌN MỨC ZOOM VIDEO
                     Box {
                         IconButton(onClick = { showZoomMenu = true }) {
                             Icon(
                                 Icons.Default.ZoomIn,
                                 contentDescription = "Thu phóng video",
-                                tint = if (zoomScale > 1.01f) Color(0xFFFFD54F) else Color.White
+                                tint = if (zoomScale > 1.01f) Color(0xFF00F0FF) else Color.White
                             )
                         }
                         DropdownMenu(
@@ -703,20 +771,24 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Nút Bật/Tắt Audio Boost 200%
-                    TextButton(onClick = {
-                        audioBoostPercent = if (audioBoostPercent == 0) 50 else if (audioBoostPercent == 50) 100 else 0
-                        playerManager.setAudioBoostPercent(audioBoostPercent)
-                        gestureHint = if (audioBoostPercent > 0) "🚀 Audio Boost: ${100 + audioBoostPercent}%" else "🔊 Âm lượng chuẩn 100%"
-                        scope.launch { delay(1000); gestureHint = null }
-                    }) {
+                    // Nút Audio Boost 200%
+                    LiquidGlassPill(
+                        active = audioBoostPercent > 0,
+                        onClick = {
+                            audioBoostPercent = if (audioBoostPercent == 0) 50 else if (audioBoostPercent == 50) 100 else 0
+                            playerManager.setAudioBoostPercent(audioBoostPercent)
+                            gestureHint = if (audioBoostPercent > 0) "🚀 Audio Boost: ${100 + audioBoostPercent}%" else "🔊 Âm lượng chuẩn 100%"
+                            scope.launch { delay(1000); gestureHint = null }
+                        }
+                    ) {
                         Text(
                             text = if (audioBoostPercent > 0) "Boost ${100 + audioBoostPercent}%" else "Boost",
-                            color = if (audioBoostPercent > 0) Color(0xFF00E5FF) else Color.White
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
 
-                    // Nút Phát nền khi tắt màn hình
+                    // Nút Phát nền
                     IconButton(onClick = {
                         backgroundAudioEnabled = !backgroundAudioEnabled
                         gestureHint = if (backgroundAudioEnabled) "🎧 Đã bật Phát tiếng khi tắt màn hình" else "🎧 Đã tắt Phát nền"
@@ -725,11 +797,11 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.Headphones,
                             contentDescription = "Nghe nền",
-                            tint = if (backgroundAudioEnabled) Color(0xFF00E5FF) else Color.White
+                            tint = if (backgroundAudioEnabled) Color(0xFF00F0FF) else Color.White
                         )
                     }
 
-                    // ================= 3. MENU NHỎ CHỌN HẸN GIỜ TẮT (SLEEP TIMER) =================
+                    // 3. MENU CHỌN HẸN GIỜ TẮT
                     Box {
                         IconButton(onClick = { showSleepMenu = true }) {
                             Icon(
@@ -763,7 +835,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Nút Đảo chiều xoay ngang/dọc thủ công
                     IconButton(onClick = {
                         val curOrient = activity?.requestedOrientation
                         if (curOrient == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
@@ -775,7 +846,6 @@ fun PlayerScreen(
                         Icon(Icons.Default.ScreenRotation, contentDescription = "Xoay màn hình", tint = Color.White)
                     }
 
-                    // Nút Tỷ lệ khung hình
                     IconButton(onClick = {
                         resizeMode = when (resizeMode) {
                             AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -786,7 +856,6 @@ fun PlayerScreen(
                         Icon(Icons.Default.AspectRatio, contentDescription = "Tỷ lệ khung hình", tint = Color.White)
                     }
 
-                    // Nút Phụ đề (Biểu tượng khoanh tròn màu cam của bạn)
                     IconButton(onClick = {
                         subtitlesEnabled = !subtitlesEnabled
                         playerManager.toggleSubtitles(subtitlesEnabled)
@@ -796,16 +865,14 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.Subtitles,
                             contentDescription = "Phụ đề",
-                            tint = if (subtitlesEnabled) MaterialTheme.colorScheme.primary else Color.Gray
+                            tint = if (subtitlesEnabled) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.35f)
                         )
                     }
 
-                    // Nút PiP
                     IconButton(onClick = { enterPip() }) {
                         Icon(Icons.Default.PictureInPictureAlt, contentDescription = "PiP", tint = Color.White)
                     }
 
-                    // Nút Khóa trẻ em
                     IconButton(onClick = { isLocked = true }) {
                         Icon(Icons.Default.Lock, contentDescription = "Khóa màn hình", tint = Color.White)
                     }
