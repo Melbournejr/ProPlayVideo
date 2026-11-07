@@ -1,6 +1,7 @@
 package com.videoplayer.app.data.local
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -14,10 +15,12 @@ private val Context.datastore by preferencesDataStore(name = "videoplayer_prefs"
 private val githubRepoKey = stringPreferencesKey("github_repo")
 private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 
+typealias PositionMap = Map<String, Long>
+
 suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
     if (videoId.isBlank() || positionMs < 0L) return
     val key = longPreferencesKey("last_position_$videoId")
-    datastore.edit { prefs ->
+    this.datastore.edit { prefs ->
         prefs[key] = positionMs
         prefs[lastPlayedVideoIdKey] = videoId
     }
@@ -25,15 +28,17 @@ suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
 
 suspend fun Context.readLastPosition(videoId: String): Long {
     val key = longPreferencesKey("last_position_$videoId")
-    return datastore.data.first()[key] ?: 0L
+    return this.datastore.data.first()[key] ?: 0L
 }
 
-fun Context.observeAllPositions(): Flow> {
-    return datastore.data.map { prefs ->
-        val result = mutableMapOf<String, Long>()
-        prefs.asMap().forEach { (k, v) ->
-            if (k.name.startsWith("last_position_") && v is Long) {
-                result[k.name.removePrefix("last_position_")] = v
+fun Context.observeAllPositions(): Flow<PositionMap> {
+    return this.datastore.data.map { prefs: Preferences ->
+        val result = HashMap<String, Long>()
+        for (entry in prefs.asMap().entries) {
+            val kName = entry.key.name
+            val vVal = entry.value
+            if (kName.startsWith("last_position_") && vVal is Long) {
+                result[kName.removePrefix("last_position_")] = vVal
             }
         }
         result
@@ -41,13 +46,19 @@ fun Context.observeAllPositions(): Flow> {
 }
 
 fun Context.observeLastPlayedVideoId(): Flow<String?> {
-    return datastore.data.map { prefs -> prefs[lastPlayedVideoIdKey] }
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[lastPlayedVideoIdKey]
+    }
 }
 
 suspend fun Context.saveGithubRepo(ownerAndRepo: String) {
-    datastore.edit { it[githubRepoKey] = ownerAndRepo }
+    this.datastore.edit { prefs ->
+        prefs[githubRepoKey] = ownerAndRepo
+    }
 }
 
 fun Context.readGithubRepo(defaultRepo: String): Flow<String> {
-    return datastore.data.map { it[githubRepoKey] ?: defaultRepo }
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[githubRepoKey] ?: defaultRepo
+    }
 }
