@@ -1,4 +1,4 @@
-package com.videoplayer.app.ui.main
+﻿package com.videoplayer.app.ui.main
 
 import android.Manifest
 import android.os.Build
@@ -57,10 +57,10 @@ class MainActivity : ComponentActivity() {
                                 title = { Text("Video Player Pro (v1.0.0)") },
                                 actions = {
                                     IconButton(onClick = { screen = Screen.Home }) {
-                                        Icon(Icons.Default.Home, contentDescription = "Trang chủ")
+                                        Icon(Icons.Default.Home, contentDescription = "Trang chá»§")
                                     }
                                     IconButton(onClick = { screen = Screen.Settings }) {
-                                        Icon(Icons.Default.Settings, contentDescription = "Cài đặt & OTA")
+                                        Icon(Icons.Default.Settings, contentDescription = "CÃ i Ä‘áº·t & OTA")
                                     }
                                 }
                             )
@@ -111,9 +111,9 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val updateManager = remember { UpdateManager(context) }
 
-    val savedRepo by context.readGithubRepo("your-github-username/VideoPlayerApp").collectAsState(initial = "your-github-username/VideoPlayerApp")
+    val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
-    var statusText by remember { mutableStateOf("Nhập đúng 'Tên_GitHub/Tên_Repo' của bạn rồi bấm Kiểm tra cập nhật.") }
+    var statusText by remember { mutableStateOf("Nháº­p Ä‘Ãºng 'TÃªn_GitHub/TÃªn_Repo' cá»§a báº¡n rá»“i báº¥m Kiá»ƒm tra cáº­p nháº­t.") }
     var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
     var downloadProgress by remember { mutableIntStateOf(-1) }
 
@@ -121,31 +121,31 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Cập nhật OTA qua GitHub Releases", style = MaterialTheme.typography.titleLarge)
+        Text("Cáº­p nháº­t OTA qua GitHub Releases", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(
             value = repoInput,
             onValueChange = { repoInput = it },
             label = { Text("GitHub Repository (owner/repo)") },
-            placeholder = { Text("Ví dụ: vuvanluong/VideoPlayerApp") },
+            placeholder = { Text("VÃ­ dá»¥: vuvanluong/VideoPlayerApp") },
             modifier = Modifier.fillMaxWidth()
         )
         Button(
             onClick = {
                 scope.launch {
                     context.saveGithubRepo(repoInput)
-                    statusText = "Đang kiểm tra bản phát hành mới trên GitHub..."
+                    statusText = "Äang kiá»ƒm tra báº£n phÃ¡t hÃ nh má»›i trÃªn GitHub..."
                     val result = updateManager.checkLatestRelease(repoInput)
                     result.onSuccess { release ->
                         latestRelease = release
-                        statusText = "Tìm thấy bản phát hành: ${release.tag_name} (${release.name})"
+                        statusText = "TÃ¬m tháº¥y báº£n phÃ¡t hÃ nh: ${release.tag_name} (${release.name})"
                     }.onFailure { err ->
-                        statusText = "Lỗi: ${err.message}"
+                        statusText = "Lá»—i: ${err.message}"
                     }
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Kiểm tra bản cập nhật mới")
+            Text("Kiá»ƒm tra báº£n cáº­p nháº­t má»›i")
         }
 
         Text(text = statusText, style = MaterialTheme.typography.bodyMedium)
@@ -158,7 +158,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         Text("File APK: ${apkAsset.name}", style = MaterialTheme.typography.titleMedium)
                         if (downloadProgress in 0..100) {
                             LinearProgressIndicator(progress = downloadProgress / 100f, modifier = Modifier.fillMaxWidth())
-                            Text("Đang tải xuống: $downloadProgress%")
+                            Text("Äang táº£i xuá»‘ng: $downloadProgress%")
                         }
                         Button(
                             onClick = {
@@ -168,16 +168,16 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                         downloadProgress = p
                                     }
                                     dl.onSuccess { file ->
-                                        statusText = "Đã tải xong! Đang mở trình cài đặt..."
+                                        statusText = "ÄÃ£ táº£i xong! Äang má»Ÿ trÃ¬nh cÃ i Ä‘áº·t..."
                                         updateManager.installApk(file)
                                     }.onFailure { err ->
-                                        statusText = "Lỗi tải APK: ${err.message}"
+                                        statusText = "Lá»—i táº£i APK: ${err.message}"
                                     }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Tải xuống & Cài đặt ngay (OTA)")
+                            Text("Táº£i xuá»‘ng & CÃ i Ä‘áº·t ngay (OTA)")
                         }
                     }
                 }
