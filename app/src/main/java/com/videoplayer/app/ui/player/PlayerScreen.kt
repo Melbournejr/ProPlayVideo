@@ -12,7 +12,11 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -24,7 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -52,7 +58,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private enum class GestureMode {
-    NONE, SEEK, BRIGHTNESS, VOLUME
+    NONE, SEEK, BRIGHTNESS, VOLUME, ZOOM
 }
 
 private fun Context.findActivity(): Activity? {
@@ -87,7 +93,6 @@ fun PlayerScreen(
     val playerManager = remember { PlayerManager(context) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    // Quản lý Playlist để Next/Prev & Tự chuyển tập
     var currentVideo by remember(video) { mutableStateOf(video) }
     val currentIndex = remember(currentVideo, playlist) {
         if (currentVideo == null) -1 else playlist.indexOfFirst { it.id == currentVideo!!.id }
@@ -104,21 +109,29 @@ fun PlayerScreen(
     var gestureHint by remember { mutableStateOf<String?>(null) }
     var isInPipMode by remember { mutableStateOf(false) }
 
-    // Combo 4 States: Audio Boost 200%, Background Audio, Sleep Timer, Auto-Rotate
-    var audioBoostPercent by remember { mutableIntStateOf(0) } // 0..100 (tương ứng 100%..200%)
+    // Combo 4 States + Popup Menus
+    var audioBoostPercent by remember { mutableIntStateOf(0) }
     var backgroundAudioEnabled by remember { mutableStateOf(false) }
-    var sleepTimerMinutes by remember { mutableIntStateOf(0) } // 0 = Tắt, 15, 30, 60
+    var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var sleepRemainingSec by remember { mutableIntStateOf(0) }
+
+    var showSpeedMenu by remember { mutableStateOf(false) }
+    var showSleepMenu by remember { mutableStateOf(false) }
+    var showZoomMenu by remember { mutableStateOf(false) }
+
+    // Trạng thái Phóng to / Thu nhỏ (Zoom & Pan)
+    var zoomScale by remember { mutableFloatStateOf(1.0f) }
+    var zoomOffsetX by remember { mutableFloatStateOf(0f) }
+    var zoomOffsetY by remember { mutableFloatStateOf(0f) }
 
     // Biến trạng thái Khóa trục Gesture
     var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
-    var startTouchX by remember { mutableFloatStateOf(0f) }
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-    var totalDragY by remember { mutableFloatStateOf(0f) }
-    var initialSeekPos by remember { mutableLongStateOf(0L) }
-    var targetSeekPos by remember { mutableLongStateOf(0L) }
-    var initialBrightness by remember { mutableFloatStateOf(0.5f) }
-    var initialCombinedVolumePercent by remember { mutableFloatStateOf(100f) } // 0..200%
+
+    fun resetZoom() {
+        zoomScale = 1.0f
+        zoomOffsetX = 0f
+        zoomOffsetY = 0f
+    }
 
     fun persistCurrentPosition() {
         val vid = currentVideo ?: return
@@ -133,6 +146,7 @@ fun PlayerScreen(
     fun playNextVideo() {
         if (playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1) {
             persistCurrentPosition()
+            resetZoom()
             currentVideo = playlist[currentIndex + 1]
             gestureHint = "⏭️ Đang phát: ${currentVideo?.displayName}"
             scope.launch { delay(1500); gestureHint = null }
@@ -142,6 +156,7 @@ fun PlayerScreen(
     fun playPreviousVideo() {
         if (playlist.isNotEmpty() && currentIndex > 0) {
             persistCurrentPosition()
+            resetZoom()
             currentVideo = playlist[currentIndex - 1]
             gestureHint = "⏮️ Đang phát: ${currentVideo?.displayName}"
             scope.launch { delay(1500); gestureHint = null }
@@ -153,6 +168,7 @@ fun PlayerScreen(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 persistCurrentPosition()
+                resetZoom()
                 showControls = false
                 val params = PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
@@ -163,7 +179,7 @@ fun PlayerScreen(
         }
     }
 
-    // 1. Giữ màn hình sáng + Immersive Fullscreen + Tự trả lại màn hình dọc khi thoát Player
+    // 1. Giữ màn hình sáng + Immersive Fullscreen
     DisposableEffect(activity) {
         val window = activity?.window
         if (window != null) {
@@ -184,16 +200,14 @@ fun PlayerScreen(
         }
     }
 
-    // 2. Listener cho Smart Auto-Rotate (Tự xoay ngang nếu video ngang) & Tự chuyển tập tiếp theo (STATE_ENDED)
+    // 2. Smart Auto-Rotate & Auto-Play Next
     DisposableEffect(playerManager, currentIndex, playlist) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
                     if (videoSize.width > videoSize.height) {
-                        // Video ngang -> Tự động xoay ngang cảm biến 2 chiều
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     } else {
-                        // Video dọc (TikTok/Shorts) -> Giữ màn hình dọc
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     }
                 }
@@ -218,7 +232,6 @@ fun PlayerScreen(
         onBack()
     }
 
-    // Phát video khi currentVideo hoặc streamUrl thay đổi
     LaunchedEffect(currentVideo, streamUrl) {
         if (currentVideo != null) {
             val savedPos = context.readLastPosition(currentVideo!!.id)
@@ -229,7 +242,7 @@ fun PlayerScreen(
         }
     }
 
-    // Đồng hồ đếm ngược Hẹn giờ tắt (Sleep Timer)
+    // Đồng hồ đếm ngược Hẹn giờ tắt
     LaunchedEffect(sleepTimerMinutes) {
         if (sleepTimerMinutes > 0) {
             sleepRemainingSec = sleepTimerMinutes * 60
@@ -246,7 +259,6 @@ fun PlayerScreen(
         }
     }
 
-    // Vòng lặp cập nhật thanh tiến trình
     LaunchedEffect(currentVideo) {
         while (true) {
             isPlaying = playerManager.isPlaying()
@@ -264,7 +276,6 @@ fun PlayerScreen(
         }
     }
 
-    // Xử lý Lifecycle: Cho phép chạy nền khi bật Background Audio hoặc PiP
     DisposableEffect(lifecycleOwner, currentVideo, backgroundAudioEnabled) {
         val observer = LifecycleEventObserver { _, event ->
             val inPip = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -311,6 +322,12 @@ fun PlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = zoomScale,
+                    scaleY = zoomScale,
+                    translationX = zoomOffsetX,
+                    translationY = zoomOffsetY
+                )
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
                     detectTapGestures(
@@ -344,111 +361,144 @@ fun PlayerScreen(
                         }
                     )
                 }
+                // Bộ xử lý Cử chỉ Đa điểm hợp nhất:
+                // - 2 ngón tay: Phóng to / Thu nhỏ (Pinch-to-Zoom 1.0x -> 4.0x) & Kéo vùng xem (Pan)
+                // - 1 ngón tay: Khóa trục Tua ngang / Độ sáng trái / Âm lượng phải (0-200%)
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
-                    detectDragGestures(
-                        onDragStart = { startOffset ->
-                            if (isLocked) return@detectDragGestures
-                            gestureMode = GestureMode.NONE
-                            startTouchX = startOffset.x
-                            totalDragX = 0f
-                            totalDragY = 0f
-                            initialSeekPos = playerManager.getCurrentPosition()
-                            targetSeekPos = initialSeekPos
+                    awaitEachGesture {
+                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        if (isLocked) return@awaitEachGesture
 
-                            val winBright = activity?.window?.attributes?.screenBrightness ?: -1f
-                            initialBrightness = if (winBright in 0.01f..1.0f) winBright else 0.5f
+                        gestureMode = GestureMode.NONE
+                        val startTouchX = firstDown.position.x
+                        var totalDragX = 0f
+                        var totalDragY = 0f
 
-                            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                            val basePercent = (curVol.toFloat() / maxVol) * 100f
-                            initialCombinedVolumePercent = if (basePercent >= 99f && audioBoostPercent > 0) {
-                                100f + audioBoostPercent
-                            } else {
-                                basePercent
-                            }
-                        },
-                        onDragEnd = {
-                            if (gestureMode == GestureMode.SEEK) {
-                                playerManager.seekTo(targetSeekPos)
-                                currentPos = targetSeekPos
-                                persistCurrentPosition()
-                            }
-                            gestureMode = GestureMode.NONE
-                            gestureHint = null
-                        },
-                        onDragCancel = {
-                            gestureMode = GestureMode.NONE
-                            gestureHint = null
-                        },
-                        onDrag = { change, dragAmount ->
-                            if (isLocked) return@detectDragGestures
-                            change.consume()
+                        val initialSeekPos = playerManager.getCurrentPosition()
+                        var targetSeekPos = initialSeekPos
 
-                            val screenWidth = size.width.toFloat().coerceAtLeast(1f)
-                            val screenHeight = size.height.toFloat().coerceAtLeast(1f)
+                        val winBright = activity?.window?.attributes?.screenBrightness ?: -1f
+                        val initialBrightness = if (winBright in 0.01f..1.0f) winBright else 0.5f
 
-                            totalDragX += dragAmount.x
-                            totalDragY += dragAmount.y
-
-                            if (gestureMode == GestureMode.NONE) {
-                                val threshold = 18f
-                                if (abs(totalDragX) > threshold || abs(totalDragY) > threshold) {
-                                    gestureMode = if (abs(totalDragX) > abs(totalDragY) * 1.2f) {
-                                        GestureMode.SEEK
-                                    } else {
-                                        if (startTouchX < screenWidth / 2f) GestureMode.BRIGHTNESS else GestureMode.VOLUME
-                                    }
-                                    totalDragX = 0f
-                                    totalDragY = 0f
-                                }
-                            }
-
-                            when (gestureMode) {
-                                GestureMode.SEEK -> {
-                                    val dur = playerManager.getDuration().coerceAtLeast(1L)
-                                    val maxSeekRange = minOf(dur, 120_000L).coerceAtLeast(30_000L)
-                                    val seekDelta = ((totalDragX / screenWidth) * maxSeekRange).toLong()
-                                    targetSeekPos = (initialSeekPos + seekDelta).coerceIn(0L, dur)
-                                    currentPos = targetSeekPos
-                                    val diffSec = (targetSeekPos - initialSeekPos) / 1000
-                                    val sign = if (diffSec >= 0) "+${diffSec}s" else "${diffSec}s"
-                                    gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} / ${formatTimeMs(dur)} ($sign)"
-                                }
-                                GestureMode.BRIGHTNESS -> {
-                                    val act = activity ?: return@detectDragGestures
-                                    val window = act.window
-                                    val attrs = window.attributes
-                                    val deltaBright = -totalDragY / (screenHeight * 0.75f)
-                                    val newBright = (initialBrightness + deltaBright).coerceIn(0.02f, 1.0f)
-                                    attrs.screenBrightness = newBright
-                                    window.attributes = attrs
-                                    gestureHint = "☀️ Độ sáng: ${(newBright * 100).roundToInt()}%"
-                                }
-                                GestureMode.VOLUME -> {
-                                    // Hỗ trợ vuốt từ 0% -> 200% (100%-200% kích hoạt LoudnessEnhancer Audio Boost)
-                                    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                                    val deltaPercent = (-totalDragY / (screenHeight * 0.75f)) * 150f
-                                    val newCombined = (initialCombinedVolumePercent + deltaPercent).coerceIn(0f, 200f)
-
-                                    if (newCombined <= 100f) {
-                                        audioBoostPercent = 0
-                                        playerManager.setAudioBoostPercent(0)
-                                        val targetSysVol = ((newCombined / 100f) * maxVol).roundToInt().coerceIn(0, maxVol)
-                                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetSysVol, 0)
-                                        gestureHint = "🔊 Âm lượng: ${newCombined.roundToInt()}%"
-                                    } else {
-                                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
-                                        val boost = (newCombined - 100f).roundToInt().coerceIn(1, 100)
-                                        audioBoostPercent = boost
-                                        playerManager.setAudioBoostPercent(boost)
-                                        gestureHint = "🚀 Khuếch đại âm thanh: ${100 + boost}% (Boost +${(boost * 0.15f).toInt()}dB)"
-                                    }
-                                }
-                                GestureMode.NONE -> {}
-                            }
+                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                        val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                        val basePercent = (curVol.toFloat() / maxVol) * 100f
+                        val initialCombinedVol = if (basePercent >= 99f && audioBoostPercent > 0) {
+                            100f + audioBoostPercent
+                        } else {
+                            basePercent
                         }
-                    )
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressedCount = event.changes.count { it.pressed }
+
+                            if (pressedCount >= 2) {
+                                // CHẾ ĐỘ 2 NGÓN TAY: ZOOM & PAN VIDEO
+                                gestureMode = GestureMode.ZOOM
+                                val zoomChange = event.calculateZoom()
+                                val panChange = event.calculatePan()
+
+                                if (zoomChange != 1f || panChange.x != 0f || panChange.y != 0f) {
+                                    val newScale = (zoomScale * zoomChange).coerceIn(1.0f, 4.0f)
+                                    zoomScale = newScale
+                                    if (newScale > 1.01f) {
+                                        val maxDx = (size.width * (newScale - 1f)) / 2f
+                                        val maxDy = (size.height * (newScale - 1f)) / 2f
+                                        zoomOffsetX = (zoomOffsetX + panChange.x * newScale).coerceIn(-maxDx, maxDx)
+                                        zoomOffsetY = (zoomOffsetY + panChange.y * newScale).coerceIn(-maxDy, maxDy)
+                                    } else {
+                                        zoomOffsetX = 0f
+                                        zoomOffsetY = 0f
+                                    }
+                                    gestureHint = "🔍 Thu phóng: ${(zoomScale * 100).roundToInt()}%"
+                                }
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            } else if (pressedCount == 1 && gestureMode != GestureMode.ZOOM) {
+                                // CHẾ ĐỘ 1 NGÓN TAY: TUA NGANG / ĐỘ SÁNG / ÂM LƯỢNG
+                                val change = event.changes.firstOrNull { it.pressed } ?: continue
+                                val dragX = change.position.x - change.previousPosition.x
+                                val dragY = change.position.y - change.previousPosition.y
+
+                                if (dragX != 0f || dragY != 0f) {
+                                    val screenWidth = size.width.toFloat().coerceAtLeast(1f)
+                                    val screenHeight = size.height.toFloat().coerceAtLeast(1f)
+
+                                    totalDragX += dragX
+                                    totalDragY += dragY
+
+                                    if (gestureMode == GestureMode.NONE) {
+                                        val threshold = 18f
+                                        if (abs(totalDragX) > threshold || abs(totalDragY) > threshold) {
+                                            gestureMode = if (abs(totalDragX) > abs(totalDragY) * 1.2f) {
+                                                GestureMode.SEEK
+                                            } else {
+                                                if (startTouchX < screenWidth / 2f) GestureMode.BRIGHTNESS else GestureMode.VOLUME
+                                            }
+                                            totalDragX = 0f
+                                            totalDragY = 0f
+                                        }
+                                    }
+
+                                    when (gestureMode) {
+                                        GestureMode.SEEK -> {
+                                            change.consume()
+                                            val dur = playerManager.getDuration().coerceAtLeast(1L)
+                                            val maxSeekRange = minOf(dur, 120_000L).coerceAtLeast(30_000L)
+                                            val seekDelta = ((totalDragX / screenWidth) * maxSeekRange).toLong()
+                                            targetSeekPos = (initialSeekPos + seekDelta).coerceIn(0L, dur)
+                                            currentPos = targetSeekPos
+                                            val diffSec = (targetSeekPos - initialSeekPos) / 1000
+                                            val sign = if (diffSec >= 0) "+${diffSec}s" else "${diffSec}s"
+                                            gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} / ${formatTimeMs(dur)} ($sign)"
+                                        }
+                                        GestureMode.BRIGHTNESS -> {
+                                            change.consume()
+                                            val act = activity
+                                            if (act != null) {
+                                                val window = act.window
+                                                val attrs = window.attributes
+                                                val deltaBright = -totalDragY / (screenHeight * 0.75f)
+                                                val newBright = (initialBrightness + deltaBright).coerceIn(0.02f, 1.0f)
+                                                attrs.screenBrightness = newBright
+                                                window.attributes = attrs
+                                                gestureHint = "☀️ Độ sáng: ${(newBright * 100).roundToInt()}%"
+                                            }
+                                        }
+                                        GestureMode.VOLUME -> {
+                                            change.consume()
+                                            val deltaPercent = (-totalDragY / (screenHeight * 0.75f)) * 150f
+                                            val newCombined = (initialCombinedVol + deltaPercent).coerceIn(0f, 200f)
+
+                                            if (newCombined <= 100f) {
+                                                audioBoostPercent = 0
+                                                playerManager.setAudioBoostPercent(0)
+                                                val targetSysVol = ((newCombined / 100f) * maxVol).roundToInt().coerceIn(0, maxVol)
+                                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetSysVol, 0)
+                                                gestureHint = "🔊 Âm lượng: ${newCombined.roundToInt()}%"
+                                            } else {
+                                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
+                                                val boost = (newCombined - 100f).roundToInt().coerceIn(1, 100)
+                                                audioBoostPercent = boost
+                                                playerManager.setAudioBoostPercent(boost)
+                                                gestureHint = "🚀 Khuếch đại: ${100 + boost}% (+${(boost * 0.15f).toInt()}dB)"
+                                            }
+                                        }
+                                        else -> {}
+                                    }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+
+                        if (gestureMode == GestureMode.SEEK) {
+                            playerManager.seekTo(targetSeekPos)
+                            currentPos = targetSeekPos
+                            persistCurrentPosition()
+                        }
+                        gestureMode = GestureMode.NONE
+                        gestureHint = null
+                    }
                 }
         )
 
@@ -503,6 +553,11 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                    if (zoomScale > 1.01f) {
+                        TextButton(onClick = { resetZoom() }) {
+                            Text("🔍 ${(zoomScale * 100).roundToInt()}% (Đặt lại)", color = Color(0xFFFFD54F))
+                        }
+                    }
                     if (audioBoostPercent > 0) {
                         Text(
                             text = "🔊 ${100 + audioBoostPercent}%",
@@ -536,7 +591,7 @@ fun PlayerScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Hàng nút điều khiển có thanh cuộn ngang tiện lợi
+                // Hàng nút điều khiển có thanh cuộn ngang + Popup Menu nhỏ
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -545,7 +600,6 @@ fun PlayerScreen(
                     IconButton(onClick = { persistCurrentPosition(); onBack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
                     }
-                    // Nút Bài trước (Previous)
                     IconButton(
                         onClick = { playPreviousVideo() },
                         enabled = currentIndex > 0
@@ -556,7 +610,6 @@ fun PlayerScreen(
                             tint = if (currentIndex > 0) Color.White else Color.Gray
                         )
                     }
-                    // Nút Play / Pause
                     IconButton(onClick = {
                         if (isPlaying) {
                             playerManager.pause()
@@ -573,7 +626,6 @@ fun PlayerScreen(
                             modifier = Modifier.size(40.dp)
                         )
                     }
-                    // Nút Bài tiếp theo (Next)
                     IconButton(
                         onClick = { playNextVideo() },
                         enabled = playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1
@@ -584,16 +636,74 @@ fun PlayerScreen(
                             tint = if (playlist.isNotEmpty() && currentIndex in 0 until playlist.size - 1) Color.White else Color.Gray
                         )
                     }
-                    // Nút Tốc độ phát
-                    TextButton(onClick = {
-                        val speeds = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f)
-                        val nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.size
-                        playbackSpeed = speeds[nextIdx]
-                        playerManager.setPlaybackSpeed(playbackSpeed)
-                    }) {
-                        Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold)
+
+                    // ================= 1. MENU NHỎ CHỌN TỐC ĐỘ CHẠY VIDEO =================
+                    Box {
+                        TextButton(onClick = { showSpeedMenu = true }) {
+                            Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                        DropdownMenu(
+                            expanded = showSpeedMenu,
+                            onDismissRequest = { showSpeedMenu = false }
+                        ) {
+                            val speedOptions = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f)
+                            speedOptions.forEach { spd ->
+                                DropdownMenuItem(
+                                    text = {
+                                        val label = if (spd == 1.0f) "1.0x (Chuẩn)" else "${spd}x"
+                                        Text(
+                                            text = if (playbackSpeed == spd) "✓ $label" else "    $label",
+                                            fontWeight = if (playbackSpeed == spd) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        playbackSpeed = spd
+                                        playerManager.setPlaybackSpeed(spd)
+                                        showSpeedMenu = false
+                                    }
+                                )
+                            }
+                        }
                     }
-                    // Nút Bật/Tắt Audio Boost 200% nhanh
+
+                    // ================= 2. MENU NHỎ CHỌN MỨC ZOOM VIDEO =================
+                    Box {
+                        IconButton(onClick = { showZoomMenu = true }) {
+                            Icon(
+                                Icons.Default.ZoomIn,
+                                contentDescription = "Thu phóng video",
+                                tint = if (zoomScale > 1.01f) Color(0xFFFFD54F) else Color.White
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showZoomMenu,
+                            onDismissRequest = { showZoomMenu = false }
+                        ) {
+                            val zoomPresets = listOf(1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f)
+                            zoomPresets.forEach { z ->
+                                DropdownMenuItem(
+                                    text = {
+                                        val pct = (z * 100).roundToInt()
+                                        val label = if (z == 1.0f) "100% (Mặc định)" else "$pct%"
+                                        Text(
+                                            text = if (abs(zoomScale - z) < 0.05f) "✓ $label" else "    $label",
+                                            fontWeight = if (abs(zoomScale - z) < 0.05f) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        zoomScale = z
+                                        if (z == 1.0f) {
+                                            zoomOffsetX = 0f
+                                            zoomOffsetY = 0f
+                                        }
+                                        showZoomMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Nút Bật/Tắt Audio Boost 200%
                     TextButton(onClick = {
                         audioBoostPercent = if (audioBoostPercent == 0) 50 else if (audioBoostPercent == 50) 100 else 0
                         playerManager.setAudioBoostPercent(audioBoostPercent)
@@ -605,7 +715,8 @@ fun PlayerScreen(
                             color = if (audioBoostPercent > 0) Color(0xFF00E5FF) else Color.White
                         )
                     }
-                    // Nút Phát nền khi tắt màn hình (Background Audio)
+
+                    // Nút Phát nền khi tắt màn hình
                     IconButton(onClick = {
                         backgroundAudioEnabled = !backgroundAudioEnabled
                         gestureHint = if (backgroundAudioEnabled) "🎧 Đã bật Phát tiếng khi tắt màn hình" else "🎧 Đã tắt Phát nền"
@@ -617,20 +728,41 @@ fun PlayerScreen(
                             tint = if (backgroundAudioEnabled) Color(0xFF00E5FF) else Color.White
                         )
                     }
-                    // Nút Hẹn giờ ngủ (Sleep Timer)
-                    IconButton(onClick = {
-                        val options = listOf(0, 15, 30, 60)
-                        val next = options[(options.indexOf(sleepTimerMinutes) + 1) % options.size]
-                        sleepTimerMinutes = next
-                        gestureHint = if (next > 0) "💤 Hẹn giờ tắt: $next phút" else "💤 Đã hủy hẹn giờ tắt"
-                        scope.launch { delay(1200); gestureHint = null }
-                    }) {
-                        Icon(
-                            Icons.Default.Bedtime,
-                            contentDescription = "Hẹn giờ tắt",
-                            tint = if (sleepTimerMinutes > 0) Color(0xFFFFD54F) else Color.White
-                        )
+
+                    // ================= 3. MENU NHỎ CHỌN HẸN GIỜ TẮT (SLEEP TIMER) =================
+                    Box {
+                        IconButton(onClick = { showSleepMenu = true }) {
+                            Icon(
+                                Icons.Default.Bedtime,
+                                contentDescription = "Hẹn giờ tắt",
+                                tint = if (sleepTimerMinutes > 0) Color(0xFFFFD54F) else Color.White
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showSleepMenu,
+                            onDismissRequest = { showSleepMenu = false }
+                        ) {
+                            val timerOptions = listOf(0, 10, 15, 30, 45, 60, 90)
+                            timerOptions.forEach { mins ->
+                                DropdownMenuItem(
+                                    text = {
+                                        val label = if (mins == 0) "Tắt hẹn giờ" else "$mins phút"
+                                        Text(
+                                            text = if (sleepTimerMinutes == mins) "✓ $label" else "    $label",
+                                            fontWeight = if (sleepTimerMinutes == mins) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        sleepTimerMinutes = mins
+                                        showSleepMenu = false
+                                        gestureHint = if (mins > 0) "💤 Hẹn giờ tắt: $mins phút" else "💤 Đã tắt hẹn giờ ngủ"
+                                        scope.launch { delay(1200); gestureHint = null }
+                                    }
+                                )
+                            }
+                        }
                     }
+
                     // Nút Đảo chiều xoay ngang/dọc thủ công
                     IconButton(onClick = {
                         val curOrient = activity?.requestedOrientation
@@ -642,6 +774,7 @@ fun PlayerScreen(
                     }) {
                         Icon(Icons.Default.ScreenRotation, contentDescription = "Xoay màn hình", tint = Color.White)
                     }
+
                     // Nút Tỷ lệ khung hình
                     IconButton(onClick = {
                         resizeMode = when (resizeMode) {
@@ -652,10 +785,13 @@ fun PlayerScreen(
                     }) {
                         Icon(Icons.Default.AspectRatio, contentDescription = "Tỷ lệ khung hình", tint = Color.White)
                     }
-                    // Nút Phụ đề
+
+                    // Nút Phụ đề (Biểu tượng khoanh tròn màu cam của bạn)
                     IconButton(onClick = {
                         subtitlesEnabled = !subtitlesEnabled
                         playerManager.toggleSubtitles(subtitlesEnabled)
+                        gestureHint = if (subtitlesEnabled) "💬 Đã bật Phụ đề (Subtitles)" else "💬 Đã tắt Phụ đề"
+                        scope.launch { delay(1000); gestureHint = null }
                     }) {
                         Icon(
                             Icons.Default.Subtitles,
@@ -663,10 +799,12 @@ fun PlayerScreen(
                             tint = if (subtitlesEnabled) MaterialTheme.colorScheme.primary else Color.Gray
                         )
                     }
+
                     // Nút PiP
                     IconButton(onClick = { enterPip() }) {
                         Icon(Icons.Default.PictureInPictureAlt, contentDescription = "PiP", tint = Color.White)
                     }
+
                     // Nút Khóa trẻ em
                     IconButton(onClick = { isLocked = true }) {
                         Icon(Icons.Default.Lock, contentDescription = "Khóa màn hình", tint = Color.White)
