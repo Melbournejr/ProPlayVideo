@@ -27,6 +27,15 @@ data class ExternalSubtitleItem(
     val mimeType: String
 )
 
+data class VideoNerdStats(
+    val resolution: String,
+    val videoCodec: String,
+    val frameRate: String,
+    val videoBitrate: String,
+    val audioCodec: String,
+    val droppedFrames: Int
+)
+
 data class EqBandInfo(
     val index: Int,
     val centerFreqHz: Int,
@@ -370,6 +379,34 @@ class PlayerManager(private val context: Context) {
         equalizer = null
         bassBoost = null
         player.release()
+    }
+
+    fun stepFrame(forward: Boolean) {
+        player.pause()
+        val vf = player.videoFormat
+        val fps = if (vf != null && vf.frameRate > 0f) vf.frameRate else 30f
+        val frameDurationMs = (1000f / fps).toLong().coerceIn(16L, 66L)
+        val delta = if (forward) frameDurationMs else -frameDurationMs
+        val target = (getCurrentPosition() + delta).coerceIn(0L, getDuration())
+        player.seekTo(target)
+    }
+
+    fun getNerdStats(): VideoNerdStats {
+        val vf = player.videoFormat
+        val af = player.audioFormat
+        val counters = player.videoDecoderCounters
+        val res = if (vf != null && vf.width > 0) "${vf.width}x${vf.height}" else "Đang đo..."
+        val vCodec = vf?.sampleMimeType?.substringAfter("/")?.uppercase() ?: "HW Decoder"
+        val fps = if (vf != null && vf.frameRate > 0f) "%.1f FPS".format(vf.frameRate) else "Auto FPS"
+        val vBitrate = if (vf != null && vf.bitrate > 0) "%.2f Mbps".format(vf.bitrate / 1_000_000f) else "VBR (Auto)"
+        val aCodec = if (af != null) {
+            val mime = af.sampleMimeType?.substringAfter("/")?.uppercase() ?: "Audio"
+            val ch = if (af.channelCount > 0) "${af.channelCount}ch" else ""
+            val hz = if (af.sampleRate > 0) "${af.sampleRate / 1000}kHz" else ""
+            "$mime $ch $hz".trim()
+        } else "Stereo"
+        val dropped = counters?.droppedBufferCount ?: 0
+        return VideoNerdStats(res, vCodec, fps, vBitrate, aCodec, dropped)
     }
 
     fun toggleSubtitles(enabled: Boolean) {

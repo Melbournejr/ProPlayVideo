@@ -8,6 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,8 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.videoplayer.app.data.local.observeAllPositions
-import com.videoplayer.app.data.local.observeLastPlayedVideoId
+import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.ui.components.LiquidGlassCard
@@ -43,6 +45,15 @@ data class FolderSummary(
     val previewVideo: VideoItem
 )
 
+enum class SortOption(val label: String) {
+    DATE_DESC("Mới nhất trước"),
+    DATE_ASC("Cũ nhất trước"),
+    SIZE_DESC("Dung lượng: Lớn -> Nhỏ"),
+    SIZE_ASC("Dung lượng: Nhỏ -> Lớn"),
+    DURATION_DESC("Thời lượng: Dài -> Ngắn"),
+    NAME_ASC("Tên: A -> Z")
+}
+
 private enum class FileDialogType {
     NONE, INFO, RENAME, COPY, MOVE, DELETE
 }
@@ -51,10 +62,12 @@ private enum class FileDialogType {
 fun HomeScreen(
     modifier: Modifier = Modifier,
     selectedFolder: String?,
+    isVaultMode: Boolean = false,
     folderListState: LazyListState,
     videoListState: LazyListState,
     lastViewedVideoId: String?,
     onSelectFolder: (String?) -> Unit,
+    onExitVault: () -> Unit = {},
     onVideoClick: (VideoItem, List<VideoItem>) -> Unit,
     onStreamClick: () -> Unit
 ) {
@@ -63,20 +76,55 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     var refreshTrigger by remember { mutableIntStateOf(0) }
     val repository = remember(context) { VideoRepository(context) }
-    val videos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
+    val rawVideos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
+    val vaultIds by context.observeVaultVideoIds().collectAsState(initial = emptySet())
+
+    // State cho Tìm kiếm, Sắp xếp & Chế độ Lưới 2 cột (Grid/List)
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchExpanded by remember { mutableStateOf(false) }
+    var sortOption by remember { mutableStateOf(SortOption.DATE_DESC) }
+    var showSortMenu by remember { mutableStateOf(false) }
+    var isGridView by remember { mutableStateOf(false) }
 
     var activeVideoForAction by remember { mutableStateOf<VideoItem?>(null) }
     var dialogType by remember { mutableStateOf(FileDialogType.NONE) }
     var showBottomSheetFor by remember { mutableStateOf<VideoItem?>(null) }
 
-    BackHandler(enabled = selectedFolder != null) {
-        onSelectFolder(null)
+    BackHandler(enabled = selectedFolder != null || isVaultMode || isSearchExpanded) {
+        when {
+            isSearchExpanded -> {
+                isSearchExpanded = false
+                searchQuery = ""
+            }
+            isVaultMode -> onExitVault()
+            selectedFolder != null -> onSelectFolder(null)
+        }
     }
 
-    val folders = remember(videos) {
-        videos.groupBy { it.folder }.map { (folderName, list) ->
+    // Lọc các video theo chế độ Thường hoặc Kho Riêng Tư
+    val visibleVideos = remember(rawVideos, vaultIds, isVaultMode) {
+        if (isVaultMode) {
+            rawVideos.filter { it.id in vaultIds }
+        } else {
+            rawVideos.filter { it.id !in vaultIds }
+        }
+    }
+
+    fun applySorting(list: List<VideoItem>, sort: SortOption): List<VideoItem> {
+        return when (sort) {
+            SortOption.DATE_DESC -> list.sortedByDescending { it.dateAdded }
+            SortOption.DATE_ASC -> list.sortedBy { it.dateAdded }
+            SortOption.SIZE_DESC -> list.sortedByDescending { it.size }
+            SortOption.SIZE_ASC -> list.sortedBy { it.size }
+            SortOption.DURATION_DESC -> list.sortedByDescending { it.duration }
+            SortOption.NAME_ASC -> list.sortedBy { it.displayName.lowercase() }
+        }
+    }
+
+    val folders = remember(visibleVideos) {
+        visibleVideos.groupBy { it.folder }.map { (folderName, list) ->
             val firstVideo = list.first()
             val parentDir = File(firstVideo.path).parent ?: "/storage/emulated/0/Movies"
             FolderSummary(
@@ -89,293 +137,453 @@ fun HomeScreen(
         }.sortedBy { it.name.lowercase() }
     }
 
-    val lastPlayedVideo = remember(videos, lastPlayedId) {
-        videos.find { it.id == lastPlayedId }
+    val lastPlayedVideo = remember(visibleVideos, lastPlayedId) {
+        visibleVideos.find { it.id == lastPlayedId }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        if (videos.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth().padding(28.dp)
+    Column(modifier = modifier.fillMaxSize()) {
+        // ================= THANH CÔNG CỤ TÌM KIẾM, SẮP XẾP & CHUYỂN LƯỚI 2 CỘT =================
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isSearchExpanded) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Tìm tên video hoặc thư mục...") },
+                    leadingIcon = { Icon(Icons.Default.Search, null, tint = palette.primaryGlow) },
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            searchQuery = ""
+                            isSearchExpanded = false
+                        }) {
+                            Icon(Icons.Default.Close, null, tint = Color.White)
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                LiquidGlassPill(
+                    active = false,
+                    onClick = { isSearchExpanded = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (isVaultMode) "Tìm trong Kho Riêng Tư..." else "Tìm kiếm video nhanh...",
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
+
+                // Nút Sắp xếp (Sort)
+                Box {
+                    LiquidGlassPill(
+                        active = sortOption != SortOption.DATE_DESC,
+                        onClick = { showSortMenu = true }
                     ) {
-                        Icon(
-                            Icons.Default.VideoLibrary,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = palette.primaryGlow
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(
-                            "Chưa tìm thấy video hoặc chưa cấp quyền bộ nhớ.",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        LiquidGlassPill(active = true, onClick = { refreshTrigger++ }) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Quét lại thiết bị", color = Color.White, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Sort, contentDescription = "Sắp xếp", tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Xếp", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+                    DropdownMenu(
+                        expanded = showSortMenu,
+                        onDismissRequest = { showSortMenu = false }
+                    ) {
+                        SortOption.values().forEach { opt ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (sortOption == opt) "✓ ${opt.label}" else "    ${opt.label}",
+                                        fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                onClick = {
+                                    sortOption = opt
+                                    showSortMenu = false
+                                }
+                            )
                         }
                     }
                 }
+
+                // Nút Đổi Danh sách <-> Lưới 2 cột (Grid/List)
+                LiquidGlassPill(
+                    active = isGridView,
+                    onClick = { isGridView = !isGridView }
+                ) {
+                    Icon(
+                        imageVector = if (isGridView) Icons.Default.ViewList else Icons.Default.GridView,
+                        contentDescription = "Đổi kiểu xem",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Nút Làm mới
+                LiquidGlassPill(onClick = { refreshTrigger++ }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
+                }
             }
-        } else if (selectedFolder == null) {
-            // ================= TRANG ĐẦU TIÊN: DANH SÁCH THƯ MỤC =================
-            LazyColumn(
-                state = folderListState,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                lastPlayedVideo?.let { recent ->
-                    val pos = savedPositions[recent.id] ?: 0L
-                    if (pos > 2000L) {
-                        item {
-                            val recentPlaylist = remember(videos, recent.folder) {
-                                videos.filter { it.folder == recent.folder }
-                            }
-                            LiquidGlassCard(
-                                tintColor = palette.primaryGlow,
-                                surfaceAlpha = 0.16f,
-                                highlighted = true,
-                                cornerRadius = 24.dp,
-                                onClick = { onVideoClick(recent, recentPlaylist) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+        }
+
+        // ================= NỘI DUNG CHÍNH =================
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val isSearchingAll = searchQuery.isNotBlank() && selectedFolder == null && !isVaultMode
+
+            if (visibleVideos.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth().padding(28.dp)
+                        ) {
+                            Icon(
+                                if (isVaultMode) Icons.Default.Lock else Icons.Default.VideoLibrary,
+                                contentDescription = null,
+                                modifier = Modifier.size(64.dp),
+                                tint = palette.primaryGlow
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                if (isVaultMode) "Kho Riêng Tư đang trống.\nBạn có thể bấm nút 3 chấm (⋮) ở bất kỳ video nào để đưa vào Kho Riêng Tư."
+                                else "Chưa tìm thấy video hoặc chưa cấp quyền bộ nhớ.",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+            } else if (selectedFolder == null && !isVaultMode && !isSearchingAll) {
+                // ================= TRANG DANH SÁCH THƯ MỤC =================
+                LazyColumn(
+                    state = folderListState,
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    lastPlayedVideo?.let { recent ->
+                        val pos = savedPositions[recent.id] ?: 0L
+                        if (pos > 2000L) {
+                            item {
+                                val recentPlaylist = remember(visibleVideos, recent.folder, sortOption) {
+                                    applySorting(visibleVideos.filter { it.folder == recent.folder }, sortOption)
+                                }
+                                LiquidGlassCard(
+                                    tintColor = palette.primaryGlow,
+                                    surfaceAlpha = 0.16f,
+                                    highlighted = true,
+                                    cornerRadius = 24.dp,
+                                    onClick = { onVideoClick(recent, recentPlaylist) },
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    VideoThumbnailView(
-                                        video = recent,
-                                        modifier = Modifier.size(width = 108.dp, height = 64.dp)
-                                    )
-                                    Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
-                                        LiquidGlassPill(active = true) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        VideoThumbnailView(
+                                            video = recent,
+                                            modifier = Modifier.size(width = 108.dp, height = 64.dp)
+                                        )
+                                        Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                                            LiquidGlassPill(active = true) {
+                                                Text(
+                                                    text = "▶ TIẾP TỤC XEM",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
                                             Text(
-                                                text = "▶ TIẾP TỤC XEM",
-                                                style = MaterialTheme.typography.labelSmall,
+                                                text = recent.displayName,
+                                                style = MaterialTheme.typography.titleSmall,
                                                 color = Color.White,
-                                                fontWeight = FontWeight.ExtraBold
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            val progress = (pos.toFloat() / recent.duration.coerceAtLeast(1L)).coerceIn(0f, 1f)
+                                            LinearProgressIndicator(
+                                                progress = progress,
+                                                color = palette.primaryGlow,
+                                                trackColor = Color.White.copy(alpha = 0.15f),
+                                                modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp))
                                             )
                                         }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = recent.displayName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Text(
+                            text = "Thư mục Kính Lỏng (${folders.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp)
+                        )
+                    }
+
+                    items(folders, key = { it.name }) { folder ->
+                        LiquidGlassCard(
+                            cornerRadius = 22.dp,
+                            onClick = { onSelectFolder(folder.name) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(contentAlignment = Alignment.BottomEnd) {
+                                    VideoThumbnailView(
+                                        video = folder.previewVideo,
+                                        modifier = Modifier.size(width = 100.dp, height = 62.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(4.dp)
+                                            .background(palette.primaryGlow.copy(alpha = 0.9f), CircleShape)
+                                            .padding(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Folder,
+                                            contentDescription = null,
+                                            tint = Color(0xFF001F29),
+                                            modifier = Modifier.size(13.dp)
                                         )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        val progress = (pos.toFloat() / recent.duration.coerceAtLeast(1L)).coerceIn(0f, 1f)
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                                    Text(
+                                        text = folder.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "${folder.count} video",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = palette.primaryGlow,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = "  •  ${formatFolderSize(folder.totalSize)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFFA7B8D8)
+                                        )
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                                        .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ================= TRANG DANH SÁCH VIDEO (THƯ MỤC / TÌM KIẾM / KHO RIÊNG TƯ) =================
+                val displayedVideos = remember(visibleVideos, selectedFolder, isVaultMode, searchQuery, sortOption) {
+                    val base = when {
+                        isVaultMode -> visibleVideos
+                        selectedFolder != null -> visibleVideos.filter { it.folder == selectedFolder }
+                        else -> visibleVideos
+                    }
+                    val filtered = if (searchQuery.isBlank()) base else {
+                        base.filter {
+                            it.displayName.contains(searchQuery, ignoreCase = true) ||
+                                it.folder.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
+                    applySorting(filtered, sortOption)
+                }
+
+                LaunchedEffect(lastViewedVideoId, displayedVideos.size) {
+                    if (!isGridView && lastViewedVideoId != null && displayedVideos.isNotEmpty()) {
+                        val idx = displayedVideos.indexOfFirst { it.id == lastViewedVideoId }
+                        if (idx >= 0) {
+                            val visibleIndices = videoListState.layoutInfo.visibleItemsInfo.map { it.index }
+                            if (visibleIndices.isEmpty() || idx !in visibleIndices) {
+                                videoListState.scrollToItem((idx - 1).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
+
+                if (isGridView) {
+                    // CHẾ ĐỘ LƯỚI 2 CỘT (GRID VIEW)
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(displayedVideos, key = { it.id }) { video ->
+                            val savedPos = savedPositions[video.id] ?: 0L
+                            val progress = if (video.duration > 0 && savedPos > 1000L) {
+                                (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
+                            } else 0f
+                            val isJustWatched = (video.id == lastViewedVideoId)
+
+                            LiquidGlassCard(
+                                cornerRadius = 20.dp,
+                                highlighted = isJustWatched,
+                                onClick = { onVideoClick(video, displayedVideos) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    VideoThumbnailView(
+                                        video = video,
+                                        modifier = Modifier.fillMaxWidth().height(104.dp)
+                                    )
+                                    if (progress > 0f) {
+                                        Spacer(Modifier.height(4.dp))
                                         LinearProgressIndicator(
                                             progress = progress,
                                             color = palette.primaryGlow,
-                                            trackColor = Color.White.copy(alpha = 0.15f),
-                                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp))
+                                            trackColor = Color.White.copy(alpha = 0.12f),
+                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))
                                         )
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = video.displayName,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = if (isJustWatched) palette.primaryGlow else Color.White,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = video.sizeFormatted,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFA7B8D8)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { showBottomSheetFor = video },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // CHẾ ĐỘ DANH SÁCH (LIST VIEW)
+                    LazyColumn(
+                        state = videoListState,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(displayedVideos, key = { it.id }) { video ->
+                            val savedPos = savedPositions[video.id] ?: 0L
+                            val progress = if (video.duration > 0 && savedPos > 1000L) {
+                                (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
+                            } else 0f
+                            val isJustWatched = (video.id == lastViewedVideoId)
+
+                            LiquidGlassCard(
+                                cornerRadius = 20.dp,
+                                highlighted = isJustWatched,
+                                onClick = { onVideoClick(video, displayedVideos) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    VideoThumbnailView(
+                                        video = video,
+                                        modifier = Modifier.size(width = 114.dp, height = 66.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text(
+                                            text = video.displayName,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = if (isJustWatched) palette.primaryGlow else Color.White,
+                                            fontWeight = if (isJustWatched) FontWeight.Bold else FontWeight.SemiBold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = if (savedPos > 2000L) {
+                                                "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
+                                            } else {
+                                                video.sizeFormatted
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (savedPos > 2000L) palette.primaryGlow else Color(0xFFA7B8D8)
+                                        )
+                                        if (progress > 0f) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            LinearProgressIndicator(
+                                                progress = progress,
+                                                color = palette.primaryGlow,
+                                                trackColor = Color.White.copy(alpha = 0.12f),
+                                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
+                                            )
+                                        }
+                                    }
+                                    IconButton(onClick = { showBottomSheetFor = video }) {
+                                        Icon(Icons.Default.MoreVert, contentDescription = "Quản lý file", tint = Color.White)
                                     }
                                 }
                             }
                         }
                     }
                 }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Thư mục Kính Lỏng (${folders.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                        LiquidGlassPill(onClick = { refreshTrigger++ }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Làm mới", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                }
-
-                items(folders, key = { it.name }) { folder ->
-                    LiquidGlassCard(
-                        cornerRadius = 22.dp,
-                        onClick = { onSelectFolder(folder.name) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(contentAlignment = Alignment.BottomEnd) {
-                                VideoThumbnailView(
-                                    video = folder.previewVideo,
-                                    modifier = Modifier.size(width = 100.dp, height = 62.dp)
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .padding(4.dp)
-                                        .background(palette.primaryGlow.copy(alpha = 0.9f), CircleShape)
-                                        .padding(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Folder,
-                                        contentDescription = null,
-                                        tint = Color(0xFF001F29),
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-                            }
-                            Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
-                                Text(
-                                    text = folder.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "${folder.count} video",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = palette.primaryGlow,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "  •  ${formatFolderSize(folder.totalSize)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFA7B8D8)
-                                    )
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                                    .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = null,
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // ================= TRANG CHI TIẾT VIDEO TRONG THƯ MỤC =================
-            val folderVideos = remember(videos, selectedFolder) {
-                videos.filter { it.folder == selectedFolder }
             }
 
-            // Nếu vừa xem xong 1 video (kể cả khi đã Next sang video khác trong lúc xem),
-            // tự động giữ hoặc cuộn tới đúng vị trí video đó nếu nó nằm ngoài khung nhìn hiện tại
-            LaunchedEffect(lastViewedVideoId, folderVideos.size) {
-                if (lastViewedVideoId != null && folderVideos.isNotEmpty()) {
-                    val idx = folderVideos.indexOfFirst { it.id == lastViewedVideoId }
-                    if (idx >= 0) {
-                        val visibleIndices = videoListState.layoutInfo.visibleItemsInfo.map { it.index }
-                        if (visibleIndices.isEmpty() || idx !in visibleIndices) {
-                            videoListState.scrollToItem((idx - 1).coerceAtLeast(0))
-                        }
-                    }
-                }
-            }
-
-            LazyColumn(
-                state = videoListState,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+            LiquidGlassPill(
+                active = true,
+                onClick = onStreamClick,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(18.dp)
             ) {
-                items(folderVideos, key = { it.id }) { video ->
-                    val savedPos = savedPositions[video.id] ?: 0L
-                    val progress = if (video.duration > 0 && savedPos > 1000L) {
-                        (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
-                    } else 0f
-                    val isJustWatched = (video.id == lastViewedVideoId)
-
-                    LiquidGlassCard(
-                        cornerRadius = 20.dp,
-                        highlighted = isJustWatched,
-                        onClick = { onVideoClick(video, folderVideos) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            VideoThumbnailView(
-                                video = video,
-                                modifier = Modifier.size(width = 114.dp, height = 66.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                Text(
-                                    text = video.displayName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = if (isJustWatched) palette.primaryGlow else Color.White,
-                                    fontWeight = if (isJustWatched) FontWeight.Bold else FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (savedPos > 2000L) {
-                                        "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
-                                    } else {
-                                        video.sizeFormatted
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (savedPos > 2000L) palette.primaryGlow else Color(0xFFA7B8D8)
-                                )
-                                if (progress > 0f) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    LinearProgressIndicator(
-                                        progress = progress,
-                                        color = palette.primaryGlow,
-                                        trackColor = Color.White.copy(alpha = 0.12f),
-                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
-                                    )
-                                }
-                            }
-                            IconButton(onClick = { showBottomSheetFor = video }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Quản lý file", tint = Color.White)
-                            }
-                        }
-                    }
-                }
+                Icon(imageVector = Icons.Default.Stream, contentDescription = "Stream URL", tint = Color.White)
+                Spacer(Modifier.width(8.dp))
+                Text("Stream Mạng", color = Color.White, fontWeight = FontWeight.Bold)
             }
-        }
-
-        LiquidGlassPill(
-            active = true,
-            onClick = onStreamClick,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(18.dp)
-        ) {
-            Icon(imageVector = Icons.Default.Stream, contentDescription = "Stream URL", tint = Color.White)
-            Spacer(Modifier.width(8.dp))
-            Text("Stream Mạng", color = Color.White, fontWeight = FontWeight.Bold)
         }
     }
 
-    // ================= MENU QUẢN LÝ FILE =================
+    // ================= MENU QUẢN LÝ FILE + ĐƯA VÀO KHO RIÊNG TƯ =================
     showBottomSheetFor?.let { targetVideo ->
+        val isInVault = targetVideo.id in vaultIds
         AlertDialog(
             onDismissRequest = { showBottomSheetFor = null },
             containerColor = palette.deepBgMid.copy(alpha = 0.96f),
@@ -397,6 +605,34 @@ fun HomeScreen(
                             )
                         }
                     }
+                    // Mục Đưa vào / Đưa ra khỏi Kho Riêng Tư
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                if (isInVault) "Khôi phục ra khỏi Kho Riêng Tư" else "Đưa vào Kho Riêng Tư (Ẩn video)",
+                                fontWeight = FontWeight.Bold,
+                                color = palette.primaryGlow
+                            )
+                        },
+                        leadingContent = {
+                            Icon(
+                                if (isInVault) Icons.Default.LockOpen else Icons.Default.Lock,
+                                null,
+                                tint = palette.primaryGlow
+                            )
+                        },
+                        modifier = Modifier.clickable {
+                            scope.launch {
+                                context.toggleVideoInVault(targetVideo.id, !isInVault)
+                                Toast.makeText(
+                                    context,
+                                    if (!isInVault) "🔒 Đã ẩn vào Kho Riêng Tư!" else "🔓 Đã đưa ra ngoài danh sách thường!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showBottomSheetFor = null
+                            }
+                        }
+                    )
                     ListItem(
                         headlineContent = { Text("Xem thông tin chi tiết") },
                         leadingContent = { Icon(Icons.Default.Info, null, tint = palette.primaryGlow) },

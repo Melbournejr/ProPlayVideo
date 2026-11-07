@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -18,8 +19,11 @@ private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
+private val vaultPinKey = stringPreferencesKey("private_vault_pin")
+private val vaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
 
 typealias PositionMap = Map<String, Long>
+typealias VaultIdSet = Set<String>
 
 suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
     if (videoId.isBlank() || positionMs < 0L) return
@@ -100,5 +104,31 @@ suspend fun Context.saveGlassFrostAlpha(alpha: Float) {
 fun Context.observeGlassFrostAlpha(): Flow<Float> {
     return this.datastore.data.map { prefs: Preferences ->
         prefs[glassFrostAlphaKey] ?: 0.16f
+    }
+}
+
+fun Context.observeVaultPin(): Flow<String?> {
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[vaultPinKey]
+    }
+}
+
+suspend fun Context.saveVaultPin(pin: String) {
+    this.datastore.edit { prefs ->
+        prefs[vaultPinKey] = pin.trim()
+    }
+}
+
+fun Context.observeVaultVideoIds(): Flow<VaultIdSet> {
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[vaultVideoIdsKey] ?: emptySet()
+    }
+}
+
+suspend fun Context.toggleVideoInVault(videoId: String, addToVault: Boolean) {
+    this.datastore.edit { prefs ->
+        val current = prefs[vaultVideoIdsKey]?.toMutableSet() ?: mutableSetOf()
+        if (addToVault) current.add(videoId) else current.remove(videoId)
+        prefs[vaultVideoIdsKey] = current
     }
 }
