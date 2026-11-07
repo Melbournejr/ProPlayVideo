@@ -34,8 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -66,6 +64,7 @@ import com.videoplayer.app.media.PlayerManager
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
+import com.videoplayer.app.util.VideoSnapshotHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -131,7 +130,6 @@ fun PlayerScreen(
         if (playlist.isNotEmpty()) playlist else listOfNotNull(initialVideo)
     }
 
-    // Lưu trữ currentVideo độc lập không bị reset bởi parent recomposition
     var currentVideo by remember { mutableStateOf(initialVideo) }
     val currentIndex = remember(currentVideo, effectivePlaylist) {
         if (currentVideo == null) -1 else effectivePlaylist.indexOfFirst { it.id == currentVideo!!.id }
@@ -154,10 +152,17 @@ fun PlayerScreen(
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var sleepRemainingSec by remember { mutableIntStateOf(0) }
 
+    // Menus & Equalizer Dialog State
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showSleepMenu by remember { mutableStateOf(false) }
     var showZoomMenu by remember { mutableStateOf(false) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
+    var showEqualizerPanel by remember { mutableStateOf(false) }
+
+    // Trạng thái 5-Band Equalizer & Bass Boost
+    var eqBands by remember { mutableStateOf(playerManager.getEqualizerBands()) }
+    var bassBoostPercent by remember { mutableIntStateOf(0) }
+    var activeEqPresetName by remember { mutableStateOf("Mặc định") }
 
     var zoomScale by remember { mutableFloatStateOf(1.0f) }
     var zoomOffsetX by remember { mutableFloatStateOf(0f) }
@@ -238,6 +243,27 @@ fun PlayerScreen(
         }
     }
 
+    fun takeVideoSnapshot() {
+        val vid = currentVideo
+        val pos = playerManager.getCurrentPosition()
+        gestureHint = "📸 Đang trích xuất khung hình gốc..."
+        scope.launch {
+            val res = VideoSnapshotHelper.captureCurrentFrame(
+                context = context,
+                videoPath = vid?.path,
+                positionMs = pos,
+                videoTitle = vid?.title ?: "Video"
+            )
+            res.onSuccess { savedPath ->
+                gestureHint = "✅ Đã lưu ảnh vào: $savedPath"
+            }.onFailure { err ->
+                gestureHint = "⚠️ Lỗi chụp ảnh: ${err.message}"
+            }
+            delay(2200)
+            if (gestureMode == GestureMode.NONE) gestureHint = null
+        }
+    }
+
     fun enterPip() {
         val act = activity ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -245,6 +271,7 @@ fun PlayerScreen(
                 persistCurrentPosition()
                 resetZoom()
                 showControls = false
+                showEqualizerPanel = false
                 val params = PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
                     .build()
@@ -274,7 +301,6 @@ fun PlayerScreen(
         }
     }
 
-    // Khởi tạo Playlist ExoPlayer 1 lần duy nhất khi mở màn hình phát
     LaunchedEffect(Unit) {
         if (initialVideo != null && effectivePlaylist.isNotEmpty()) {
             val startIdx = effectivePlaylist.indexOfFirst { it.id == initialVideo.id }.coerceAtLeast(0)
@@ -285,6 +311,8 @@ fun PlayerScreen(
             val subs = playerManager.playPlaylist(effectivePlaylist, startIdx, savedPos)
             loadedSubtitles = subs
             currentPos = savedPos
+            delay(300)
+            eqBands = playerManager.getEqualizerBands()
             if (subs.isNotEmpty()) {
                 gestureHint = "💬 Tự động nạp phụ đề: ${subs.first().name}"
                 scope.launch { delay(1800); if (gestureMode == GestureMode.NONE) gestureHint = null }
@@ -295,7 +323,6 @@ fun PlayerScreen(
         }
     }
 
-    // Lắng nghe sự kiện tự động chuyển tập của ExoPlayer (khi hết video hoặc khi bấm Next/Prev)
     DisposableEffect(playerManager, effectivePlaylist) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -309,7 +336,6 @@ fun PlayerScreen(
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Đặt lại vị trí tập cũ về 0 nếu là tự động chuyển khi phát hết tập (REPEAT / AUTO)
                 if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                     currentVideo?.let { finishedVid ->
                         CoroutineScope(Dispatchers.IO).launch {
@@ -327,7 +353,6 @@ fun PlayerScreen(
                         loadedSubtitles = playerManager.getSubtitlesForVideo(newVid)
                         onVideoChanged(newVid)
 
-                        // Nếu tự chuyển tập khi hết video, khôi phục vị trí xem dở (nếu có) của tập mới
                         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                             scope.launch {
                                 val savedPos = context.readLastPosition(newVid.id)
@@ -350,8 +375,12 @@ fun PlayerScreen(
     }
 
     BackHandler {
-        persistCurrentPosition()
-        onBack()
+        if (showEqualizerPanel) {
+            showEqualizerPanel = false
+        } else {
+            persistCurrentPosition()
+            onBack()
+        }
     }
 
     LaunchedEffect(sleepTimerMinutes) {
@@ -443,7 +472,13 @@ fun PlayerScreen(
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
                     detectTapGestures(
-                        onTap = { showControls = !showControls },
+                        onTap = {
+                            if (showEqualizerPanel) {
+                                showEqualizerPanel = false
+                            } else {
+                                showControls = !showControls
+                            }
+                        },
                         onDoubleTap = { offset ->
                             if (!isLocked) {
                                 val width = size.width
@@ -627,6 +662,143 @@ fun PlayerScreen(
             }
         }
 
+        // ================= BẢNG KÍNH LỎNG 5-BAND EQUALIZER & BASS BOOST =================
+        if (showEqualizerPanel && !isInPipMode) {
+            LiquidGlassCard(
+                cornerRadius = 28.dp,
+                highlighted = true,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 20.dp)
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Equalizer, contentDescription = null, tint = palette.primaryGlow)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Bộ Chỉnh Âm 5 Băng Tần & Siêu Trầm",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        LiquidGlassPill(onClick = { showEqualizerPanel = false }) {
+                            Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    // Hàng chọn Preset nhanh
+                    val presets = listOf(
+                        Triple("Mặc định", listOf(0f, 0f, 0f, 0f, 0f), 0),
+                        Triple("Siêu Trầm", listOf(8f, 5f, 0f, 2f, 4f), 75),
+                        Triple("Rạp Phim", listOf(6f, 3f, -1f, 4f, 6f), 50),
+                        Triple("Giọng Nói", listOf(-3f, 2f, 7f, 5f, 1f), 0),
+                        Triple("Sôi Động", listOf(5f, 3f, -2f, 3f, 6f), 40)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        presets.forEach { (name, levels, bass) ->
+                            LiquidGlassPill(
+                                active = activeEqPresetName == name,
+                                onClick = {
+                                    activeEqPresetName = name
+                                    playerManager.applyEqPreset(levels, bass)
+                                    bassBoostPercent = bass
+                                    eqBands = playerManager.getEqualizerBands()
+                                }
+                            ) {
+                                Text(name, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+
+                    // 5 Thanh trượt tần số
+                    eqBands.forEach { band ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = band.label,
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.width(56.dp)
+                            )
+                            Slider(
+                                value = band.levelDb,
+                                onValueChange = { newDb ->
+                                    activeEqPresetName = "Tùy chỉnh"
+                                    playerManager.setEqBandLevel(band.index, newDb)
+                                    eqBands = playerManager.getEqualizerBands()
+                                },
+                                valueRange = -15f..15f,
+                                modifier = Modifier.weight(1f),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color.White,
+                                    activeTrackColor = palette.primaryGlow,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            )
+                            Text(
+                                text = "%+.0fdB".format(band.levelDb),
+                                color = palette.primaryGlow,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(44.dp)
+                            )
+                        }
+                    }
+
+                    // Thanh kéo Siêu Trầm (Bass Boost)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Siêu trầm",
+                            color = Color(0xFFFFD54F),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(64.dp)
+                        )
+                        Slider(
+                            value = bassBoostPercent.toFloat(),
+                            onValueChange = {
+                                bassBoostPercent = it.roundToInt()
+                                playerManager.setBassBoostPercent(bassBoostPercent)
+                            },
+                            valueRange = 0f..100f,
+                            modifier = Modifier.weight(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFFFFD54F),
+                                activeTrackColor = Color(0xFFFFD54F),
+                                inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                            )
+                        )
+                        Text(
+                            text = "$bassBoostPercent%",
+                            color = Color(0xFFFFD54F),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(40.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         if (isLocked && showControls && !isInPipMode) {
             LiquidGlassPill(
                 active = true,
@@ -643,7 +815,6 @@ fun PlayerScreen(
         if (showControls && !isLocked && !isInPipMode) {
             LiquidGlassCard(
                 cornerRadius = 32.dp,
-                surfaceAlpha = 0.22f,
                 highlighted = true,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -746,7 +917,7 @@ fun PlayerScreen(
                                 tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
                             )
                         }
-                        // Nút Play/Pause Kính Lỏng Tròn (Apple Specular Orb)
+                        // Nút Play/Pause Kính Lỏng Tròn
                         Box(
                             modifier = Modifier
                                 .size(46.dp)
@@ -829,7 +1000,28 @@ fun PlayerScreen(
                             }
                         }
 
-                        // 2. MENU CHỌN MỨC ZOOM VIDEO
+                        // 2. NÚT BỘ CHỈNH ÂM 5 BĂNG TẦN (EQUALIZER)
+                        IconButton(onClick = {
+                            eqBands = playerManager.getEqualizerBands()
+                            showEqualizerPanel = !showEqualizerPanel
+                        }) {
+                            Icon(
+                                Icons.Default.Equalizer,
+                                contentDescription = "Equalizer",
+                                tint = if (showEqualizerPanel || bassBoostPercent > 0 || activeEqPresetName != "Mặc định") palette.primaryGlow else Color.White
+                            )
+                        }
+
+                        // 3. NÚT CHỤP ẢNH NHANH KHUNG HÌNH VIDEO (SNAPSHOT)
+                        IconButton(onClick = { takeVideoSnapshot() }) {
+                            Icon(
+                                Icons.Default.PhotoCamera,
+                                contentDescription = "Chụp ảnh khung hình",
+                                tint = Color.White
+                            )
+                        }
+
+                        // 4. MENU CHỌN MỨC ZOOM VIDEO
                         Box {
                             IconButton(onClick = { showZoomMenu = true }) {
                                 Icon(
@@ -896,7 +1088,7 @@ fun PlayerScreen(
                             )
                         }
 
-                        // 3. MENU CHỌN HẸN GIỜ TẮT
+                        // 5. MENU CHỌN HẸN GIỜ TẮT
                         Box {
                             IconButton(onClick = { showSleepMenu = true }) {
                                 Icon(
@@ -930,7 +1122,7 @@ fun PlayerScreen(
                             }
                         }
 
-                        // 4. MENU PHỤ ĐỀ
+                        // 6. MENU PHỤ ĐỀ
                         Box {
                             IconButton(onClick = { showSubtitleMenu = true }) {
                                 Icon(

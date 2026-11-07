@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
@@ -35,17 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.BuildConfig
-import com.videoplayer.app.data.local.observeGlassTheme
-import com.videoplayer.app.data.local.readGithubRepo
-import com.videoplayer.app.data.local.saveGithubRepo
-import com.videoplayer.app.data.local.saveGlassTheme
+import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
-import com.videoplayer.app.ui.components.GlassThemePresets
-import com.videoplayer.app.ui.components.LiquidAmbientBackground
-import com.videoplayer.app.ui.components.LiquidGlassCard
-import com.videoplayer.app.ui.components.LiquidGlassPill
-import com.videoplayer.app.ui.components.LocalGlassPalette
-import com.videoplayer.app.ui.components.getGlassPaletteById
+import com.videoplayer.app.ui.components.*
 import com.videoplayer.app.ui.player.PlayerScreen
 import com.videoplayer.app.ui.stream.NetworkStreamScreen
 import com.videoplayer.app.ui.theme.VideoPlayerTheme
@@ -54,6 +47,7 @@ import com.videoplayer.app.update.UpdateManager
 import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.PermissionHelper
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -88,9 +82,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
-            val activePalette = remember(themeId) { getGlassPaletteById(themeId) }
+            val tintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
+            val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
 
-            VideoPlayerTheme(palette = activePalette) {
+            val styleConfig = remember(themeId, tintId, frostAlpha) {
+                GlassStyleConfig(
+                    palette = getGlassPaletteById(themeId),
+                    tint = getGlassTintById(tintId),
+                    frostAlpha = frostAlpha
+                )
+            }
+
+            VideoPlayerTheme(styleConfig = styleConfig) {
                 var screen by remember { mutableStateOf(Screen.Home) }
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
                 var selectedVideo by remember { mutableStateOf<VideoItem?>(null) }
@@ -98,8 +101,6 @@ class MainActivity : ComponentActivity() {
                 var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
                 var streamUrl by remember { mutableStateOf<String?>(null) }
 
-                // Lưu giữ trạng thái vị trí cuộn của danh sách Thư mục & từng Thư mục Video
-                // để khi từ Player thoát ra vẫn đứng ở đúng vị trí video vừa xem!
                 val folderListState = remember { LazyListState() }
                 val videoListStates = remember { mutableStateMapOf<String, LazyListState>() }
                 val activeVideoListState = remember(selectedFolder) {
@@ -128,10 +129,8 @@ class MainActivity : ComponentActivity() {
                 } else {
                     LiquidAmbientBackground {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            // Thanh điều hướng Floating Liquid Glass Header
                             LiquidGlassCard(
                                 cornerRadius = 24.dp,
-                                surfaceAlpha = 0.14f,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -157,7 +156,7 @@ class MainActivity : ComponentActivity() {
                                     val titleText = when {
                                         screen == Screen.Home && selectedFolder != null -> selectedFolder!!
                                         screen == Screen.Stream -> "Stream Mạng"
-                                        screen == Screen.Settings -> "Giao diện & Cập nhật OTA"
+                                        screen == Screen.Settings -> "Tùy biến Kính & OTA"
                                         else -> "ProPlayVideo"
                                     }
 
@@ -171,9 +170,9 @@ class MainActivity : ComponentActivity() {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "Liquid Glass UI • v${BuildConfig.VERSION_NAME}",
+                                            text = "Apple Liquid Glass • v${BuildConfig.VERSION_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = activePalette.primaryGlow
+                                            color = styleConfig.palette.primaryGlow
                                         )
                                     }
 
@@ -184,14 +183,14 @@ class MainActivity : ComponentActivity() {
                                         Icon(
                                             Icons.Default.Home,
                                             contentDescription = "Thư mục gốc",
-                                            tint = if (screen == Screen.Home && selectedFolder == null) activePalette.primaryGlow else Color.White
+                                            tint = if (screen == Screen.Home && selectedFolder == null) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
                                     IconButton(onClick = { screen = Screen.Settings }) {
                                         Icon(
                                             Icons.Default.Settings,
                                             contentDescription = "Cài đặt & OTA",
-                                            tint = if (screen == Screen.Settings) activePalette.primaryGlow else Color.White
+                                            tint = if (screen == Screen.Settings) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
                                 }
@@ -244,6 +243,9 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val updateManager = remember { UpdateManager(context) }
 
     val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
+    val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
+    val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
+
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
     var selectedMirror by remember { mutableIntStateOf(0) }
@@ -262,14 +264,96 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ================= 1. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG & GRADIENT =================
+        // ================= 1. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH =================
+        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.BlurOn, contentDescription = null, tint = palette.primaryGlow)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Chất liệu & Màu sắc Tấm Kính (Glass Material)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
+                Text(
+                    "Độ đục sương mờ của kính (Frost Opacity): $pct%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White
+                )
+                Slider(
+                    value = currentFrostAlpha,
+                    onValueChange = { newAlpha ->
+                        scope.launch { context.saveGlassFrostAlpha(newAlpha) }
+                    },
+                    valueRange = 0.04f..0.45f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = palette.primaryGlow,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                    )
+                )
+
+                Text(
+                    "Chọn màu nhuộm trực tiếp lên mặt kính (Glass Tint):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White
+                )
+
+                GlassTintPresets.forEach { tintOpt ->
+                    val isSelected = (tintOpt.id == currentTintId)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(tintOpt.surfaceColor.copy(alpha = if (isSelected) 0.28f else 0.10f))
+                            .border(
+                                width = if (isSelected) 1.5.dp else 0.8.dp,
+                                color = if (isSelected) tintOpt.rimTint else Color.White.copy(alpha = 0.25f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                scope.launch { context.saveGlassTint(tintOpt.id) }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(tintOpt.surfaceColor)
+                                    .border(1.dp, Color.White, CircleShape)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = tintOpt.name,
+                                color = Color.White,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        if (isSelected) {
+                            Text("✓", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= 2. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN & GRADIENT =================
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Palette, contentDescription = null, tint = palette.primaryGlow)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "Tông màu Ánh sáng & Gradient Kính Lỏng",
+                        "Tông màu Ánh sáng Nền (Ambient Glow)",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
@@ -306,7 +390,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             Box(
                                 modifier = Modifier
-                                    .size(26.dp)
+                                    .size(24.dp)
                                     .clip(CircleShape)
                                     .background(
                                         Brush.linearGradient(
@@ -331,7 +415,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // ================= 2. TRUNG TÂM CẬP NHẬT OTA NHẬN DIỆN ĐÚNG PHIÊN BẢN =================
+        // ================= 3. TRUNG TÂM CẬP NHẬT OTA NHẬN DIỆN ĐÚNG PHIÊN BẢN =================
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
@@ -412,7 +496,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     fontWeight = FontWeight.SemiBold
                 )
 
-                // Nếu đang ở bản mới nhất nhưng người dùng vẫn muốn cài đè lại
                 if (latestRelease != null && !isNewerAvailable && !forceShowReinstall) {
                     TextButton(onClick = { forceShowReinstall = true }) {
                         Text("Vẫn hiển thị tùy chọn tải lại bản v${BuildConfig.VERSION_NAME}", color = Color(0xFFA7B8D8))
@@ -421,7 +504,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // Chỉ hiển thị khung tải xuống khi CÓ BẢN MỚI HƠN (hoặc khi người dùng bấm nút tải lại)
         latestRelease?.let { release ->
             if (isNewerAvailable || forceShowReinstall) {
                 val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
@@ -430,7 +512,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     LiquidGlassCard(
                         cornerRadius = 24.dp,
                         tintColor = palette.primaryGlow,
-                        surfaceAlpha = 0.16f,
                         highlighted = true,
                         modifier = Modifier.fillMaxWidth()
                     ) {

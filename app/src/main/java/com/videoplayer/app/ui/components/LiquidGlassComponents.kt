@@ -18,7 +18,6 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -34,6 +33,19 @@ data class GlassThemePalette(
     val tertiaryGlow: Color,
     val deepBgTop: Color = Color(0xFF050814),
     val deepBgMid: Color = Color(0xFF0C1428)
+)
+
+data class GlassTintOption(
+    val id: String,
+    val name: String,
+    val surfaceColor: Color,
+    val rimTint: Color
+)
+
+data class GlassStyleConfig(
+    val palette: GlassThemePalette = GlassThemePresets.first(),
+    val tint: GlassTintOption = GlassTintPresets.first(),
+    val frostAlpha: Float = 0.16f
 )
 
 val GlassThemePresets = listOf(
@@ -91,15 +103,62 @@ val GlassThemePresets = listOf(
     )
 )
 
+val GlassTintPresets = listOf(
+    GlassTintOption(
+        id = "crystal_white",
+        name = "💎 Pha lê Trắng (Apple Frost)",
+        surfaceColor = Color(0xFFFFFFFF),
+        rimTint = Color(0xFFFFFFFF)
+    ),
+    GlassTintOption(
+        id = "ice_cyan",
+        name = "🧊 Xanh Băng Giá (Glacier Cyan)",
+        surfaceColor = Color(0xFF64D2FF),
+        rimTint = Color(0xFF90E0EF)
+    ),
+    GlassTintOption(
+        id = "amethyst_violet",
+        name = "🔮 Tím Thạch Anh (Amethyst Glass)",
+        surfaceColor = Color(0xFFC77DFF),
+        rimTint = Color(0xFFE0AAFF)
+    ),
+    GlassTintOption(
+        id = "rose_champagne",
+        name = "🥂 Vàng Hồng (Rose Champagne)",
+        surfaceColor = Color(0xFFFFB5A7),
+        rimTint = Color(0xFFFFD6A5)
+    ),
+    GlassTintOption(
+        id = "emerald_jade",
+        name = "翡翠 Ngọc Lục Bảo (Emerald Jade)",
+        surfaceColor = Color(0xFF52B788),
+        rimTint = Color(0xFF95D5B2)
+    ),
+    GlassTintOption(
+        id = "ruby_crimson",
+        name = "🍷 Đỏ Hồng Ngọc (Ruby Wine)",
+        surfaceColor = Color(0xFFFF4D6D),
+        rimTint = Color(0xFFFF8FA3)
+    ),
+    GlassTintOption(
+        id = "smoky_obsidian",
+        name = "🖤 Kính Khói Đen (Smoky Obsidian)",
+        surfaceColor = Color(0xFF1E293B),
+        rimTint = Color(0xFF94A3B8)
+    )
+)
+
 fun getGlassPaletteById(id: String): GlassThemePalette {
     return GlassThemePresets.find { it.id == id } ?: GlassThemePresets.first()
 }
 
-val LocalGlassPalette = staticCompositionLocalOf { GlassThemePresets.first() }
+fun getGlassTintById(id: String): GlassTintOption {
+    return GlassTintPresets.find { it.id == id } ?: GlassTintPresets.first()
+}
 
-/**
- * Nền không gian Apple Mesh (Organic Liquid Mesh) làm nổi bật độ trong suốt của lớp kính phía trên
- */
+val LocalGlassPalette = staticCompositionLocalOf { GlassThemePresets.first() }
+val LocalGlassStyle = staticCompositionLocalOf { GlassStyleConfig() }
+
 @Composable
 fun LiquidAmbientBackground(
     modifier: Modifier = Modifier,
@@ -159,24 +218,21 @@ fun LiquidAmbientBackground(
     }
 }
 
-/**
- * Thẻ Kính Lỏng chuẩn Apple (visionOS / iOS 26 Liquid Glass):
- * - Có hiệu ứng đàn hồi vật lý khi nhấn (Spring Scale)
- * - Bề mặt sương mờ quang học (Frosted Milk Layer)
- * - Khúc xạ vòm kính phía trên (Top Specular Sheen)
- * - Viền lăng kính 3D kép (Outer Specular Rim + Inner Bevel Highlight)
- */
 @Composable
 fun LiquidGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 26.dp,
     tintColor: Color? = null,
-    surfaceAlpha: Float = 0.14f,
+    surfaceAlpha: Float? = null,
     highlighted: Boolean = false,
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
+    val glassTint = style.tint
+    val baseAlpha = (surfaceAlpha ?: style.frostAlpha).coerceIn(0.04f, 0.50f)
+
     val shape = RoundedCornerShape(cornerRadius)
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -215,14 +271,15 @@ fun LiquidGlassCard(
                 val cr = CornerRadius(cornerRadius.toPx(), cornerRadius.toPx())
                 val w = size.width
                 val h = size.height
+                val activeSurfaceTint = tintColor ?: glassTint.surfaceColor
 
-                // 1. Lớp nền kính mờ (Frosted Milk + Ambient Tint)
+                // 1. Lớp nền kính mờ theo màu kính và độ đục người dùng chọn
                 val baseFill = Brush.linearGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = if (isPressed) 0.24f else if (highlighted) 0.20f else surfaceAlpha + 0.05f),
-                        (tintColor ?: palette.primaryGlow).copy(alpha = if (highlighted) 0.16f else 0.06f),
-                        Color(0xFF10192E).copy(alpha = 0.42f),
-                        Color.White.copy(alpha = 0.08f)
+                        activeSurfaceTint.copy(alpha = (baseAlpha + if (isPressed) 0.10f else if (highlighted) 0.08f else 0.04f).coerceAtMost(0.65f)),
+                        glassTint.surfaceColor.copy(alpha = baseAlpha * 0.65f),
+                        palette.deepBgMid.copy(alpha = (baseAlpha + 0.25f).coerceAtMost(0.75f)),
+                        activeSurfaceTint.copy(alpha = baseAlpha * 0.45f)
                     ),
                     start = Offset(0f, 0f),
                     end = Offset(w, h)
@@ -231,8 +288,8 @@ fun LiquidGlassCard(
                 // 2. Vòm phản quang mặt kính trên (Top Curved Glass Sheen)
                 val topSheen = Brush.verticalGradient(
                     colors = listOf(
-                        Color.White.copy(alpha = if (isPressed) 0.28f else 0.18f),
-                        Color.White.copy(alpha = 0.03f),
+                        Color.White.copy(alpha = if (isPressed) 0.30f else 0.20f),
+                        glassTint.rimTint.copy(alpha = 0.05f),
                         Color.Transparent
                     ),
                     startY = 0f,
@@ -246,7 +303,7 @@ fun LiquidGlassCard(
                             Color.White.copy(alpha = 0.95f),
                             palette.primaryGlow.copy(alpha = 0.85f),
                             palette.secondaryGlow.copy(alpha = 0.70f),
-                            Color.White.copy(alpha = 0.55f)
+                            glassTint.rimTint.copy(alpha = 0.65f)
                         ),
                         start = Offset(0f, 0f),
                         end = Offset(w, h)
@@ -254,23 +311,23 @@ fun LiquidGlassCard(
                 } else {
                     Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.78f),
-                            Color.White.copy(alpha = 0.20f),
-                            palette.primaryGlow.copy(alpha = 0.18f),
-                            Color.White.copy(alpha = 0.42f)
+                            glassTint.rimTint.copy(alpha = 0.82f),
+                            glassTint.rimTint.copy(alpha = 0.22f),
+                            palette.primaryGlow.copy(alpha = 0.22f),
+                            glassTint.rimTint.copy(alpha = 0.48f)
                         ),
                         start = Offset(0f, 0f),
                         end = Offset(w, h)
                     )
                 }
 
-                // 4. Đường vát sáng 3D mép đỉnh trong (Inner Bevel Highlight)
+                // 4. Đường vát sáng 3D mép đỉnh trong
                 val innerHighlight = Brush.horizontalGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color.White.copy(alpha = 0.65f),
-                        Color.White.copy(alpha = 0.85f),
-                        Color.White.copy(alpha = 0.65f),
+                        glassTint.rimTint.copy(alpha = 0.68f),
+                        Color.White.copy(alpha = 0.90f),
+                        glassTint.rimTint.copy(alpha = 0.68f),
                         Color.Transparent
                     )
                 )
@@ -283,7 +340,6 @@ fun LiquidGlassCard(
                         cornerRadius = cr,
                         style = Stroke(width = if (highlighted) 1.8.dp.toPx() else 1.2.dp.toPx())
                     )
-                    // Vẽ đường sáng mảnh dọc mép trên tạo cảm giác kính dày
                     drawLine(
                         brush = innerHighlight,
                         start = Offset(w * 0.12f, 1.5.dp.toPx()),
@@ -297,9 +353,6 @@ fun LiquidGlassCard(
     )
 }
 
-/**
- * Viên thuốc Kính Lỏng Apple (Capsule Glass Pill)
- */
 @Composable
 fun LiquidGlassPill(
     modifier: Modifier = Modifier,
@@ -307,7 +360,9 @@ fun LiquidGlassPill(
     onClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
+    val glassTint = style.tint
     val shape = CircleShape
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -344,9 +399,9 @@ fun LiquidGlassPill(
                 val fillBrush = if (active) {
                     Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.32f),
-                            palette.primaryGlow.copy(alpha = 0.48f),
-                            palette.secondaryGlow.copy(alpha = 0.42f)
+                            glassTint.surfaceColor.copy(alpha = 0.35f),
+                            palette.primaryGlow.copy(alpha = 0.50f),
+                            palette.secondaryGlow.copy(alpha = 0.45f)
                         ),
                         start = Offset(0f, 0f),
                         end = Offset(size.width, size.height)
@@ -354,8 +409,8 @@ fun LiquidGlassPill(
                 } else {
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = if (isPressed) 0.30f else 0.22f),
-                            Color.White.copy(alpha = 0.08f)
+                            glassTint.surfaceColor.copy(alpha = (style.frostAlpha + if (isPressed) 0.14f else 0.06f).coerceAtMost(0.55f)),
+                            glassTint.surfaceColor.copy(alpha = style.frostAlpha * 0.5f)
                         )
                     )
                 }
@@ -365,15 +420,15 @@ fun LiquidGlassPill(
                         colors = listOf(
                             Color.White.copy(alpha = 0.95f),
                             palette.primaryGlow,
-                            Color.White.copy(alpha = 0.60f)
+                            glassTint.rimTint.copy(alpha = 0.65f)
                         )
                     )
                 } else {
                     Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.70f),
-                            Color.White.copy(alpha = 0.15f),
-                            Color.White.copy(alpha = 0.38f)
+                            glassTint.rimTint.copy(alpha = 0.72f),
+                            glassTint.rimTint.copy(alpha = 0.18f),
+                            glassTint.rimTint.copy(alpha = 0.42f)
                         )
                     )
                 }

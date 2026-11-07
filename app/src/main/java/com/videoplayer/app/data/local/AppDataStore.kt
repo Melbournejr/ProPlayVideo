@@ -3,6 +3,7 @@ package com.videoplayer.app.data.local
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,6 +16,8 @@ private val Context.datastore by preferencesDataStore(name = "videoplayer_prefs"
 private val githubRepoKey = stringPreferencesKey("github_repo")
 private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 private val glassThemeKey = stringPreferencesKey("glass_theme_id")
+private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
+private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
 
 typealias PositionMap = Map<String, Long>
 
@@ -72,6 +75,30 @@ suspend fun Context.saveGlassTheme(themeId: String) {
 
 fun Context.observeGlassTheme(): Flow<String> {
     return this.datastore.data.map { prefs: Preferences ->
-        prefs[glassThemeKey] ?: "cyan_nebula"
+        prefs[glassThemeKey] ?: "apple_ice"
+    }
+}
+
+suspend fun Context.saveGlassTint(tintId: String) {
+    this.datastore.edit { prefs ->
+        prefs[glassTintKey] = tintId
+    }
+}
+
+fun Context.observeGlassTint(): Flow<String> {
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[glassTintKey] ?: "crystal_white"
+    }
+}
+
+suspend fun Context.saveGlassFrostAlpha(alpha: Float) {
+    this.datastore.edit { prefs ->
+        prefs[glassFrostAlphaKey] = alpha.coerceIn(0.04f, 0.45f)
+    }
+}
+
+fun Context.observeGlassFrostAlpha(): Flow<Float> {
+    return this.datastore.data.map { prefs: Preferences ->
+        prefs[glassFrostAlphaKey] ?: 0.16f
     }
 }

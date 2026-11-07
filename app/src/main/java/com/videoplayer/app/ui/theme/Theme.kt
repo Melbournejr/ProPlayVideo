@@ -5,15 +5,16 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-import com.videoplayer.app.ui.components.GlassThemePalette
-import com.videoplayer.app.ui.components.GlassThemePresets
+import com.videoplayer.app.ui.components.GlassStyleConfig
 import com.videoplayer.app.ui.components.LocalGlassPalette
+import com.videoplayer.app.ui.components.LocalGlassStyle
 
 @Composable
 fun VideoPlayerTheme(
-    palette: GlassThemePalette = GlassThemePresets.first(),
+    styleConfig: GlassStyleConfig = GlassStyleConfig(),
     content: @Composable () -> Unit
 ) {
+    val palette = styleConfig.palette
     val scheme = darkColorScheme(
         primary = palette.primaryGlow,
         onPrimary = Color(0xFF001F29),
@@ -29,7 +30,10 @@ fun VideoPlayerTheme(
         error = Color(0xFFFF5C8A)
     )
 
-    CompositionLocalProvider(LocalGlassPalette provides palette) {
+    CompositionLocalProvider(
+        LocalGlassPalette provides palette,
+        LocalGlassStyle provides styleConfig
+    ) {
         MaterialTheme(
             colorScheme = scheme,
             content = content
