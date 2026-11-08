@@ -174,10 +174,12 @@ fun PlayerScreen(
     var currentPos by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(1L) }
 
-    // Biến phục vụ kéo thanh trượt (Seekbar) mượt 100% không làm đơ bộ giải mã video
+    // Biến Float trực tiếp cho Slider 120fps + chống kẹt tốc độ 2x
     var isDraggingSlider by remember { mutableStateOf(false) }
-    var sliderDragPos by remember { mutableLongStateOf(0L) }
+    var sliderDragFloat by remember { mutableFloatStateOf(0f) }
+    var lastLivePreviewSeekMs by remember { mutableLongStateOf(0L) }
     var lastSeekCompletedTimeMs by remember { mutableLongStateOf(0L) }
+    var isTempSpeed2xActive by remember { mutableStateOf(false) }
 
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isLocked by remember { mutableStateOf(false) }
@@ -597,13 +599,6 @@ fun PlayerScreen(
                                 scope.launch { delay(800); if (gestureMode == GestureMode.NONE) gestureHint = null }
                             }
                         },
-                        onLongPress = {
-                            if (!isLocked) {
-                                playerManager.setPlaybackSpeed(2.0f)
-                                gestureHint = "⚡ Tốc độ 2.0x"
-                                scope.launch { delay(1200); if (gestureMode == GestureMode.NONE) gestureHint = null }
-                            }
-                        }
                     )
                 }
                 .pointerInput(isLocked, isInPipMode) {
@@ -737,9 +732,14 @@ fun PlayerScreen(
                             }
                         } while (event.changes.any { it.pressed })
 
+                        if (isTempSpeed2xActive) {
+                            isTempSpeed2xActive = false
+                            playerManager.setPlaybackSpeed(playbackSpeed)
+                        }
                         if (gestureMode == GestureMode.SEEK) {
                             playerManager.seekTo(targetSeekPos)
                             currentPos = targetSeekPos
+                            sliderDragFloat = targetSeekPos.toFloat()
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             persistCurrentPosition()
                         }
@@ -780,7 +780,7 @@ fun PlayerScreen(
         // Hiển thị thông báo Gesture hoặc Thời gian đang kéo thanh trượt (Scrubbing Preview)
         if (!isInPipMode) {
             val activeCenterHint = if (isDraggingSlider) {
-                "⏱️ Tua tới: ${formatTimeMs(sliderDragPos)} / ${formatTimeMs(duration)}"
+                "⏱️ ${formatTimeMs(sliderDragFloat.toLong())} / ${formatTimeMs(duration)}"
             } else {
                 gestureHint
             }
@@ -1316,16 +1316,28 @@ fun PlayerScreen(
                         }
                     }
 
-                    // HÀNG 2: THANH TUA THỜI GIAN ZERO-LAG (CHỈ GỌI SEEK KHI THẢ TAY -> MƯỢT TUYỆT ĐỐI 120FPS)
-                    val displayPos = if (isDraggingSlider) sliderDragPos else currentPos
+                    // HÀNG 2: THANH TUA THỜI GIAN 120FPS (Dùng Float thuần không khựng + Live Frame Preview 220ms)
+                    val displayPos = if (isDraggingSlider) sliderDragFloat.toLong() else currentPos
+                    val sliderVal = if (isDraggingSlider) {
+                        sliderDragFloat.coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
+                    } else {
+                        currentPos.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
+                    }
                     Slider(
-                        value = displayPos.toFloat().coerceIn(0f, duration.toFloat()),
-                        onValueChange = { newVal ->
-                            isDraggingSlider = true
-                            sliderDragPos = newVal.toLong()
+                        value = sliderVal,
+                        onValueChange = { newFloat ->
+                            if (!isDraggingSlider) {
+                                isDraggingSlider = true
+                            }
+                            sliderDragFloat = newFloat
+                            val now = System.currentTimeMillis()
+                            if (now - lastLivePreviewSeekMs > 220L) {
+                                lastLivePreviewSeekMs = now
+                                playerManager.seekTo(newFloat.toLong())
+                            }
                         },
                         onValueChangeFinished = {
-                            val finalTarget = sliderDragPos
+                            val finalTarget = sliderDragFloat.toLong().coerceIn(0L, duration)
                             currentPos = finalTarget
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             isDraggingSlider = false
@@ -1338,7 +1350,7 @@ fun PlayerScreen(
                             activeTrackColor = palette.primaryGlow,
                             inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                         ),
-                        modifier = Modifier.fillMaxWidth().height(32.dp)
+                        modifier = Modifier.fillMaxWidth().height(36.dp)
                     )
 
                     Row(
