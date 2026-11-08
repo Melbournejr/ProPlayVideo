@@ -433,6 +433,14 @@ fun PlayerScreen(
         }
     }
 
+    // Auto-hide controls after 3.5 seconds when video is playing and user is not interacting
+    LaunchedEffect(showControls, isPlaying, isDraggingSlider, activeModal, showSpeedMenu, gestureMode) {
+        if (showControls && isPlaying && !isDraggingSlider && activeModal == ActiveModal.NONE && !showSpeedMenu && gestureMode == GestureMode.NONE) {
+            delay(3500)
+            showControls = false
+        }
+    }
+
     LaunchedEffect(sleepTimerMinutes) {
         if (sleepTimerMinutes > 0) {
             sleepRemainingSec = sleepTimerMinutes * 60

@@ -57,15 +57,17 @@ jobs:
           echo "apk_name=${REPO_NAME}-v${VER_NAME}.apk" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Tạo Gradle Wrapper và Build APK
+      - name: Tải Gradle 8.4 và Build APK trực tiếp (Không qua bước :wrapper tránh lỗi mạng)
         run: |
-          if [ ! -f gradlew ]; then
-            wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp
-            /tmp/gradle-8.4/bin/gradle wrapper --gradle-version 8.4
+          if [ ! -f /tmp/gradle-8.4/bin/gradle ]; then
+            curl -L --retry 5 --retry-delay 3 -sS https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
+            unzip -q -o /tmp/gradle.zip -d /tmp
           fi
-          chmod +x gradlew
-          ./gradlew assembleDebug -PrepoName="${{ steps.meta.outputs.repo_name }}" -PversionName="${{ steps.meta.outputs.version_name }}" -PversionCode="${{ github.run_number }}" --no-daemon
+          /tmp/gradle-8.4/bin/gradle assembleDebug \
+            -PrepoName="${{ steps.meta.outputs.repo_name }}" \
+            -PversionName="${{ steps.meta.outputs.version_name }}" \
+            -PversionCode="${{ github.run_number }}" \
+            --no-daemon
         shell: bash
 
       - name: Đổi tên file APK theo chuẩn Repo + Phiên bản
@@ -82,7 +84,7 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag_name }}
           name: "${{ steps.meta.outputs.repo_name }} ${{ steps.meta.outputs.tag_name }}"
-          body: "Bản phát hành tự động **${{ steps.meta.outputs.apk_name }}**. Đã đồng bộ chữ ký số cố định cho phép cài đè OTA trực tiếp."
+          body: "Bản phát hành tự động **${{ steps.meta.outputs.apk_name }}**. Hỗ trợ cập nhật OTA siêu tốc."
           files: ${{ steps.rename_apk.outputs.apk_path }}
           draft: false
           prerelease: false
