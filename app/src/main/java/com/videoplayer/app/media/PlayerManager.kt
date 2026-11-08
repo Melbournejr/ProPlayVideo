@@ -20,6 +20,8 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import com.videoplayer.app.data.local.readCustomSubtitleForVideo
+import com.videoplayer.app.data.local.saveCustomSubtitleForVideo
 import com.videoplayer.app.data.model.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,20 +55,16 @@ class PlayerManager(private val context: Context) {
     val trackSelector: DefaultTrackSelector = DefaultTrackSelector(context).apply {
         setParameters(
             buildUponParameters()
+                .setPreferredTextLanguage("vi")
+                .setSelectUndeterminedTextLanguage(true)
                 .setExceedRendererCapabilitiesIfNecessary(true)
                 .setExceedVideoConstraintsIfNecessary(true)
                 .setExceedAudioConstraintsIfNecessary(true)
         )
     }
 
-    // Bộ đệm khởi phát siêu tốc (400ms) giúp mở video phát ngay không khựng
     private val loadControl = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(
-            15_000, // minBufferMs
-            50_000, // maxBufferMs
-            400,    // bufferForPlaybackMs (khởi phát cực nhanh)
-            800     // bufferForPlaybackAfterRebufferMs (tua xong phát tiếp ngay)
-        )
+        .setBufferDurationsMs(15_000, 50_000, 400, 800)
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
 
@@ -86,8 +84,6 @@ class PlayerManager(private val context: Context) {
     var currentIndex: Int = 0
         private set
 
-    private val customSubtitlesByVideoId = mutableMapOf<String, MutableList<ExternalSubtitleItem>>()
-
     val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
@@ -102,7 +98,6 @@ class PlayerManager(private val context: Context) {
 
     init {
         player.repeatMode = Player.REPEAT_MODE_OFF
-        // Dùng CLOSEST_SYNC kết hợp buffer 400ms giúp tua nhanh không bị đơ
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
@@ -221,11 +216,39 @@ class PlayerManager(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    private fun detectSubtitleMime(fileName: String): String {
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".ass") || lower.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+            lower.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+            else -> MimeTypes.APPLICATION_SUBRIP
+        }
+    }
+
+    /**
+     * Quét tìm Phụ đề theo thứ tự ưu tiên:
+     * 1. Phụ đề người dùng đã chọn trước đó (lưu vĩnh viễn trong DataStore + filesDir/subtitles)
+     * 2. Phụ đề có sẵn cùng tên trong cùng thư mục với video
+     */
     suspend fun findSubtitlesIo(video: VideoItem): List<ExternalSubtitleItem> = withContext(Dispatchers.IO) {
         val result = mutableListOf<ExternalSubtitleItem>()
         try {
-            val custom = customSubtitlesByVideoId[video.id] ?: emptyList()
-            result.addAll(custom)
+            // 1. Kiểm tra phụ đề đã lưu vĩnh viễn từ lần mở trước
+            val savedSub = context.readCustomSubtitleForVideo(video.id)
+            if (savedSub != null) {
+                val (uriOrPath, displayName) = savedSub
+                val mime = detectSubtitleMime(displayName)
+                if (uriOrPath.startsWith("/")) {
+                    val f = File(uriOrPath)
+                    if (f.exists() && f.length() > 0L) {
+                        result.add(ExternalSubtitleItem(displayName, Uri.fromFile(f), mime))
+                    }
+                } else {
+                    result.add(ExternalSubtitleItem(displayName, Uri.parse(uriOrPath), mime))
+                }
+            }
+
+            // 2. Quét phụ đề cùng tên trong cùng thư mục
             val videoFile = File(video.path)
             val parentDir = videoFile.parentFile
             if (parentDir != null) {
@@ -264,12 +287,12 @@ class PlayerManager(private val context: Context) {
         useFileUriFallback: Boolean = false
     ): MediaItem {
         val vUri = resolveVideoUri(video, useFileUriFallback)
-        val subConfigs = subs.map { sub ->
+        val subConfigs = subs.mapIndexed { index, sub ->
             MediaItem.SubtitleConfiguration.Builder(sub.uri)
                 .setMimeType(sub.mimeType)
                 .setLanguage("vi")
                 .setLabel(sub.name)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_AUTOSELECT)
+                .setSelectionFlags(if (index == 0) C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_AUTOSELECT else C.SELECTION_FLAG_AUTOSELECT)
                 .build()
         }
 
@@ -312,17 +335,35 @@ class PlayerManager(private val context: Context) {
         return targetVideo to subs
     }
 
+    /**
+     * Khi người dùng chọn 1 file Phụ đề từ máy:
+     * Sao lưu thẳng 1 bản vào bộ nhớ nội bộ của ứng dụng (filesDir/subtitles) và ghi vào DataStore
+     * để các lần mở sau tự động có sẵn vĩnh viễn mà không bao giờ phải chọn lại!
+     */
     suspend fun attachExternalSubtitleToCurrent(video: VideoItem, uri: Uri, displayName: String): List<ExternalSubtitleItem> {
         val curPos = getCurrentPosition()
-        val lower = displayName.lowercase()
-        val mime = when {
-            lower.endsWith(".ass") || lower.endsWith(".ssa") -> MimeTypes.TEXT_SSA
-            lower.endsWith(".vtt") -> MimeTypes.TEXT_VTT
-            else -> MimeTypes.APPLICATION_SUBRIP
+        val persistedPathOrUri = withContext(Dispatchers.IO) {
+            try {
+                val subDir = File(context.filesDir, "subtitles")
+                if (!subDir.exists()) subDir.mkdirs()
+                val ext = displayName.substringAfterLast('.', "srt")
+                val destFile = File(subDir, "sub_${video.id}.$ext")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                if (destFile.exists() && destFile.length() > 0L) {
+                    destFile.absolutePath
+                } else {
+                    uri.toString()
+                }
+            } catch (_: Exception) {
+                uri.toString()
+            }
         }
-        val list = customSubtitlesByVideoId.getOrPut(video.id) { mutableListOf() }
-        list.removeAll { it.uri == uri }
-        list.add(0, ExternalSubtitleItem(displayName, uri, mime))
+
+        context.saveCustomSubtitleForVideo(video.id, persistedPathOrUri, displayName)
 
         val subs = findSubtitlesIo(video)
         val updatedItem = buildSingleMediaItem(video, subs)

@@ -68,8 +68,7 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
-import com.videoplayer.app.data.local.readLastPosition
-import com.videoplayer.app.data.local.saveLastPosition
+import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.ExternalSubtitleItem
 import com.videoplayer.app.media.PlayerManager
@@ -324,6 +323,7 @@ fun PlayerScreen(
     var videoSaturation by remember { mutableFloatStateOf(1.0f) }
     var videoContrast by remember { mutableFloatStateOf(1.0f) }
     var videoBrightnessFilter by remember { mutableFloatStateOf(0f) }
+    var currentScreenBrightness by remember { mutableFloatStateOf(context.getSystemScreenBrightness()) }
     var subtitleSizeSp by remember { mutableFloatStateOf(20f) }
     var subtitleTextColor by remember { mutableStateOf(Color.White) }
     var showNerdStats by remember { mutableStateOf(false) }
@@ -478,6 +478,18 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(Unit) {
+        // Đồng bộ độ sáng thực của máy (hoặc mức sáng đã lưu) và Cỡ/Màu phụ đề
+        val initBright = context.readPreferredBrightness()
+        currentScreenBrightness = initBright
+        activity?.window?.let { win ->
+            val attrs = win.attributes
+            attrs.screenBrightness = initBright
+            win.attributes = attrs
+        }
+        val (savedSubSize, savedSubCol) = context.readSubtitleAppearance()
+        subtitleSizeSp = savedSubSize
+        subtitleTextColor = Color(savedSubCol)
+
         if (initialVideo != null && effectivePlaylist.isNotEmpty()) {
             val startIdx = effectivePlaylist.indexOfFirst { it.id == initialVideo.id }.coerceAtLeast(0)
             val startVid = effectivePlaylist[startIdx]
@@ -706,7 +718,7 @@ fun PlayerScreen(
                         var targetSeekPos = initialSeekPos
 
                         val winBright = activity?.window?.attributes?.screenBrightness ?: -1f
-                        val initialBrightness = if (winBright in 0.01f..1.0f) winBright else 0.5f
+                        val initialBrightness = if (winBright in 0.01f..1.0f) winBright else currentScreenBrightness
 
                         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                         val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
@@ -749,7 +761,7 @@ fun PlayerScreen(
                                     totalDragY += dragY
 
                                     if (gestureMode == GestureMode.NONE) {
-                                        val threshold = 18f
+                                        val threshold = 10f
                                         if (abs(totalDragX) > threshold || abs(totalDragY) > threshold) {
                                             gestureMode = if (abs(totalDragX) > abs(totalDragY) * 1.2f) {
                                                 GestureMode.SEEK
@@ -776,11 +788,14 @@ fun PlayerScreen(
                                         GestureMode.BRIGHTNESS -> {
                                             change.consume()
                                             activity?.let { act ->
+                                                // Phản ứng nhanh gấp đôi (vuốt 42% màn hình là đạt 0% -> 100%)
+                                                val delta = -totalDragY / (screenHeight * 0.42f)
+                                                val newBright = (initialBrightness + delta).coerceIn(0.01f, 1.0f)
+                                                currentScreenBrightness = newBright
                                                 val attrs = act.window.attributes
-                                                val newBright = (initialBrightness - totalDragY / (screenHeight * 0.75f)).coerceIn(0.02f, 1.0f)
                                                 attrs.screenBrightness = newBright
                                                 act.window.attributes = attrs
-                                                gestureHint = "☀️ ${(newBright * 100).roundToInt()}%"
+                                                gestureHint = "☀️ Độ sáng: ${(newBright * 100).roundToInt()}%"
                                             }
                                         }
                                         GestureMode.VOLUME -> {
@@ -813,6 +828,10 @@ fun PlayerScreen(
                             currentPos = targetSeekPos
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             persistCurrentPosition()
+                        } else if (gestureMode == GestureMode.BRIGHTNESS) {
+                            CoroutineScope(Dispatchers.IO).launch {
+                                context.savePreferredBrightness(currentScreenBrightness)
+                            }
                         }
                         gestureMode = GestureMode.NONE
                         gestureHint = null
@@ -1190,12 +1209,24 @@ fun PlayerScreen(
                     ) {
                         Text("Cỡ & Màu:", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         listOf(16f to "Nhỏ", 20f to "Vừa", 26f to "Lớn", 32f to "To").forEach { (sz, lbl) ->
-                            LiquidGlassPill(active = subtitleSizeSp == sz, onClick = { subtitleSizeSp = sz }) {
+                            LiquidGlassPill(
+                                active = subtitleSizeSp == sz,
+                                onClick = {
+                                    subtitleSizeSp = sz
+                                    scope.launch { context.saveSubtitleAppearance(sz, subtitleTextColor.toArgb()) }
+                                }
+                            ) {
                                 Text(lbl, color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         listOf(Color.White to "Trắng", Color(0xFFFFEA00) to "Vàng", Color(0xFF00F0FF) to "Cyan").forEach { (col, name) ->
-                            LiquidGlassPill(active = subtitleTextColor == col, onClick = { subtitleTextColor = col }) {
+                            LiquidGlassPill(
+                                active = subtitleTextColor == col,
+                                onClick = {
+                                    subtitleTextColor = col
+                                    scope.launch { context.saveSubtitleAppearance(subtitleSizeSp, col.toArgb()) }
+                                }
+                            ) {
                                 Text(name, color = col, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                         }

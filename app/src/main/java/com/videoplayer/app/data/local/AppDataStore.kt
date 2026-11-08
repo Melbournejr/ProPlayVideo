@@ -1,6 +1,7 @@
 package com.videoplayer.app.data.local
 
 import android.content.Context
+import android.provider.Settings
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -22,6 +23,9 @@ private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
 private val vaultPinKey = stringPreferencesKey("private_vault_pin")
 private val vaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
+private val savedBrightnessKey = floatPreferencesKey("saved_player_brightness")
+private val subtitleSizeSpKey = floatPreferencesKey("saved_subtitle_size_sp")
+private val subtitleColorArgbKey = intPreferencesKey("saved_subtitle_color_argb")
 
 typealias PositionMap = Map<String, Long>
 typealias VaultIdSet = Set<String>
@@ -74,6 +78,64 @@ suspend fun Context.readFolderScrollState(folderKey: String): Pair<Int, Int> {
     val idx = prefs[intPreferencesKey("scroll_idx_$folderKey")] ?: 0
     val off = prefs[intPreferencesKey("scroll_off_$folderKey")] ?: 0
     return idx to off
+}
+
+/**
+ * Đọc độ sáng thực tế của máy (0.01f .. 1.0f) hoặc độ sáng người dùng đã lưu lần trước
+ */
+fun Context.getSystemScreenBrightness(): Float {
+    return try {
+        val sysVal = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+        (sysVal.toFloat() / 255f).coerceIn(0.02f, 1.0f)
+    } catch (_: Exception) {
+        0.5f
+    }
+}
+
+suspend fun Context.readPreferredBrightness(): Float {
+    val saved = this.datastore.data.first()[savedBrightnessKey] ?: -1f
+    return if (saved in 0.01f..1.0f) saved else getSystemScreenBrightness()
+}
+
+suspend fun Context.savePreferredBrightness(brightness: Float) {
+    this.datastore.edit { prefs ->
+        prefs[savedBrightnessKey] = brightness.coerceIn(0.01f, 1.0f)
+    }
+}
+
+/**
+ * Lưu & Đọc thông tin Phụ đề đã chọn riêng cho từng videoId
+ */
+suspend fun Context.saveCustomSubtitleForVideo(videoId: String, localPathOrUri: String, displayName: String) {
+    if (videoId.isBlank()) return
+    val uriKey = stringPreferencesKey("sub_uri_$videoId")
+    val nameKey = stringPreferencesKey("sub_name_$videoId")
+    this.datastore.edit { prefs ->
+        prefs[uriKey] = localPathOrUri
+        prefs[nameKey] = displayName
+    }
+}
+
+suspend fun Context.readCustomSubtitleForVideo(videoId: String): Pair<String, String>? {
+    if (videoId.isBlank()) return null
+    val prefs = this.datastore.data.first()
+    val uriStr = prefs[stringPreferencesKey("sub_uri_$videoId")] ?: return null
+    val nameStr = prefs[stringPreferencesKey("sub_name_$videoId")] ?: "subtitle.srt"
+    return uriStr to nameStr
+}
+
+suspend fun Context.saveSubtitleAppearance(sizeSp: Float, colorArgb: Int) {
+    this.datastore.edit { prefs ->
+        prefs[subtitleSizeSpKey] = sizeSp
+        prefs[subtitleColorArgbKey] = colorArgb
+    }
+}
+
+suspend fun Context.readSubtitleAppearance(): Pair<Float, Int> {
+    val prefs = this.datastore.data.first()
+    val sz = prefs[subtitleSizeSpKey] ?: 20f
+    val col = prefs[subtitleColorArgbKey] ?: android.graphics.Color.WHITE
+    return sz to col
 }
 
 suspend fun Context.saveGithubRepo(ownerAndRepo: String) {
