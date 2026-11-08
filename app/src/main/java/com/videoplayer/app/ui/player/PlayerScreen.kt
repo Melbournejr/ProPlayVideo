@@ -29,10 +29,10 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -174,10 +174,10 @@ fun PlayerScreen(
     var currentPos by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(1L) }
 
-    // Biến tách biệt dành riêng cho việc kéo thanh trượt Seekbar mượt 60fps không bị giật lag
+    // Biến phục vụ kéo thanh trượt (Seekbar) mượt 100% không làm đơ bộ giải mã video
     var isDraggingSlider by remember { mutableStateOf(false) }
     var sliderDragPos by remember { mutableLongStateOf(0L) }
-    var lastScrubSeekTimeMs by remember { mutableLongStateOf(0L) }
+    var lastSeekCompletedTimeMs by remember { mutableLongStateOf(0L) }
 
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isLocked by remember { mutableStateOf(false) }
@@ -193,17 +193,14 @@ fun PlayerScreen(
     var sleepTimerMinutes by remember { mutableIntStateOf(0) }
     var sleepRemainingSec by remember { mutableIntStateOf(0) }
 
-    // Quản lý Hộp thoại Mở rộng: Khi mở STUDIO hoặc TOOLS sẽ tự ẩn HUD dưới để KHÔNG BAO GIỜ ĐÈ LÊN NHAU
     var activeModal by remember { mutableStateOf(ActiveModal.NONE) }
-    var studioTabIndex by remember { mutableIntStateOf(0) } // 0: Hình ảnh & A-B, 1: Âm thanh & Equalizer
+    var studioTabIndex by remember { mutableIntStateOf(0) }
     var showSpeedMenu by remember { mutableStateOf(false) }
 
-    // Equalizer States
     var eqBands by remember { mutableStateOf(playerManager.getEqualizerBands()) }
     var bassBoostPercent by remember { mutableIntStateOf(0) }
     var activeEqPresetName by remember { mutableStateOf("Mặc định") }
 
-    // Pro Studio States
     var loopPointA by remember { mutableStateOf<Long?>(null) }
     var loopPointB by remember { mutableStateOf<Long?>(null) }
     var isMirrorFlipped by remember { mutableStateOf(false) }
@@ -433,7 +430,7 @@ fun PlayerScreen(
         }
     }
 
-    // Auto-hide controls after 3.5 seconds when video is playing and user is not interacting
+    // Tự động ẩn thanh công cụ sau 3.5 giây khi video đang phát và người dùng không chạm tay
     LaunchedEffect(showControls, isPlaying, isDraggingSlider, activeModal, showSpeedMenu, gestureMode) {
         if (showControls && isPlaying && !isDraggingSlider && activeModal == ActiveModal.NONE && !showSpeedMenu && gestureMode == GestureMode.NONE) {
             delay(3500)
@@ -457,7 +454,7 @@ fun PlayerScreen(
         }
     }
 
-    // Vòng lặp cập nhật: Tuyệt đối KHÔNG ghi đè currentPos khi người dùng đang kéo thanh trượt (isDraggingSlider)
+    // Vòng lặp cập nhật vị trí: Chờ 450ms sau khi thả thanh trượt mới đồng bộ lại để tránh giật ngược kim
     LaunchedEffect(Unit) {
         var tick = 0
         while (true) {
@@ -466,7 +463,8 @@ fun PlayerScreen(
                 isInPipMode = activity.isInPictureInPictureMode
             }
             val pos = playerManager.getCurrentPosition()
-            if (!isDraggingSlider && gestureMode != GestureMode.SEEK) {
+            val now = System.currentTimeMillis()
+            if (!isDraggingSlider && gestureMode != GestureMode.SEEK && (now - lastSeekCompletedTimeMs > 450L)) {
                 currentPos = pos
             }
             duration = playerManager.getDuration().coerceAtLeast(1L)
@@ -484,7 +482,7 @@ fun PlayerScreen(
 
             tick++
             val activeVid = currentVideo
-            if (activeVid != null && isPlaying && !isDraggingSlider && tick % 3 == 0) {
+            if (activeVid != null && isPlaying && !isDraggingSlider && tick % 4 == 0) {
                 context.saveLastPosition(activeVid.id, pos)
             }
             delay(300)
@@ -586,11 +584,13 @@ fun PlayerScreen(
                                     val next = (cur - 10_000L).coerceAtLeast(0L)
                                     playerManager.seekTo(next)
                                     currentPos = next
+                                    lastSeekCompletedTimeMs = System.currentTimeMillis()
                                     gestureHint = "⏪ -10 giây (${formatTimeMs(next)})"
                                 } else {
                                     val next = (cur + 10_000L).coerceAtMost(dur)
                                     playerManager.seekTo(next)
                                     currentPos = next
+                                    lastSeekCompletedTimeMs = System.currentTimeMillis()
                                     gestureHint = "⏩ +10 giây (${formatTimeMs(next)})"
                                 }
                                 persistCurrentPosition()
@@ -609,8 +609,14 @@ fun PlayerScreen(
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
                     awaitEachGesture {
-                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        // requireUnconsumed = true để KHÔNG BAO GIỜ cướp thao tác khi ngón tay đang kéo thanh Slider của HUD!
+                        val firstDown = awaitFirstDown(requireUnconsumed = true)
                         if (isLocked) return@awaitEachGesture
+
+                        // Nếu chạm vào vùng đáy màn hình khi thanh HUD đang mở thì bỏ qua cử chỉ vuốt màn hình
+                        if (showControls && firstDown.position.y > size.height * 0.72f) {
+                            return@awaitEachGesture
+                        }
 
                         gestureMode = GestureMode.NONE
                         val startTouchX = firstDown.position.x
@@ -734,6 +740,7 @@ fun PlayerScreen(
                         if (gestureMode == GestureMode.SEEK) {
                             playerManager.seekTo(targetSeekPos)
                             currentPos = targetSeekPos
+                            lastSeekCompletedTimeMs = System.currentTimeMillis()
                             persistCurrentPosition()
                         }
                         gestureMode = GestureMode.NONE
@@ -770,9 +777,14 @@ fun PlayerScreen(
             }
         }
 
-        // Hiển thị thông báo Gesture
+        // Hiển thị thông báo Gesture hoặc Thời gian đang kéo thanh trượt (Scrubbing Preview)
         if (!isInPipMode) {
-            gestureHint?.let { hint ->
+            val activeCenterHint = if (isDraggingSlider) {
+                "⏱️ Tua tới: ${formatTimeMs(sliderDragPos)} / ${formatTimeMs(duration)}"
+            } else {
+                gestureHint
+            }
+            activeCenterHint?.let { hint ->
                 LiquidGlassPill(
                     active = true,
                     modifier = Modifier.align(Alignment.Center)
@@ -788,8 +800,7 @@ fun PlayerScreen(
             }
         }
 
-        // ================= MENU MỞ RỘNG 1: PRO STUDIO (GỘP 2 TAB: HÌNH ẢNH/A-B & ÂM THANH/EQ) =================
-        // Khi mở bảng này, thanh HUD bên dưới tự động ẩn đi để KHÔNG ĐÈ LÊN NHAU!
+        // ================= MENU MỞ RỘNG 1: PRO STUDIO =================
         if (activeModal == ActiveModal.STUDIO && !isInPipMode) {
             LiquidGlassCard(
                 cornerRadius = 26.dp,
@@ -808,7 +819,6 @@ fun PlayerScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Header có Modifier.weight(1f) chống vỡ chữ nút Đóng!
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -829,7 +839,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // 2 Tab chuyển đổi gọn gàng
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -839,7 +848,7 @@ fun PlayerScreen(
                             onClick = { studioTabIndex = 0 },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("🎬 Hình Ảnh & Lặp A-B", color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Text("🎬 Hình Ảnh & A-B", color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
                         }
                         LiquidGlassPill(
                             active = studioTabIndex == 1,
@@ -854,7 +863,6 @@ fun PlayerScreen(
                     }
 
                     if (studioTabIndex == 0) {
-                        // TAB 0: HÌNH ẢNH, LẶP ĐOẠN A-B & KHUNG HÌNH
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -953,7 +961,6 @@ fun PlayerScreen(
                             Text("${(videoContrast * 100).roundToInt()}%", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(42.dp))
                         }
                     } else {
-                        // TAB 1: ÂM THANH, AUDIO BOOST 200%, 5-BAND EQUALIZER & SIÊU TRẦM
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1026,7 +1033,7 @@ fun PlayerScreen(
             }
         }
 
-        // ================= MENU MỞ RỘNG 2: TIỆN ÍCH NHANH (TOOLS MENU - KHÔNG CẦN VUỐT NGANG NỮA) =================
+        // ================= MENU MỞ RỘNG 2: TIỆN ÍCH & PHỤ ĐỀ (NÚT "☰ THÊM") =================
         if (activeModal == ActiveModal.TOOLS && !isInPipMode) {
             LiquidGlassCard(
                 cornerRadius = 26.dp,
@@ -1035,7 +1042,7 @@ fun PlayerScreen(
                     .align(Alignment.Center)
                     .padding(horizontal = 16.dp, vertical = 12.dp)
                     .widthIn(max = 500.dp)
-                    .heightIn(max = 350.dp)
+                    .heightIn(max = 360.dp)
                     .fillMaxWidth()
             ) {
                 Column(
@@ -1049,7 +1056,7 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Widgets, contentDescription = null, tint = palette.primaryGlow)
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = palette.primaryGlow)
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = "Tiện Ích & Phụ Đề",
@@ -1063,7 +1070,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Hàng 1: Chụp ảnh Snapshot, PiP, Nghe nền, Khóa trẻ em
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1115,7 +1121,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Hàng 2: Khung hình, Xoay màn hình, Thu phóng
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1138,7 +1143,7 @@ fun PlayerScreen(
                                 AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Kéo giãn"
                                 else -> "Vừa khung"
                             }
-                            Text("Tỷ lệ: $modeName", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text("Khung: $modeName", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                         LiquidGlassPill(
                             active = false,
@@ -1154,11 +1159,10 @@ fun PlayerScreen(
                         ) {
                             Icon(Icons.Default.ScreenRotation, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Đảo xoay ngang/dọc", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text("Xoay ngang/dọc", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
-                    // Hàng 3: Hẹn giờ ngủ
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1175,7 +1179,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Hàng 4: Quản lý Phụ đề & Cỡ chữ
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1240,27 +1243,37 @@ fun PlayerScreen(
             }
         }
 
-        // ================= THANH ĐIỀU KHIỂN CHÍNH (CHỈ HIỆN KHI KHÔNG MỞ BẢNG STUDIO/TOOLS) =================
+        // ================= THANH ĐIỀU KHIỂN CHÍNH (KHÔNG BỊ CẮT NÚT Ở MÀN HÌNH DỌC & KÉO SLIDER KHÔNG ĐƠ) =================
         if (showControls && !isLocked && !isInPipMode && activeModal == ActiveModal.NONE) {
             LiquidGlassCard(
-                cornerRadius = 30.dp,
+                cornerRadius = 28.dp,
                 highlighted = true,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
                     .fillMaxWidth()
+                    // Chặn mọi sự kiện chạm trong vùng HUD lọt xuống lớp cử chỉ vuốt của PlayerView bên dưới!
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = {})
+                    }
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    // Hàng 1: Tiêu đề + Các nhãn trạng thái
+                    // HÀNG 1: NÚT QUAY LẠI (←) + TIÊU ĐỀ VIDEO + SỐ TẬP
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(
+                            onClick = { persistCurrentPosition(); onBack() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(6.dp))
                         Text(
                             text = currentVideo?.displayName ?: (streamUrl ?: "Đang phát"),
                             style = MaterialTheme.typography.titleSmall,
@@ -1274,7 +1287,7 @@ fun PlayerScreen(
                             LiquidGlassPill(
                                 active = true,
                                 onClick = { loopPointA = null; loopPointB = null },
-                                modifier = Modifier.padding(start = 6.dp)
+                                modifier = Modifier.padding(start = 4.dp)
                             ) {
                                 Text("🔁 A-B ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
@@ -1283,7 +1296,7 @@ fun PlayerScreen(
                             LiquidGlassPill(
                                 active = true,
                                 onClick = { resetZoom() },
-                                modifier = Modifier.padding(start = 6.dp)
+                                modifier = Modifier.padding(start = 4.dp)
                             ) {
                                 Text("🔍 ${(zoomScale * 100).roundToInt()}% ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
@@ -1294,32 +1307,29 @@ fun PlayerScreen(
                                 modifier = Modifier.padding(start = 6.dp)
                             ) {
                                 Text(
-                                    "Tập ${currentIndex + 1}/${effectivePlaylist.size}",
+                                    "${currentIndex + 1}/${effectivePlaylist.size}",
                                     color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
                                 )
                             }
                         }
                     }
 
-                    // Hàng 2: Thanh trượt thời gian mượt 60fps (Không bị giật lag khi kéo)
+                    // HÀNG 2: THANH TUA THỜI GIAN ZERO-LAG (CHỈ GỌI SEEK KHI THẢ TAY -> MƯỢT TUYỆT ĐỐI 120FPS)
                     val displayPos = if (isDraggingSlider) sliderDragPos else currentPos
                     Slider(
                         value = displayPos.toFloat().coerceIn(0f, duration.toFloat()),
                         onValueChange = { newVal ->
                             isDraggingSlider = true
                             sliderDragPos = newVal.toLong()
-                            val now = System.currentTimeMillis()
-                            // Chỉ cập nhật khung hình xem trước mỗi 120ms khi đang kéo để không làm nghẽn Decoder
-                            if (now - lastScrubSeekTimeMs > 120L) {
-                                lastScrubSeekTimeMs = now
-                                playerManager.seekTo(sliderDragPos)
-                            }
                         },
                         onValueChangeFinished = {
-                            playerManager.seekTo(sliderDragPos)
-                            currentPos = sliderDragPos
+                            val finalTarget = sliderDragPos
+                            currentPos = finalTarget
+                            lastSeekCompletedTimeMs = System.currentTimeMillis()
                             isDraggingSlider = false
+                            playerManager.seekTo(finalTarget)
                             persistCurrentPosition()
                         },
                         valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
@@ -1327,105 +1337,42 @@ fun PlayerScreen(
                             thumbColor = Color.White,
                             activeTrackColor = palette.primaryGlow,
                             inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                        )
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(32.dp)
                     )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(formatTimeMs(displayPos), color = Color.White, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        Text(formatTimeMs(displayPos), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                         if (sleepRemainingSec > 0) {
-                            Text("💤 ${formatTimeMs(sleepRemainingSec * 1000L)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.bodySmall)
+                            Text("💤 ${formatTimeMs(sleepRemainingSec * 1000L)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelSmall)
                         }
-                        Text(formatTimeMs(duration), color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall)
+                        Text(formatTimeMs(duration), color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall)
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Hàng 3: 7 NÚT CỐ ĐỊNH VỪA KHÍT MÀN HÌNH (KHÔNG CẦN VUỐT NGANG)
+                    // HÀNG 3: CÁC NÚT CHỨC NĂNG CÂN ĐỐI VỪA KHÍT MÀN HÌNH DỌC (KHÔNG BAO GIỜ BỊ CẮT NÚT CUỐI)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Nút Quay lại
-                        IconButton(onClick = { persistCurrentPosition(); onBack() }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
-                        }
-
-                        // 2. Nút Bài trước
-                        IconButton(
-                            onClick = { triggerPreviousVideo() },
-                            enabled = currentIndex > 0
-                        ) {
-                            Icon(
-                                Icons.Default.SkipPrevious,
-                                contentDescription = "Video trước",
-                                tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
-                            )
-                        }
-
-                        // 3. Nút Play / Pause Kính Lỏng
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .drawWithCache {
-                                    val r = size.width / 2f
-                                    val fill = Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.45f),
-                                            palette.primaryGlow.copy(alpha = 0.75f),
-                                            palette.secondaryGlow.copy(alpha = 0.75f)
-                                        )
-                                    )
-                                    val rim = Brush.linearGradient(
-                                        colors = listOf(Color.White, Color.White.copy(alpha = 0.3f))
-                                    )
-                                    onDrawBehind {
-                                        drawCircle(brush = fill, radius = r)
-                                        drawCircle(brush = rim, radius = r - 1.dp.toPx(), style = Stroke(width = 1.4.dp.toPx()))
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            IconButton(onClick = {
-                                if (isPlaying) {
-                                    playerManager.pause()
-                                    persistCurrentPosition()
-                                } else {
-                                    playerManager.resume()
-                                }
-                                isPlaying = !isPlaying
-                            }) {
-                                Icon(
-                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = "Phát/Tạm dừng",
-                                    tint = Color.White
-                                )
-                            }
-                        }
-
-                        // 4. Nút Bài tiếp theo
-                        IconButton(
-                            onClick = { triggerNextVideo() },
-                            enabled = effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1
-                        ) {
-                            Icon(
-                                Icons.Default.SkipNext,
-                                contentDescription = "Video tiếp theo",
-                                tint = if (effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1) Color.White else Color.White.copy(alpha = 0.3f)
-                            )
-                        }
-
-                        // 5. Nút Tốc độ phát (1.0x)
+                        // 1. Nút Tốc độ phát (1.0x)
                         Box {
                             LiquidGlassPill(
                                 active = playbackSpeed != 1.0f,
                                 onClick = { showSpeedMenu = true }
                             ) {
-                                Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    "${playbackSpeed}x",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
                             }
                             DropdownMenu(
                                 expanded = showSpeedMenu,
@@ -1451,22 +1398,98 @@ fun PlayerScreen(
                             }
                         }
 
-                        // 6. Nút mở Menu "Studio" (Hình ảnh, Màu sắc, Lặp A-B, Âm thanh EQ, Boost 200%)
-                        LiquidGlassPill(
-                            active = loopPointA != null || isMirrorFlipped || audioBoostPercent > 0 || bassBoostPercent > 0 || abs(videoSaturation - 1f) > 0.05f,
-                            onClick = { activeModal = ActiveModal.STUDIO }
+                        // 2. Cụm 3 nút Trung tâm: Bài trước (⏮) - Play/Pause (⏯) - Bài tiếp (⏭)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = "Studio", tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Studio", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            IconButton(
+                                onClick = { triggerPreviousVideo() },
+                                enabled = currentIndex > 0,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipPrevious,
+                                    contentDescription = "Video trước",
+                                    tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .drawWithCache {
+                                        val r = size.width / 2f
+                                        val fill = Brush.linearGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.45f),
+                                                palette.primaryGlow.copy(alpha = 0.75f),
+                                                palette.secondaryGlow.copy(alpha = 0.75f)
+                                            )
+                                        )
+                                        val rim = Brush.linearGradient(
+                                            colors = listOf(Color.White, Color.White.copy(alpha = 0.3f))
+                                        )
+                                        onDrawBehind {
+                                            drawCircle(brush = fill, radius = r)
+                                            drawCircle(brush = rim, radius = r - 1.dp.toPx(), style = Stroke(width = 1.4.dp.toPx()))
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                IconButton(onClick = {
+                                    if (isPlaying) {
+                                        playerManager.pause()
+                                        persistCurrentPosition()
+                                    } else {
+                                        playerManager.resume()
+                                    }
+                                    isPlaying = !isPlaying
+                                }) {
+                                    Icon(
+                                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = "Phát/Tạm dừng",
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { triggerNextVideo() },
+                                enabled = effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipNext,
+                                    contentDescription = "Video tiếp theo",
+                                    tint = if (effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1) Color.White else Color.White.copy(alpha = 0.3f)
+                                )
+                            }
                         }
 
-                        // 7. Nút mở Menu "Tiện ích" (Gom gọn Chụp ảnh, Phụ đề, PiP, Xoay, Tỷ lệ, Nghe nền, Hẹn giờ, Khóa)
-                        LiquidGlassPill(
-                            active = backgroundAudioEnabled || sleepTimerMinutes > 0,
-                            onClick = { activeModal = ActiveModal.TOOLS }
+                        // 3. Cụm 2 nút Menu mở rộng bên phải: "✨ Studio" & "☰ Thêm" (Có chữ rõ ràng, không bị cắt!)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(Icons.Default.Widgets, contentDescription = "Tiện ích", tint = Color.White, modifier = Modifier.size(16.dp))
+                            LiquidGlassPill(
+                                active = loopPointA != null || isMirrorFlipped || audioBoostPercent > 0 || bassBoostPercent > 0 || abs(videoSaturation - 1f) > 0.05f,
+                                onClick = { activeModal = ActiveModal.STUDIO }
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "Studio", tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("Studio", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            }
+
+                            LiquidGlassPill(
+                                active = backgroundAudioEnabled || sleepTimerMinutes > 0,
+                                onClick = { activeModal = ActiveModal.TOOLS }
+                            ) {
+                                Icon(Icons.Default.Tune, contentDescription = "Thêm tiện ích", tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            }
                         }
                     }
                 }

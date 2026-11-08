@@ -17,6 +17,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.videoplayer.app.data.model.VideoItem
 import java.io.File
@@ -86,6 +87,7 @@ class PlayerManager(private val context: Context) {
 
     init {
         player.repeatMode = Player.REPEAT_MODE_OFF
+        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 setupAudioEffects(audioSessionId)
