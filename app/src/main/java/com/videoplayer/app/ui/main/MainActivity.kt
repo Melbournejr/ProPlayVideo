@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Tự động xóa sạch các bản cài đặt APK OTA cũ tích tụ trong User Data ngay khi khởi động
+        try { UpdateManager(this).cleanupOldApks() } catch (_: Exception) {}
 
         if (!PermissionHelper.hasStoragePermission(this)) {
             val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -515,6 +517,19 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
+
+                LiquidGlassPill(
+                    active = false,
+                    onClick = {
+                        val freed = updateManager.cleanupOldApks()
+                        val freedMb = "%.1f MB".format(freed / (1024f * 1024f))
+                        Toast.makeText(context, "🧹 Đã dọn sạch các file gói cập nhật cũ ($freedMb)!", Toast.LENGTH_SHORT).show()
+                        statusText = "✅ Đã giải phóng $freedMb dữ liệu gói cài đặt cũ trong bộ nhớ!"
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("🧹 Dọn sạch gói APK cũ & Bộ nhớ đệm", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
 
                 if (!FileOperationHelper.hasAllFilesAccess()) {
                     LiquidGlassPill(

@@ -148,6 +148,7 @@ class UpdateManager(private val context: Context) {
         } else {
             rawUrl
         }
+        cleanupOldApks()
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
         if (destFile.exists()) destFile.delete()
@@ -271,6 +272,49 @@ class UpdateManager(private val context: Context) {
         }
         context.startActivity(intent)
     }
+    /**
+     * Quét và xóa sạch toàn bộ các file .apk cập nhật cũ bị tích tụ trong User Data (ExternalFilesDir) & Cache
+     * Trả về tổng số Bytes đã giải phóng được.
+     */
+    fun cleanupOldApks(): Long {
+        var freedBytes = 0L
+        val dirsToClean = listOfNotNull(
+            context.cacheDir,
+            context.externalCacheDir,
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            context.filesDir
+        )
+        dirsToClean.forEach { dir ->
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        freedBytes += len
+                    }
+                }
+            }
+        }
+        return freedBytes
+    }
+
+    fun getOccupiedApkStorageBytes(): Long {
+        var total = 0L
+        val dirs = listOfNotNull(
+            context.cacheDir,
+            context.externalCacheDir,
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            context.filesDir
+        )
+        dirs.forEach { dir ->
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    total += file.length()
+                }
+            }
+        }
+        return total
+    }
+
     fun isRemoteVersionNewer(currentVersion: String, remoteTag: String): Boolean {
         val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V")
         val cleanRemote = remoteTag.trim().removePrefix("v").removePrefix("V")

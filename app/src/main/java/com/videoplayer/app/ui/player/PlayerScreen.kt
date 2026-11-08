@@ -779,7 +779,7 @@ fun PlayerScreen(
 
         // Hiển thị thông báo Gesture hoặc Thời gian đang kéo thanh trượt (Scrubbing Preview)
         if (!isInPipMode) {
-            val activeCenterHint = if (isDraggingSlider) {
+            val activeCenterHint = if (false) {
                 "⏱️ ${formatTimeMs(sliderDragFloat.toLong())} / ${formatTimeMs(duration)}"
             } else {
                 gestureHint
@@ -1316,57 +1316,26 @@ fun PlayerScreen(
                         }
                     }
 
-                    // HÀNG 2: THANH TUA THỜI GIAN 120FPS (Dùng Float thuần không khựng + Live Frame Preview 220ms)
-                    val displayPos = if (isDraggingSlider) sliderDragFloat.toLong() else currentPos
-                    val sliderVal = if (isDraggingSlider) {
-                        sliderDragFloat.coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
-                    } else {
-                        currentPos.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
-                    }
-                    Slider(
-                        value = sliderVal,
-                        onValueChange = { newFloat ->
-                            if (!isDraggingSlider) {
-                                isDraggingSlider = true
-                            }
-                            sliderDragFloat = newFloat
-                            val now = System.currentTimeMillis()
-                            if (now - lastLivePreviewSeekMs > 220L) {
-                                lastLivePreviewSeekMs = now
-                                playerManager.seekTo(newFloat.toLong())
-                            }
+                                        // HÀNG 2: THANH TUA THỜI GIAN ĐỘC LẬP 120HZ (CÔ LẬP RECOMPOSITION & KHÔNG GỌI SEEK KHI ĐANG KÉO)
+                    SmoothVideoSeekBar(
+                        currentPosMs = currentPos,
+                        durationMs = duration,
+                        sleepRemainingSec = sleepRemainingSec,
+                        activeColor = palette.primaryGlow,
+                        onDragStateChanged = { dragging ->
+                            isDraggingSlider = dragging
                         },
-                        onValueChangeFinished = {
-                            val finalTarget = sliderDragFloat.toLong().coerceIn(0L, duration)
-                            currentPos = finalTarget
+                        onSeekFinished = { targetMs ->
+                            currentPos = targetMs
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             isDraggingSlider = false
-                            playerManager.seekTo(finalTarget)
+                            playerManager.seekTo(targetMs)
                             persistCurrentPosition()
-                        },
-                        valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = palette.primaryGlow,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                        ),
-                        modifier = Modifier.fillMaxWidth().height(36.dp)
+                        }
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(formatTimeMs(displayPos), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                        if (sleepRemainingSec > 0) {
-                            Text("💤 ${formatTimeMs(sleepRemainingSec * 1000L)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(formatTimeMs(duration), color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall)
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // HÀNG 3: CÁC NÚT CHỨC NĂNG CÂN ĐỐI VỪA KHÍT MÀN HÌNH DỌC (KHÔNG BAO GIỜ BỊ CẮT NÚT CUỐI)
+                    Spacer(modifier = Modifier.height(4.dp))
+// HÀNG 3: CÁC NÚT CHỨC NĂNG CÂN ĐỐI VỪA KHÍT MÀN HÌNH DỌC (KHÔNG BAO GIỜ BỊ CẮT NÚT CUỐI)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1506,6 +1475,85 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+    }
+}
+@Composable
+private fun SmoothVideoSeekBar(
+    currentPosMs: Long,
+    durationMs: Long,
+    sleepRemainingSec: Int,
+    activeColor: Color,
+    onDragStateChanged: (Boolean) -> Unit,
+    onSeekFinished: (Long) -> Unit
+) {
+    val safeDuration = durationMs.coerceAtLeast(1L).toFloat()
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    // Khi không kéo, đồng bộ nhẹ nhàng với vị trí thực của video
+    val currentFraction = if (isDragging) {
+        dragFraction
+    } else {
+        (currentPosMs.toFloat() / safeDuration).coerceIn(0f, 1f)
+    }
+
+    val displayedMs = if (isDragging) {
+        (dragFraction * safeDuration).toLong()
+    } else {
+        currentPosMs
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Slider(
+            value = currentFraction,
+            onValueChange = { newFraction ->
+                if (!isDragging) {
+                    isDragging = true
+                    onDragStateChanged(true)
+                }
+                dragFraction = newFraction.coerceIn(0f, 1f)
+            },
+            onValueChangeFinished = {
+                val targetMs = (dragFraction * safeDuration).toLong().coerceIn(0L, durationMs.coerceAtLeast(1L))
+                isDragging = false
+                onDragStateChanged(false)
+                onSeekFinished(targetMs)
+            },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = activeColor,
+                inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isDragging) "⏱️ ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
+                color = if (isDragging) activeColor else Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (sleepRemainingSec > 0) {
+                Text(
+                    text = "💤 ${formatTimeMs(sleepRemainingSec * 1000L)}",
+                    color = Color(0xFFFFD54F),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Text(
+                text = formatTimeMs(durationMs),
+                color = Color.White.copy(alpha = 0.78f),
+                style = MaterialTheme.typography.labelMedium
+            )
         }
     }
 }
