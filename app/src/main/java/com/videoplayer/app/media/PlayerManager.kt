@@ -15,11 +15,14 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.videoplayer.app.data.model.VideoItem
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 data class ExternalSubtitleItem(
@@ -56,6 +59,17 @@ class PlayerManager(private val context: Context) {
         )
     }
 
+    // Bộ đệm khởi phát siêu tốc (400ms) giúp mở video phát ngay không khựng
+    private val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            15_000, // minBufferMs
+            50_000, // maxBufferMs
+            400,    // bufferForPlaybackMs (khởi phát cực nhanh)
+            800     // bufferForPlaybackAfterRebufferMs (tua xong phát tiếp ngay)
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+
     private val renderersFactory = DefaultRenderersFactory(context)
         .setEnableDecoderFallback(true)
         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -76,6 +90,7 @@ class PlayerManager(private val context: Context) {
 
     val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
         .setTrackSelector(trackSelector)
+        .setLoadControl(loadControl)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -87,6 +102,7 @@ class PlayerManager(private val context: Context) {
 
     init {
         player.repeatMode = Player.REPEAT_MODE_OFF
+        // Dùng CLOSEST_SYNC kết hợp buffer 400ms giúp tua nhanh không bị đơ
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
@@ -94,12 +110,11 @@ class PlayerManager(private val context: Context) {
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // Nếu ContentUri gặp lỗi hoặc ngược lại, tự động thử fallback sang File Uri
                 val vid = currentPlaylist.getOrNull(currentIndex) ?: return
                 val curPos = getCurrentPosition()
                 val fallbackUri = Uri.fromFile(File(vid.path))
                 if (player.currentMediaItem?.localConfiguration?.uri != fallbackUri) {
-                    val item = buildSingleMediaItem(vid, useFileUriFallback = true)
+                    val item = buildSingleMediaItem(vid, emptyList(), useFileUriFallback = true)
                     player.setMediaItem(item, curPos)
                     player.prepare()
                     player.play()
@@ -126,10 +141,8 @@ class PlayerManager(private val context: Context) {
                 enabled = true
                 val numBands = numberOfBands.toInt().coerceAtMost(5)
                 val range = bandLevelRange
-                val minMb = range[0].toInt()
-                val maxMb = range[1].toInt()
                 for (i in 0 until numBands) {
-                    val targetMb = (bandLevelsDb[i] * 100f).toInt().coerceIn(minMb, maxMb).toShort()
+                    val targetMb = (bandLevelsDb[i] * 100f).toInt().coerceIn(range[0].toInt(), range[1].toInt()).toShort()
                     setBandLevel(i.toShort(), targetMb)
                 }
             }
@@ -164,9 +177,6 @@ class PlayerManager(private val context: Context) {
         val clamped = levelDb.coerceIn(-15f, 15f)
         bandLevelsDb[bandIndex] = clamped
         try {
-            if (equalizer == null && player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                setupAudioEffects(player.audioSessionId)
-            }
             equalizer?.let { eq ->
                 if (bandIndex < eq.numberOfBands) {
                     val range = eq.bandLevelRange
@@ -187,9 +197,6 @@ class PlayerManager(private val context: Context) {
     fun setBassBoostPercent(percent: Int) {
         currentBassPercent = percent.coerceIn(0, 100)
         try {
-            if (bassBoost == null && player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                setupAudioEffects(player.audioSessionId)
-            }
             bassBoost?.apply {
                 enabled = currentBassPercent > 0
                 if (strengthSupported) {
@@ -202,9 +209,6 @@ class PlayerManager(private val context: Context) {
     fun setAudioBoostPercent(boostPercent: Int) {
         currentBoostPercent = boostPercent.coerceIn(0, 100)
         try {
-            if (loudnessEnhancer == null && player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                setupAudioEffects(player.audioSessionId)
-            }
             loudnessEnhancer?.apply {
                 if (currentBoostPercent > 0) {
                     setTargetGain(currentBoostPercent * 15)
@@ -217,38 +221,32 @@ class PlayerManager(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Chỉ quét phụ đề cho ĐÚNG 1 VIDEO đang mở (tối ưu 0ms, không quét cả 333 video cùng lúc)
-     */
-    fun findMatchingSubtitlesForSingleVideo(video: VideoItem): List<ExternalSubtitleItem> {
+    suspend fun findSubtitlesIo(video: VideoItem): List<ExternalSubtitleItem> = withContext(Dispatchers.IO) {
         val result = mutableListOf<ExternalSubtitleItem>()
         try {
+            val custom = customSubtitlesByVideoId[video.id] ?: emptyList()
+            result.addAll(custom)
             val videoFile = File(video.path)
-            val parentDir = videoFile.parentFile ?: return emptyList()
-            val baseName = videoFile.nameWithoutExtension
-            val candidates = listOf(
-                "$baseName.srt" to MimeTypes.APPLICATION_SUBRIP,
-                "$baseName.vi.srt" to MimeTypes.APPLICATION_SUBRIP,
-                "$baseName.en.srt" to MimeTypes.APPLICATION_SUBRIP,
-                "$baseName.ass" to MimeTypes.TEXT_SSA,
-                "$baseName.ssa" to MimeTypes.TEXT_SSA,
-                "$baseName.vtt" to MimeTypes.TEXT_VTT
-            )
-            // Kiểm tra trực tiếp sự tồn tại của file thay vì gọi parentDir.listFiles() trên thư mục 333 file!
-            for ((fileName, mime) in candidates) {
-                val subFile = File(parentDir, fileName)
-                if (subFile.exists() && subFile.isFile) {
-                    result.add(ExternalSubtitleItem(subFile.name, Uri.fromFile(subFile), mime))
+            val parentDir = videoFile.parentFile
+            if (parentDir != null) {
+                val baseName = videoFile.nameWithoutExtension
+                val candidates = listOf(
+                    "$baseName.srt" to MimeTypes.APPLICATION_SUBRIP,
+                    "$baseName.vi.srt" to MimeTypes.APPLICATION_SUBRIP,
+                    "$baseName.en.srt" to MimeTypes.APPLICATION_SUBRIP,
+                    "$baseName.ass" to MimeTypes.TEXT_SSA,
+                    "$baseName.ssa" to MimeTypes.TEXT_SSA,
+                    "$baseName.vtt" to MimeTypes.TEXT_VTT
+                )
+                for ((fileName, mime) in candidates) {
+                    val subFile = File(parentDir, fileName)
+                    if (subFile.exists() && subFile.isFile) {
+                        result.add(ExternalSubtitleItem(subFile.name, Uri.fromFile(subFile), mime))
+                    }
                 }
             }
         } catch (_: Exception) {}
-        return result
-    }
-
-    fun getSubtitlesForVideo(video: VideoItem): List<ExternalSubtitleItem> {
-        val custom = customSubtitlesByVideoId[video.id] ?: emptyList()
-        val folderSubs = findMatchingSubtitlesForSingleVideo(video)
-        return (custom + folderSubs).distinctBy { it.uri }
+        result.distinctBy { it.uri }
     }
 
     private fun resolveVideoUri(video: VideoItem, useFileUriFallback: Boolean = false): Uri {
@@ -260,9 +258,12 @@ class PlayerManager(private val context: Context) {
         }
     }
 
-    private fun buildSingleMediaItem(video: VideoItem, useFileUriFallback: Boolean = false): MediaItem {
+    private fun buildSingleMediaItem(
+        video: VideoItem,
+        subs: List<ExternalSubtitleItem>,
+        useFileUriFallback: Boolean = false
+    ): MediaItem {
         val vUri = resolveVideoUri(video, useFileUriFallback)
-        val subs = getSubtitlesForVideo(video)
         val subConfigs = subs.map { sub ->
             MediaItem.SubtitleConfiguration.Builder(sub.uri)
                 .setMimeType(sub.mimeType)
@@ -275,64 +276,43 @@ class PlayerManager(private val context: Context) {
         return MediaItem.Builder()
             .setMediaId(video.id)
             .setUri(vUri)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(video.displayName)
-                    .build()
-            )
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(video.displayName).build())
             .setSubtitleConfigurations(subConfigs)
             .build()
     }
 
-    /**
-     * Nạp tức thì DUY NHẤT video đang chọn vào ExoPlayer (mở trong 0.05s ngay cả với thư mục 1000 video 4K)
-     */
-    fun playPlaylist(playlist: List<VideoItem>, startIndex: Int, startPositionMs: Long = 0L): List<ExternalSubtitleItem> {
+    suspend fun playPlaylist(playlist: List<VideoItem>, startIndex: Int, startPositionMs: Long = 0L): List<ExternalSubtitleItem> {
         val safeList = if (playlist.isEmpty()) emptyList() else playlist
         currentPlaylist = safeList
         if (safeList.isEmpty()) return emptyList()
 
         currentIndex = startIndex.coerceIn(0, safeList.size - 1)
         val targetVideo = safeList[currentIndex]
-        val mediaItem = buildSingleMediaItem(targetVideo)
+        val subs = findSubtitlesIo(targetVideo)
+        val mediaItem = buildSingleMediaItem(targetVideo, subs)
 
-        player.stop()
-        player.clearMediaItems()
         player.setMediaItem(mediaItem, startPositionMs)
         player.prepare()
         player.playWhenReady = true
         player.play()
-
-        if (player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-            setupAudioEffects(player.audioSessionId)
-        }
-        return getSubtitlesForVideo(targetVideo)
+        return subs
     }
 
-    fun playVideoAtIndex(index: Int, startPositionMs: Long = 0L): VideoItem? {
-        if (index !in currentPlaylist.indices) return null
+    suspend fun playVideoAtIndex(index: Int, startPositionMs: Long = 0L): Pair<VideoItem?, List<ExternalSubtitleItem>> {
+        if (index !in currentPlaylist.indices) return null to emptyList()
         currentIndex = index
         val targetVideo = currentPlaylist[currentIndex]
-        val mediaItem = buildSingleMediaItem(targetVideo)
+        val subs = findSubtitlesIo(targetVideo)
+        val mediaItem = buildSingleMediaItem(targetVideo, subs)
 
-        player.stop()
-        player.clearMediaItems()
         player.setMediaItem(mediaItem, startPositionMs)
         player.prepare()
         player.playWhenReady = true
         player.play()
-        return targetVideo
+        return targetVideo to subs
     }
 
-    fun playNextInPlaylist(startPositionMs: Long = 0L): VideoItem? {
-        return playVideoAtIndex(currentIndex + 1, startPositionMs)
-    }
-
-    fun playPreviousInPlaylist(startPositionMs: Long = 0L): VideoItem? {
-        return playVideoAtIndex(currentIndex - 1, startPositionMs)
-    }
-
-    fun attachExternalSubtitleToCurrent(video: VideoItem, uri: Uri, displayName: String): List<ExternalSubtitleItem> {
+    suspend fun attachExternalSubtitleToCurrent(video: VideoItem, uri: Uri, displayName: String): List<ExternalSubtitleItem> {
         val curPos = getCurrentPosition()
         val lower = displayName.lowercase()
         val mime = when {
@@ -344,44 +324,36 @@ class PlayerManager(private val context: Context) {
         list.removeAll { it.uri == uri }
         list.add(0, ExternalSubtitleItem(displayName, uri, mime))
 
-        val updatedItem = buildSingleMediaItem(video)
+        val subs = findSubtitlesIo(video)
+        val updatedItem = buildSingleMediaItem(video, subs)
         player.setMediaItem(updatedItem, curPos)
         player.prepare()
         player.playWhenReady = true
         player.play()
         toggleSubtitles(true)
-        return getSubtitlesForVideo(video)
+        return subs
     }
 
     fun playStream(url: String) {
         currentPlaylist = emptyList()
-        val uri = Uri.parse(url)
-        val mediaItem = MediaItem.fromUri(uri)
-        player.stop()
-        player.clearMediaItems()
+        val mediaItem = MediaItem.fromUri(Uri.parse(url))
         player.setMediaItem(mediaItem)
         player.prepare()
         player.playWhenReady = true
         player.play()
     }
 
-    fun seekTo(positionMs: Long) = player.seekTo(positionMs)
+    fun seekToFast(positionMs: Long) {
+        player.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
+    fun seekTo(positionMs: Long) = player.seekTo(positionMs.coerceAtLeast(0L))
     fun setPlaybackSpeed(speed: Float) { player.playbackParameters = PlaybackParameters(speed) }
     fun pause() = player.pause()
     fun resume() = player.play()
     fun isPlaying(): Boolean = player.isPlaying
     fun getCurrentPosition(): Long = player.currentPosition.coerceAtLeast(0L)
     fun getDuration(): Long = player.duration.coerceAtLeast(1L)
-
-    fun release() {
-        try { loudnessEnhancer?.release() } catch (_: Exception) {}
-        try { equalizer?.release() } catch (_: Exception) {}
-        try { bassBoost?.release() } catch (_: Exception) {}
-        loudnessEnhancer = null
-        equalizer = null
-        bassBoost = null
-        player.release()
-    }
 
     fun stepFrame(forward: Boolean) {
         player.pause()
@@ -409,6 +381,16 @@ class PlayerManager(private val context: Context) {
         } else "Stereo"
         val dropped = counters?.droppedBufferCount ?: 0
         return VideoNerdStats(res, vCodec, fps, vBitrate, aCodec, dropped)
+    }
+
+    fun release() {
+        try { loudnessEnhancer?.release() } catch (_: Exception) {}
+        try { equalizer?.release() } catch (_: Exception) {}
+        try { bassBoost?.release() } catch (_: Exception) {}
+        loudnessEnhancer = null
+        equalizer = null
+        bassBoost = null
+        player.release()
     }
 
     fun toggleSubtitles(enabled: Boolean) {

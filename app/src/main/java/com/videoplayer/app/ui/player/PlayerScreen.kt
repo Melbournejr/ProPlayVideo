@@ -21,6 +21,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -29,7 +30,6 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -62,7 +65,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.Player
-import androidx.media3.common.VideoSize
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -110,10 +112,7 @@ private fun Context.resolveUriFileName(uri: Uri): String {
             }
         }
     }
-    if (result == null) {
-        result = uri.path?.substringAfterLast('/') ?: "subtitle.srt"
-    }
-    return result!!
+    return result ?: (uri.path?.substringAfterLast('/') ?: "subtitle.srt")
 }
 
 private fun formatTimeMs(ms: Long): String {
@@ -139,8 +138,128 @@ private fun buildVideoColorPaint(saturation: Float, contrast: Float, brightnessO
         )
     )
     satMatrix.postConcat(contrastMatrix)
-    return Paint().apply {
-        colorFilter = ColorMatrixColorFilter(satMatrix)
+    return Paint().apply { colorFilter = ColorMatrixColorFilter(satMatrix) }
+}
+
+/**
+ * Thanh tua thời gian vẽ trực tiếp trên Canvas (Direct-Touch 120Hz SeekBar)
+ * Không qua trung gian Material3 Slider -> Kéo chấm tròn bám sát ngón tay với độ trễ 0ms!
+ */
+@Composable
+private fun DirectCanvasSeekBar(
+    currentPosMs: Long,
+    durationMs: Long,
+    sleepRemainingSec: Int,
+    activeColor: Color,
+    onDragStart: () -> Unit,
+    onDragEnd: (Long) -> Unit
+) {
+    val safeDuration = durationMs.coerceAtLeast(1L)
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    val fraction = if (isDragging) {
+        dragFraction
+    } else {
+        (currentPosMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+    }
+
+    val displayedMs = if (isDragging) {
+        (dragFraction * safeDuration).toLong()
+    } else {
+        currentPosMs
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .pointerInput(safeDuration) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        isDragging = true
+                        onDragStart()
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        dragFraction = (down.position.x / w).coerceIn(0f, 1f)
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            if (change.pressed) {
+                                change.consume()
+                                dragFraction = (change.position.x / w).coerceIn(0f, 1f)
+                            }
+                        } while (event.changes.any { it.pressed })
+
+                        val targetMs = (dragFraction * safeDuration).toLong().coerceIn(0L, safeDuration)
+                        isDragging = false
+                        onDragEnd(targetMs)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(28.dp)) {
+                val trackHeight = if (isDragging) 7.dp.toPx() else 5.dp.toPx()
+                val centerY = size.height / 2f
+                val thumbX = (fraction * size.width).coerceIn(0f, size.width)
+
+                // Đường rãnh nền
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.24f),
+                    topLeft = Offset(0f, centerY - trackHeight / 2f),
+                    size = Size(size.width, trackHeight),
+                    cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                )
+                // Đường tiến trình đã chạy
+                drawRoundRect(
+                    color = activeColor,
+                    topLeft = Offset(0f, centerY - trackHeight / 2f),
+                    size = Size(thumbX, trackHeight),
+                    cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                )
+                // Quầng sáng quanh chấm tròn khi đang kéo
+                if (isDragging) {
+                    drawCircle(
+                        color = activeColor.copy(alpha = 0.35f),
+                        radius = 13.dp.toPx(),
+                        center = Offset(thumbX, centerY)
+                    )
+                }
+                // Chấm tròn trắng (Thumb)
+                drawCircle(
+                    color = Color.White,
+                    radius = if (isDragging) 9.dp.toPx() else 7.dp.toPx(),
+                    center = Offset(thumbX, centerY)
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isDragging) "⏱️ ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
+                color = if (isDragging) activeColor else Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+            if (sleepRemainingSec > 0) {
+                Text(
+                    text = "💤 ${formatTimeMs(sleepRemainingSec * 1000L)}",
+                    color = Color(0xFFFFD54F),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Text(
+                text = formatTimeMs(durationMs),
+                color = Color.White.copy(alpha = 0.78f),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
     }
 }
 
@@ -174,12 +293,8 @@ fun PlayerScreen(
     var currentPos by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(1L) }
 
-    // Biến Float trực tiếp cho Slider 120fps + chống kẹt tốc độ 2x
     var isDraggingSlider by remember { mutableStateOf(false) }
-    var sliderDragFloat by remember { mutableFloatStateOf(0f) }
-    var lastLivePreviewSeekMs by remember { mutableLongStateOf(0L) }
     var lastSeekCompletedTimeMs by remember { mutableLongStateOf(0L) }
-    var isTempSpeed2xActive by remember { mutableStateOf(false) }
 
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isLocked by remember { mutableStateOf(false) }
@@ -226,16 +341,16 @@ fun PlayerScreen(
         val vid = currentVideo
         if (uri != null && vid != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (_: Exception) {}
             val fileName = context.resolveUriFileName(uri)
-            loadedSubtitles = playerManager.attachExternalSubtitleToCurrent(vid, uri, fileName)
-            subtitlesEnabled = true
-            gestureHint = "💬 Đã nạp phụ đề: $fileName"
-            scope.launch { delay(1800); gestureHint = null }
+            scope.launch {
+                loadedSubtitles = playerManager.attachExternalSubtitleToCurrent(vid, uri, fileName)
+                subtitlesEnabled = true
+                gestureHint = "💬 Đã nạp phụ đề: $fileName"
+                delay(1600)
+                gestureHint = null
+            }
         }
     }
 
@@ -251,31 +366,40 @@ fun PlayerScreen(
         loopPointB = null
     }
 
-    fun persistPositionFor(vid: VideoItem?, pos: Long, dur: Long) {
-        if (vid == null) return
+    fun persistCurrentPosition() {
+        val vid = currentVideo ?: return
+        val pos = playerManager.getCurrentPosition()
+        val dur = playerManager.getDuration()
         val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
         CoroutineScope(Dispatchers.IO).launch {
             context.saveLastPosition(vid.id, posToSave)
         }
     }
 
-    fun persistCurrentPosition() {
-        persistPositionFor(currentVideo, playerManager.getCurrentPosition(), playerManager.getDuration())
+    fun toggleScreenOrientation() {
+        val act = activity ?: return
+        val isLandscape = act.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        act.requestedOrientation = if (isLandscape) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
     }
 
     fun triggerNextVideo() {
         if (effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1) {
             persistCurrentPosition()
             resetVideoTransformAndLoop()
-            val nextVid = effectivePlaylist[currentIndex + 1]
+            val nextIdx = currentIndex + 1
+            val nextVid = effectivePlaylist[nextIdx]
             scope.launch {
                 val savedPos = context.readLastPosition(nextVid.id)
-                playerManager.playNextInPlaylist(savedPos)
+                val (_, subs) = playerManager.playVideoAtIndex(nextIdx, savedPos)
                 currentVideo = nextVid
-                loadedSubtitles = playerManager.getSubtitlesForVideo(nextVid)
+                loadedSubtitles = subs
                 onVideoChanged(nextVid)
                 gestureHint = "⏭️ ${nextVid.displayName}"
-                delay(1500)
+                delay(1400)
                 if (gestureMode == GestureMode.NONE) gestureHint = null
             }
         }
@@ -285,15 +409,16 @@ fun PlayerScreen(
         if (effectivePlaylist.isNotEmpty() && currentIndex > 0) {
             persistCurrentPosition()
             resetVideoTransformAndLoop()
-            val prevVid = effectivePlaylist[currentIndex - 1]
+            val prevIdx = currentIndex - 1
+            val prevVid = effectivePlaylist[prevIdx]
             scope.launch {
                 val savedPos = context.readLastPosition(prevVid.id)
-                playerManager.playPreviousInPlaylist(savedPos)
+                val (_, subs) = playerManager.playVideoAtIndex(prevIdx, savedPos)
                 currentVideo = prevVid
-                loadedSubtitles = playerManager.getSubtitlesForVideo(prevVid)
+                loadedSubtitles = subs
                 onVideoChanged(prevVid)
                 gestureHint = "⏮️ ${prevVid.displayName}"
-                delay(1500)
+                delay(1400)
                 if (gestureMode == GestureMode.NONE) gestureHint = null
             }
         }
@@ -305,18 +430,12 @@ fun PlayerScreen(
         activeModal = ActiveModal.NONE
         gestureHint = "📸 Đang chụp khung hình gốc..."
         scope.launch {
-            val res = VideoSnapshotHelper.captureCurrentFrame(
-                context = context,
-                videoPath = vid?.path,
-                positionMs = pos,
-                videoTitle = vid?.title ?: "Video"
+            val res = VideoSnapshotHelper.captureCurrentFrame(context, vid?.path, pos, vid?.title ?: "Video")
+            gestureHint = res.fold(
+                onSuccess = { "✅ Đã lưu: $it" },
+                onFailure = { "⚠️ Lỗi: ${it.message}" }
             )
-            res.onSuccess { savedPath ->
-                gestureHint = "✅ Đã lưu ảnh: $savedPath"
-            }.onFailure { err ->
-                gestureHint = "⚠️ Lỗi chụp ảnh: ${err.message}"
-            }
-            delay(2200)
+            delay(2000)
             if (gestureMode == GestureMode.NONE) gestureHint = null
         }
     }
@@ -329,15 +448,15 @@ fun PlayerScreen(
                 resetZoom()
                 showControls = false
                 activeModal = ActiveModal.NONE
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-                act.enterPictureInPictureMode(params)
+                act.enterPictureInPictureMode(
+                    PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
+                )
                 isInPipMode = true
             } catch (_: Exception) {}
         }
     }
 
+    // Giữ sáng màn hình & Ẩn thanh thông báo (Không tự ép xoay màn hình khi mới mở để chống khựng!)
     DisposableEffect(activity) {
         val window = activity?.window
         if (window != null) {
@@ -368,36 +487,21 @@ fun PlayerScreen(
             val subs = playerManager.playPlaylist(effectivePlaylist, startIdx, savedPos)
             loadedSubtitles = subs
             currentPos = savedPos
-            delay(300)
+            delay(250)
             eqBands = playerManager.getEqualizerBands()
-            if (subs.isNotEmpty()) {
-                gestureHint = "💬 Tự động nạp phụ đề: ${subs.first().name}"
-                scope.launch { delay(1800); if (gestureMode == GestureMode.NONE) gestureHint = null }
-            }
         } else if (!streamUrl.isNullOrEmpty()) {
             playerManager.playStream(streamUrl)
             loadedSubtitles = emptyList()
         }
     }
 
+    // Chỉ lắng nghe STATE_ENDED để tự chuyển tập tiếp theo (Đã gỡ bỏ hoàn toàn tự động xoay màn hình!)
     DisposableEffect(playerManager, effectivePlaylist) {
         val listener = object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.width > 0 && videoSize.height > 0) {
-                    if (videoSize.width > videoSize.height) {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    } else {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    }
-                }
-            }
-
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
                     currentVideo?.let { finishedVid ->
-                        CoroutineScope(Dispatchers.IO).launch {
-                            context.saveLastPosition(finishedVid.id, 0L)
-                        }
+                        CoroutineScope(Dispatchers.IO).launch { context.saveLastPosition(finishedVid.id, 0L) }
                     }
                     val nextIdx = playerManager.currentIndex + 1
                     if (nextIdx in effectivePlaylist.indices) {
@@ -405,12 +509,12 @@ fun PlayerScreen(
                         resetVideoTransformAndLoop()
                         scope.launch {
                             val savedPos = context.readLastPosition(nextVid.id)
-                            playerManager.playVideoAtIndex(nextIdx, savedPos)
+                            val (_, subs) = playerManager.playVideoAtIndex(nextIdx, savedPos)
                             currentVideo = nextVid
-                            loadedSubtitles = playerManager.getSubtitlesForVideo(nextVid)
+                            loadedSubtitles = subs
                             onVideoChanged(nextVid)
                             gestureHint = "⏭️ Tự phát tiếp: ${nextVid.displayName}"
-                            delay(1800)
+                            delay(1600)
                             if (gestureMode == GestureMode.NONE) gestureHint = null
                         }
                     }
@@ -418,9 +522,7 @@ fun PlayerScreen(
             }
         }
         playerManager.player.addListener(listener)
-        onDispose {
-            playerManager.player.removeListener(listener)
-        }
+        onDispose { playerManager.player.removeListener(listener) }
     }
 
     BackHandler {
@@ -432,7 +534,7 @@ fun PlayerScreen(
         }
     }
 
-    // Tự động ẩn thanh công cụ sau 3.5 giây khi video đang phát và người dùng không chạm tay
+    // Tự ẩn thanh công cụ sau 3.5 giây
     LaunchedEffect(showControls, isPlaying, isDraggingSlider, activeModal, showSpeedMenu, gestureMode) {
         if (showControls && isPlaying && !isDraggingSlider && activeModal == ActiveModal.NONE && !showSpeedMenu && gestureMode == GestureMode.NONE) {
             delay(3500)
@@ -456,7 +558,6 @@ fun PlayerScreen(
         }
     }
 
-    // Vòng lặp cập nhật vị trí: Chờ 450ms sau khi thả thanh trượt mới đồng bộ lại để tránh giật ngược kim
     LaunchedEffect(Unit) {
         var tick = 0
         while (true) {
@@ -466,7 +567,7 @@ fun PlayerScreen(
             }
             val pos = playerManager.getCurrentPosition()
             val now = System.currentTimeMillis()
-            if (!isDraggingSlider && gestureMode != GestureMode.SEEK && (now - lastSeekCompletedTimeMs > 450L)) {
+            if (!isDraggingSlider && gestureMode != GestureMode.SEEK && (now - lastSeekCompletedTimeMs > 500L)) {
                 currentPos = pos
             }
             duration = playerManager.getDuration().coerceAtLeast(1L)
@@ -474,7 +575,7 @@ fun PlayerScreen(
             val ptA = loopPointA
             val ptB = loopPointB
             if (ptA != null && ptB != null && ptB > ptA + 500L && pos >= ptB) {
-                playerManager.seekTo(ptA)
+                playerManager.seekToFast(ptA)
                 if (!isDraggingSlider) currentPos = ptA
             }
 
@@ -502,9 +603,7 @@ fun PlayerScreen(
                 Lifecycle.Event.ON_PAUSE -> persistCurrentPosition()
                 Lifecycle.Event.ON_STOP -> {
                     persistCurrentPosition()
-                    if (!inPip && !backgroundAudioEnabled) {
-                        playerManager.pause()
-                    }
+                    if (!inPip && !backgroundAudioEnabled) playerManager.pause()
                 }
                 else -> {}
             }
@@ -539,11 +638,8 @@ fun PlayerScreen(
                 view.resizeMode = resizeMode
 
                 val colorPaint = buildVideoColorPaint(videoSaturation, videoContrast, videoBrightnessFilter)
-                if (colorPaint != null) {
-                    view.setLayerType(View.LAYER_TYPE_HARDWARE, colorPaint)
-                } else {
-                    view.setLayerType(View.LAYER_TYPE_NONE, null)
-                }
+                if (colorPaint != null) view.setLayerType(View.LAYER_TYPE_HARDWARE, colorPaint)
+                else view.setLayerType(View.LAYER_TYPE_NONE, null)
 
                 view.subtitleView?.apply {
                     setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
@@ -571,47 +667,35 @@ fun PlayerScreen(
                     if (isInPipMode) return@pointerInput
                     detectTapGestures(
                         onTap = {
-                            if (activeModal != ActiveModal.NONE) {
-                                activeModal = ActiveModal.NONE
-                            } else {
-                                showControls = !showControls
-                            }
+                            if (activeModal != ActiveModal.NONE) activeModal = ActiveModal.NONE
+                            else showControls = !showControls
                         },
                         onDoubleTap = { offset ->
                             if (!isLocked) {
                                 val width = size.width
                                 val cur = playerManager.getCurrentPosition()
                                 val dur = playerManager.getDuration().coerceAtLeast(1L)
-                                if (offset.x < width / 2f) {
-                                    val next = (cur - 10_000L).coerceAtLeast(0L)
-                                    playerManager.seekTo(next)
-                                    currentPos = next
-                                    lastSeekCompletedTimeMs = System.currentTimeMillis()
-                                    gestureHint = "⏪ -10 giây (${formatTimeMs(next)})"
+                                val next = if (offset.x < width / 2f) {
+                                    (cur - 10_000L).coerceAtLeast(0L)
                                 } else {
-                                    val next = (cur + 10_000L).coerceAtMost(dur)
-                                    playerManager.seekTo(next)
-                                    currentPos = next
-                                    lastSeekCompletedTimeMs = System.currentTimeMillis()
-                                    gestureHint = "⏩ +10 giây (${formatTimeMs(next)})"
+                                    (cur + 10_000L).coerceAtMost(dur)
                                 }
+                                playerManager.seekToFast(next)
+                                currentPos = next
+                                lastSeekCompletedTimeMs = System.currentTimeMillis()
+                                gestureHint = if (offset.x < width / 2f) "⏪ -10s (${formatTimeMs(next)})" else "⏩ +10s (${formatTimeMs(next)})"
                                 persistCurrentPosition()
-                                scope.launch { delay(800); if (gestureMode == GestureMode.NONE) gestureHint = null }
+                                scope.launch { delay(750); if (gestureMode == GestureMode.NONE) gestureHint = null }
                             }
-                        },
+                        }
                     )
                 }
                 .pointerInput(isLocked, isInPipMode) {
                     if (isInPipMode) return@pointerInput
                     awaitEachGesture {
-                        // requireUnconsumed = true để KHÔNG BAO GIỜ cướp thao tác khi ngón tay đang kéo thanh Slider của HUD!
                         val firstDown = awaitFirstDown(requireUnconsumed = true)
                         if (isLocked) return@awaitEachGesture
-
-                        // Nếu chạm vào vùng đáy màn hình khi thanh HUD đang mở thì bỏ qua cử chỉ vuốt màn hình
-                        if (showControls && firstDown.position.y > size.height * 0.72f) {
-                            return@awaitEachGesture
-                        }
+                        if (showControls && firstDown.position.y > size.height * 0.70f) return@awaitEachGesture
 
                         gestureMode = GestureMode.NONE
                         val startTouchX = firstDown.position.x
@@ -627,11 +711,7 @@ fun PlayerScreen(
                         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                         val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                         val basePercent = (curVol.toFloat() / maxVol) * 100f
-                        val initialCombinedVol = if (basePercent >= 99f && audioBoostPercent > 0) {
-                            100f + audioBoostPercent
-                        } else {
-                            basePercent
-                        }
+                        val initialCombinedVol = if (basePercent >= 99f && audioBoostPercent > 0) 100f + audioBoostPercent else basePercent
 
                         do {
                             val event = awaitPointerEvent()
@@ -654,7 +734,7 @@ fun PlayerScreen(
                                         zoomOffsetX = 0f
                                         zoomOffsetY = 0f
                                     }
-                                    gestureHint = "🔍 Thu phóng: ${(zoomScale * 100).roundToInt()}%"
+                                    gestureHint = "🔍 ${(zoomScale * 100).roundToInt()}%"
                                 }
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             } else if (pressedCount == 1 && gestureMode != GestureMode.ZOOM) {
@@ -665,7 +745,6 @@ fun PlayerScreen(
                                 if (dragX != 0f || dragY != 0f) {
                                     val screenWidth = size.width.toFloat().coerceAtLeast(1f)
                                     val screenHeight = size.height.toFloat().coerceAtLeast(1f)
-
                                     totalDragX += dragX
                                     totalDragY += dragY
 
@@ -692,19 +771,16 @@ fun PlayerScreen(
                                             currentPos = targetSeekPos
                                             val diffSec = (targetSeekPos - initialSeekPos) / 1000
                                             val sign = if (diffSec >= 0) "+${diffSec}s" else "${diffSec}s"
-                                            gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} / ${formatTimeMs(dur)} ($sign)"
+                                            gestureHint = "⏱️ ${formatTimeMs(targetSeekPos)} ($sign)"
                                         }
                                         GestureMode.BRIGHTNESS -> {
                                             change.consume()
-                                            val act = activity
-                                            if (act != null) {
-                                                val window = act.window
-                                                val attrs = window.attributes
-                                                val deltaBright = -totalDragY / (screenHeight * 0.75f)
-                                                val newBright = (initialBrightness + deltaBright).coerceIn(0.02f, 1.0f)
+                                            activity?.let { act ->
+                                                val attrs = act.window.attributes
+                                                val newBright = (initialBrightness - totalDragY / (screenHeight * 0.75f)).coerceIn(0.02f, 1.0f)
                                                 attrs.screenBrightness = newBright
-                                                window.attributes = attrs
-                                                gestureHint = "☀️ Độ sáng: ${(newBright * 100).roundToInt()}%"
+                                                act.window.attributes = attrs
+                                                gestureHint = "☀️ ${(newBright * 100).roundToInt()}%"
                                             }
                                         }
                                         GestureMode.VOLUME -> {
@@ -717,13 +793,13 @@ fun PlayerScreen(
                                                 playerManager.setAudioBoostPercent(0)
                                                 val targetSysVol = ((newCombined / 100f) * maxVol).roundToInt().coerceIn(0, maxVol)
                                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetSysVol, 0)
-                                                gestureHint = "🔊 Âm lượng: ${newCombined.roundToInt()}%"
+                                                gestureHint = "🔊 ${newCombined.roundToInt()}%"
                                             } else {
                                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
                                                 val boost = (newCombined - 100f).roundToInt().coerceIn(1, 100)
                                                 audioBoostPercent = boost
                                                 playerManager.setAudioBoostPercent(boost)
-                                                gestureHint = "🚀 Khuếch đại: ${100 + boost}% (+${(boost * 0.15f).toInt()}dB)"
+                                                gestureHint = "🚀 Boost ${100 + boost}%"
                                             }
                                         }
                                         else -> {}
@@ -732,14 +808,9 @@ fun PlayerScreen(
                             }
                         } while (event.changes.any { it.pressed })
 
-                        if (isTempSpeed2xActive) {
-                            isTempSpeed2xActive = false
-                            playerManager.setPlaybackSpeed(playbackSpeed)
-                        }
                         if (gestureMode == GestureMode.SEEK) {
-                            playerManager.seekTo(targetSeekPos)
+                            playerManager.seekToFast(targetSeekPos)
                             currentPos = targetSeekPos
-                            sliderDragFloat = targetSeekPos.toFloat()
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             persistCurrentPosition()
                         }
@@ -749,15 +820,12 @@ fun PlayerScreen(
                 }
         )
 
-        // ================= NERD STATS HUD (GÓC TRÊN TRÁI) =================
+        // Nerd Stats HUD
         if (showNerdStats && !isInPipMode) {
             nerdStats?.let { st ->
                 LiquidGlassCard(
                     cornerRadius = 18.dp,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(16.dp)
-                        .widthIn(max = 260.dp)
+                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp).widthIn(max = 260.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Row(
@@ -768,27 +836,18 @@ fun PlayerScreen(
                             Text("📊 NERD STATS", color = palette.primaryGlow, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                             Text("✕", color = Color.White, modifier = Modifier.padding(2.dp).clickable { showNerdStats = false })
                         }
-                        Text("• Độ phân giải: ${st.resolution} (${st.frameRate})", color = Color.White, fontSize = 11.sp)
-                        Text("• Giải mã Video: ${st.videoCodec} • ${st.videoBitrate}", color = Color.White, fontSize = 11.sp)
-                        Text("• Kênh Audio: ${st.audioCodec}", color = Color.White, fontSize = 11.sp)
-                        Text("• Dropped Frames: ${st.droppedFrames}", color = if (st.droppedFrames > 5) Color(0xFFFF5C8A) else Color(0xFF80FFDB), fontSize = 11.sp)
+                        Text("• ${st.resolution} (${st.frameRate})", color = Color.White, fontSize = 11.sp)
+                        Text("• Video: ${st.videoCodec} • ${st.videoBitrate}", color = Color.White, fontSize = 11.sp)
+                        Text("• Audio: ${st.audioCodec} • Drop: ${st.droppedFrames}", color = Color.White, fontSize = 11.sp)
                     }
                 }
             }
         }
 
-        // Hiển thị thông báo Gesture hoặc Thời gian đang kéo thanh trượt (Scrubbing Preview)
+        // Gesture Hint
         if (!isInPipMode) {
-            val activeCenterHint = if (false) {
-                "⏱️ ${formatTimeMs(sliderDragFloat.toLong())} / ${formatTimeMs(duration)}"
-            } else {
-                gestureHint
-            }
-            activeCenterHint?.let { hint ->
-                LiquidGlassPill(
-                    active = true,
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
+            gestureHint?.let { hint ->
+                LiquidGlassPill(active = true, modifier = Modifier.align(Alignment.Center)) {
                     Text(
                         text = hint,
                         color = Color.White,
@@ -800,7 +859,7 @@ fun PlayerScreen(
             }
         }
 
-        // ================= MENU MỞ RỘNG 1: PRO STUDIO =================
+        // ================= BẢNG MỞ RỘNG 1: PRO STUDIO =================
         if (activeModal == ActiveModal.STUDIO && !isInPipMode) {
             LiquidGlassCard(
                 cornerRadius = 26.dp,
@@ -813,16 +872,10 @@ fun PlayerScreen(
                     .fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = palette.primaryGlow)
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -830,26 +883,20 @@ fun PlayerScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
                         LiquidGlassPill(onClick = { activeModal = ActiveModal.NONE }) {
-                            Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LiquidGlassPill(
                             active = studioTabIndex == 0,
                             onClick = { studioTabIndex = 0 },
                             modifier = Modifier.weight(1f)
-                        ) {
-                            Text("🎬 Hình Ảnh & A-B", color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                        }
+                        ) { Text("🎬 Hình Ảnh & A-B", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+
                         LiquidGlassPill(
                             active = studioTabIndex == 1,
                             onClick = {
@@ -857,9 +904,7 @@ fun PlayerScreen(
                                 studioTabIndex = 1
                             },
                             modifier = Modifier.weight(1f)
-                        ) {
-                            Text("🎵 Âm Thanh & EQ", color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                        }
+                        ) { Text("🎵 Âm Thanh & EQ", color = Color.White, style = MaterialTheme.typography.labelMedium) }
                     }
 
                     if (studioTabIndex == 0) {
@@ -873,9 +918,8 @@ fun PlayerScreen(
                                     loopPointA = playerManager.getCurrentPosition()
                                     if (loopPointB != null && loopPointB!! <= loopPointA!!) loopPointB = null
                                 }
-                            ) {
-                                Text(if (loopPointA != null) "A: ${formatTimeMs(loopPointA!!)}" else "Đặt điểm A", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text(if (loopPointA != null) "A: ${formatTimeMs(loopPointA!!)}" else "Đặt điểm A", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+
                             LiquidGlassPill(
                                 active = loopPointB != null,
                                 onClick = {
@@ -883,9 +927,8 @@ fun PlayerScreen(
                                     if (loopPointA == null) loopPointA = 0L
                                     if (now > loopPointA!! + 500L) loopPointB = now
                                 }
-                            ) {
-                                Text(if (loopPointB != null) "B: ${formatTimeMs(loopPointB!!)}" else "Đặt điểm B", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text(if (loopPointB != null) "B: ${formatTimeMs(loopPointB!!)}" else "Đặt điểm B", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+
                             if (loopPointA != null || loopPointB != null) {
                                 LiquidGlassPill(onClick = { loopPointA = null; loopPointB = null }) {
                                     Text("Xóa A-B", color = Color(0xFFFF5C8A), style = MaterialTheme.typography.labelSmall)
@@ -895,29 +938,21 @@ fun PlayerScreen(
                                 playerManager.stepFrame(forward = false)
                                 isPlaying = false
                                 currentPos = playerManager.getCurrentPosition()
-                            }) {
-                                Text("⏮ -1 Frame", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            }) { Text("⏮ -1 Frame", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+
                             LiquidGlassPill(onClick = {
                                 playerManager.stepFrame(forward = true)
                                 isPlaying = false
                                 currentPos = playerManager.getCurrentPosition()
-                            }) {
-                                Text("+1 Frame ⏭", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            }) { Text("+1 Frame ⏭", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                         }
 
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            LiquidGlassPill(
-                                active = isMirrorFlipped,
-                                onClick = { isMirrorFlipped = !isMirrorFlipped }
-                            ) {
-                                Icon(Icons.Default.Flip, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(if (isMirrorFlipped) "Đang Lật Gương ✓" else "Lật Gương", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            LiquidGlassPill(active = isMirrorFlipped, onClick = { isMirrorFlipped = !isMirrorFlipped }) {
+                                Text(if (isMirrorFlipped) "Lật Gương: BẬT" else "Lật Gương", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                             LiquidGlassPill(
                                 active = showNerdStats,
@@ -925,16 +960,13 @@ fun PlayerScreen(
                                     showNerdStats = !showNerdStats
                                     if (showNerdStats) nerdStats = playerManager.getNerdStats()
                                 }
-                            ) {
-                                Text("📊 Nerd Stats", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text("📊 Nerd Stats", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+
                             LiquidGlassPill(onClick = {
                                 videoSaturation = 1.0f
                                 videoContrast = 1.0f
                                 videoBrightnessFilter = 0f
-                            }) {
-                                Text("Màu gốc", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            }) { Text("Màu gốc", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -971,9 +1003,7 @@ fun PlayerScreen(
                                     audioBoostPercent = if (audioBoostPercent == 0) 50 else if (audioBoostPercent == 50) 100 else 0
                                     playerManager.setAudioBoostPercent(audioBoostPercent)
                                 }
-                            ) {
-                                Text("🚀 Boost: ${100 + audioBoostPercent}%", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text("🚀 Boost: ${100 + audioBoostPercent}%", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                             val presets = listOf(
                                 Triple("Mặc định", listOf(0f, 0f, 0f, 0f, 0f), 0),
@@ -990,9 +1020,7 @@ fun PlayerScreen(
                                         bassBoostPercent = bass
                                         eqBands = playerManager.getEqualizerBands()
                                     }
-                                ) {
-                                    Text(name, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                                }
+                                ) { Text(name, color = Color.White, style = MaterialTheme.typography.labelSmall) }
                             }
                         }
 
@@ -1033,7 +1061,7 @@ fun PlayerScreen(
             }
         }
 
-        // ================= MENU MỞ RỘNG 2: TIỆN ÍCH & PHỤ ĐỀ (NÚT "☰ THÊM") =================
+        // ================= BẢNG MỞ RỘNG 2: TIỆN ÍCH & PHỤ ĐỀ (NÚT "☰ THÊM") =================
         if (activeModal == ActiveModal.TOOLS && !isInPipMode) {
             LiquidGlassCard(
                 cornerRadius = 26.dp,
@@ -1042,20 +1070,14 @@ fun PlayerScreen(
                     .align(Alignment.Center)
                     .padding(horizontal = 16.dp, vertical = 12.dp)
                     .widthIn(max = 500.dp)
-                    .heightIn(max = 360.dp)
+                    .heightIn(max = 350.dp)
                     .fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Tune, contentDescription = null, tint = palette.primaryGlow)
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -1070,34 +1092,20 @@ fun PlayerScreen(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = { takeVideoSnapshot() },
-                            modifier = Modifier.weight(1f)
-                        ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LiquidGlassPill(onClick = { takeVideoSnapshot() }, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.PhotoCamera, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Chụp ảnh", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = { enterPip() },
-                            modifier = Modifier.weight(1f)
-                        ) {
+                        LiquidGlassPill(onClick = { enterPip() }, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Cửa sổ PiP", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LiquidGlassPill(
                             active = backgroundAudioEnabled,
                             onClick = { backgroundAudioEnabled = !backgroundAudioEnabled },
@@ -1108,7 +1116,6 @@ fun PlayerScreen(
                             Text(if (backgroundAudioEnabled) "Nghe nền: BẬT" else "Nghe nền: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                         LiquidGlassPill(
-                            active = false,
                             onClick = {
                                 activeModal = ActiveModal.NONE
                                 isLocked = true
@@ -1121,10 +1128,7 @@ fun PlayerScreen(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LiquidGlassPill(
                             active = resizeMode != AspectRatioFrameLayout.RESIZE_MODE_FIT,
                             onClick = {
@@ -1136,30 +1140,12 @@ fun PlayerScreen(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.AspectRatio, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
                             val modeName = when (resizeMode) {
                                 AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Cắt tràn"
                                 AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Kéo giãn"
                                 else -> "Vừa khung"
                             }
-                            Text("Khung: $modeName", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = {
-                                val curOrient = activity?.requestedOrientation
-                                if (curOrient == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
-                                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                } else {
-                                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.ScreenRotation, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Xoay ngang/dọc", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text("Khung hình: $modeName", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
@@ -1170,10 +1156,7 @@ fun PlayerScreen(
                     ) {
                         Text("💤 Hẹn giờ:", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         listOf(0, 15, 30, 45, 60).forEach { mins ->
-                            LiquidGlassPill(
-                                active = sleepTimerMinutes == mins,
-                                onClick = { sleepTimerMinutes = mins }
-                            ) {
+                            LiquidGlassPill(active = sleepTimerMinutes == mins, onClick = { sleepTimerMinutes = mins }) {
                                 Text(if (mins == 0) "Tắt" else "${mins}p", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                         }
@@ -1190,18 +1173,14 @@ fun PlayerScreen(
                                 subtitlesEnabled = !subtitlesEnabled
                                 playerManager.toggleSubtitles(subtitlesEnabled)
                             }
-                        ) {
-                            Text(if (subtitlesEnabled) "💬 Phụ đề: BẬT" else "💬 Phụ đề: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
+                        ) { Text(if (subtitlesEnabled) "💬 Phụ đề: BẬT" else "💬 Phụ đề: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+
                         LiquidGlassPill(
-                            active = false,
                             onClick = {
                                 activeModal = ActiveModal.NONE
                                 subtitlePickerLauncher.launch(arrayOf("*/*"))
                             }
-                        ) {
-                            Text("📂 Mở file .SRT/.ASS", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
+                        ) { Text("📂 Mở file .SRT/.ASS", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                     }
 
                     Row(
@@ -1209,20 +1188,14 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Cỡ & Màu phụ đề:", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("Cỡ & Màu:", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         listOf(16f to "Nhỏ", 20f to "Vừa", 26f to "Lớn", 32f to "To").forEach { (sz, lbl) ->
-                            LiquidGlassPill(
-                                active = subtitleSizeSp == sz,
-                                onClick = { subtitleSizeSp = sz }
-                            ) {
+                            LiquidGlassPill(active = subtitleSizeSp == sz, onClick = { subtitleSizeSp = sz }) {
                                 Text(lbl, color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         listOf(Color.White to "Trắng", Color(0xFFFFEA00) to "Vàng", Color(0xFF00F0FF) to "Cyan").forEach { (col, name) ->
-                            LiquidGlassPill(
-                                active = subtitleTextColor == col,
-                                onClick = { subtitleTextColor = col }
-                            ) {
+                            LiquidGlassPill(active = subtitleTextColor == col, onClick = { subtitleTextColor = col }) {
                                 Text(name, color = col, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -1243,7 +1216,7 @@ fun PlayerScreen(
             }
         }
 
-        // ================= THANH ĐIỀU KHIỂN CHÍNH (KHÔNG BỊ CẮT NÚT Ở MÀN HÌNH DỌC & KÉO SLIDER KHÔNG ĐƠ) =================
+        // ================= THANH ĐIỀU KHIỂN CHÍNH (CÓ NÚT XOAY RA NGOÀI & THANH TUA CANVAS 120HZ) =================
         if (showControls && !isLocked && !isInPipMode && activeModal == ActiveModal.NONE) {
             LiquidGlassCard(
                 cornerRadius = 28.dp,
@@ -1252,17 +1225,11 @@ fun PlayerScreen(
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 12.dp, vertical = 12.dp)
                     .fillMaxWidth()
-                    // Chặn mọi sự kiện chạm trong vùng HUD lọt xuống lớp cử chỉ vuốt của PlayerView bên dưới!
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = {})
-                    }
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    // HÀNG 1: NÚT QUAY LẠI (←) + TIÊU ĐỀ VIDEO + SỐ TẬP
+                    // HÀNG 1: NÚT QUAY LẠI (←) + TIÊU ĐỀ + SỐ TẬP
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1288,86 +1255,60 @@ fun PlayerScreen(
                                 active = true,
                                 onClick = { loopPointA = null; loopPointB = null },
                                 modifier = Modifier.padding(start = 4.dp)
-                            ) {
-                                Text("🔁 A-B ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text("🔁 A-B ✕", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                         }
                         if (zoomScale > 1.01f) {
                             LiquidGlassPill(
                                 active = true,
                                 onClick = { resetZoom() },
                                 modifier = Modifier.padding(start = 4.dp)
-                            ) {
-                                Text("🔍 ${(zoomScale * 100).roundToInt()}% ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
+                            ) { Text("🔍 ${(zoomScale * 100).roundToInt()}% ✕", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                         }
                         if (effectivePlaylist.size > 1 && currentIndex >= 0) {
-                            LiquidGlassPill(
-                                active = false,
-                                modifier = Modifier.padding(start = 6.dp)
-                            ) {
-                                Text(
-                                    "${currentIndex + 1}/${effectivePlaylist.size}",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
+                            LiquidGlassPill(active = false, modifier = Modifier.padding(start = 6.dp)) {
+                                Text("${currentIndex + 1}/${effectivePlaylist.size}", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
 
-                                        // HÀNG 2: THANH TUA THỜI GIAN ĐỘC LẬP 120HZ (CÔ LẬP RECOMPOSITION & KHÔNG GỌI SEEK KHI ĐANG KÉO)
-                    SmoothVideoSeekBar(
+                    // HÀNG 2: THANH TUA CANVAS 120HZ (BÁM DÍNH NGÓN TAY 0MS DELAY)
+                    DirectCanvasSeekBar(
                         currentPosMs = currentPos,
                         durationMs = duration,
                         sleepRemainingSec = sleepRemainingSec,
                         activeColor = palette.primaryGlow,
-                        onDragStateChanged = { dragging ->
-                            isDraggingSlider = dragging
-                        },
-                        onSeekFinished = { targetMs ->
+                        onDragStart = { isDraggingSlider = true },
+                        onDragEnd = { targetMs ->
                             currentPos = targetMs
                             lastSeekCompletedTimeMs = System.currentTimeMillis()
                             isDraggingSlider = false
-                            playerManager.seekTo(targetMs)
+                            playerManager.seekToFast(targetMs)
                             persistCurrentPosition()
                         }
                     )
 
-                    Spacer(modifier = Modifier.height(4.dp))
-// HÀNG 3: CÁC NÚT CHỨC NĂNG CÂN ĐỐI VỪA KHÍT MÀN HÌNH DỌC (KHÔNG BAO GIỜ BỊ CẮT NÚT CUỐI)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // HÀNG 3: CÁC NÚT CHÍNH (CÓ NÚT XOAY MÀN HÌNH RA NGOÀI, VỪA KHÍT MÀN HÌNH DỌC)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 1. Nút Tốc độ phát (1.0x)
+                        // 1. Tốc độ phát (1.0x)
                         Box {
                             LiquidGlassPill(
                                 active = playbackSpeed != 1.0f,
                                 onClick = { showSpeedMenu = true }
                             ) {
-                                Text(
-                                    "${playbackSpeed}x",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
+                                Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                             }
-                            DropdownMenu(
-                                expanded = showSpeedMenu,
-                                onDismissRequest = { showSpeedMenu = false }
-                            ) {
-                                val speedOptions = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f)
-                                speedOptions.forEach { spd ->
+                            DropdownMenu(expanded = showSpeedMenu, onDismissRequest = { showSpeedMenu = false }) {
+                                listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f).forEach { spd ->
                                     DropdownMenuItem(
                                         text = {
                                             val label = if (spd == 1.0f) "1.0x (Chuẩn)" else "${spd}x"
-                                            Text(
-                                                text = if (playbackSpeed == spd) "✓ $label" else "    $label",
-                                                fontWeight = if (playbackSpeed == spd) FontWeight.Bold else FontWeight.Normal
-                                            )
+                                            Text(if (playbackSpeed == spd) "✓ $label" else "    $label")
                                         },
                                         onClick = {
                                             playbackSpeed = spd
@@ -1379,39 +1320,30 @@ fun PlayerScreen(
                             }
                         }
 
-                        // 2. Cụm 3 nút Trung tâm: Bài trước (⏮) - Play/Pause (⏯) - Bài tiếp (⏭)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
+                        // 2. Cụm điều hướng phát: Bài trước - Play/Pause - Bài tiếp
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = { triggerPreviousVideo() },
                                 enabled = currentIndex > 0,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     Icons.Default.SkipPrevious,
-                                    contentDescription = "Video trước",
+                                    contentDescription = "Trước",
                                     tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
                                 )
                             }
 
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(42.dp)
                                     .clip(CircleShape)
                                     .drawWithCache {
                                         val r = size.width / 2f
                                         val fill = Brush.linearGradient(
-                                            colors = listOf(
-                                                Color.White.copy(alpha = 0.45f),
-                                                palette.primaryGlow.copy(alpha = 0.75f),
-                                                palette.secondaryGlow.copy(alpha = 0.75f)
-                                            )
+                                            listOf(Color.White.copy(alpha = 0.45f), palette.primaryGlow.copy(alpha = 0.75f), palette.secondaryGlow.copy(alpha = 0.75f))
                                         )
-                                        val rim = Brush.linearGradient(
-                                            colors = listOf(Color.White, Color.White.copy(alpha = 0.3f))
-                                        )
+                                        val rim = Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.3f)))
                                         onDrawBehind {
                                             drawCircle(brush = fill, radius = r)
                                             drawCircle(brush = rim, radius = r - 1.dp.toPx(), style = Stroke(width = 1.4.dp.toPx()))
@@ -1428,132 +1360,63 @@ fun PlayerScreen(
                                     }
                                     isPlaying = !isPlaying
                                 }) {
-                                    Icon(
-                                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Phát/Tạm dừng",
-                                        tint = Color.White
-                                    )
+                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
                                 }
                             }
 
                             IconButton(
                                 onClick = { triggerNextVideo() },
                                 enabled = effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     Icons.Default.SkipNext,
-                                    contentDescription = "Video tiếp theo",
+                                    contentDescription = "Tiếp",
                                     tint = if (effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1) Color.White else Color.White.copy(alpha = 0.3f)
                                 )
                             }
                         }
 
-                        // 3. Cụm 2 nút Menu mở rộng bên phải: "✨ Studio" & "☰ Thêm" (Có chữ rõ ràng, không bị cắt!)
+                        // 3. Nút Xoay Màn Hình đặt ngay bên ngoài + Nút Studio + Nút Thêm
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
+                            // Nút Xoay ngang/dọc trực tiếp ngoài thanh công cụ
+                            IconButton(
+                                onClick = { toggleScreenOrientation() },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.14f))
+                            ) {
+                                Icon(
+                                    Icons.Default.ScreenRotation,
+                                    contentDescription = "Xoay màn hình",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
                             LiquidGlassPill(
                                 active = loopPointA != null || isMirrorFlipped || audioBoostPercent > 0 || bassBoostPercent > 0 || abs(videoSaturation - 1f) > 0.05f,
                                 onClick = { activeModal = ActiveModal.STUDIO }
                             ) {
                                 Icon(Icons.Default.AutoAwesome, contentDescription = "Studio", tint = Color.White, modifier = Modifier.size(14.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("Studio", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                Text("Studio", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                             }
 
                             LiquidGlassPill(
                                 active = backgroundAudioEnabled || sleepTimerMinutes > 0,
                                 onClick = { activeModal = ActiveModal.TOOLS }
                             ) {
-                                Icon(Icons.Default.Tune, contentDescription = "Thêm tiện ích", tint = Color.White, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(3.dp))
-                                Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                Icon(Icons.Default.Tune, contentDescription = "Thêm", tint = Color.White, modifier = Modifier.size(15.dp))
                             }
                         }
                     }
                 }
             }
-        }
-    }
-}
-@Composable
-private fun SmoothVideoSeekBar(
-    currentPosMs: Long,
-    durationMs: Long,
-    sleepRemainingSec: Int,
-    activeColor: Color,
-    onDragStateChanged: (Boolean) -> Unit,
-    onSeekFinished: (Long) -> Unit
-) {
-    val safeDuration = durationMs.coerceAtLeast(1L).toFloat()
-    var isDragging by remember { mutableStateOf(false) }
-    var dragFraction by remember { mutableFloatStateOf(0f) }
-
-    // Khi không kéo, đồng bộ nhẹ nhàng với vị trí thực của video
-    val currentFraction = if (isDragging) {
-        dragFraction
-    } else {
-        (currentPosMs.toFloat() / safeDuration).coerceIn(0f, 1f)
-    }
-
-    val displayedMs = if (isDragging) {
-        (dragFraction * safeDuration).toLong()
-    } else {
-        currentPosMs
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Slider(
-            value = currentFraction,
-            onValueChange = { newFraction ->
-                if (!isDragging) {
-                    isDragging = true
-                    onDragStateChanged(true)
-                }
-                dragFraction = newFraction.coerceIn(0f, 1f)
-            },
-            onValueChangeFinished = {
-                val targetMs = (dragFraction * safeDuration).toLong().coerceIn(0L, durationMs.coerceAtLeast(1L))
-                isDragging = false
-                onDragStateChanged(false)
-                onSeekFinished(targetMs)
-            },
-            valueRange = 0f..1f,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = activeColor,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (isDragging) "⏱️ ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
-                color = if (isDragging) activeColor else Color.White,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
-            )
-            if (sleepRemainingSec > 0) {
-                Text(
-                    text = "💤 ${formatTimeMs(sleepRemainingSec * 1000L)}",
-                    color = Color(0xFFFFD54F),
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-            Text(
-                text = formatTimeMs(durationMs),
-                color = Color.White.copy(alpha = 0.78f),
-                style = MaterialTheme.typography.labelMedium
-            )
         }
     }
 }
