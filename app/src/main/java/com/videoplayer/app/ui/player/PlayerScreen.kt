@@ -64,6 +64,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -73,6 +74,7 @@ import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.ExternalSubtitleItem
 import com.videoplayer.app.media.PlayerManager
 import com.videoplayer.app.media.VideoNerdStats
+import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
@@ -457,10 +459,14 @@ fun PlayerScreen(
     }
 
     // Giữ sáng màn hình & Ẩn thanh thông báo (Không tự ép xoay màn hình khi mới mở để chống khựng!)
-    DisposableEffect(activity) {
+    DisposableEffect(activity, currentVideo) {
         val window = activity?.window
+        val isVaultVideo = currentVideo?.path?.startsWith("vault://") == true
         if (window != null) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (isVaultVideo) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
             WindowCompat.setDecorFitsSystemWindows(window, false)
             val controller = WindowInsetsControllerCompat(window, window.decorView)
             controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -895,7 +901,7 @@ fun PlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = palette.primaryGlow)
+                        Icon(AppIcons.AutoAwesome, contentDescription = null, tint = palette.primaryGlow)
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = "Pro Studio",
@@ -1097,7 +1103,7 @@ fun PlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Tune, contentDescription = null, tint = palette.primaryGlow)
+                        Icon(AppIcons.Tune, contentDescription = null, tint = palette.primaryGlow)
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = "Tiện Ích & Phụ Đề",
@@ -1113,12 +1119,12 @@ fun PlayerScreen(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LiquidGlassPill(onClick = { takeVideoSnapshot() }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.PhotoCamera, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.PhotoCamera, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Chụp ảnh", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                         LiquidGlassPill(onClick = { enterPip() }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Cửa sổ PiP", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
@@ -1130,7 +1136,7 @@ fun PlayerScreen(
                             onClick = { backgroundAudioEnabled = !backgroundAudioEnabled },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.Headphones, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.Headphones, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(if (backgroundAudioEnabled) "Nghe nền: BẬT" else "Nghe nền: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
@@ -1202,6 +1208,57 @@ fun PlayerScreen(
                         ) { Text("📂 Mở file .SRT/.ASS", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                     }
 
+                    // Bước 5: UI Chọn Track Âm thanh (Audio Tracks) bằng TrackSelectionOverride
+                    val audioTracks = remember(currentVideo, isPlaying, activeModal) {
+                        playerManager.getAvailableTracks(C.TRACK_TYPE_AUDIO)
+                    }
+                    if (audioTracks.isNotEmpty()) {
+                        Text("🔊 Chọn Kênh Âm Thanh (Audio Track):", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            audioTracks.forEach { trackOpt ->
+                                LiquidGlassPill(
+                                    active = trackOpt.isSelected,
+                                    onClick = {
+                                        playerManager.selectTrackOverride(trackOpt)
+                                        gestureHint = "🔊 Đã chọn âm thanh: ${trackOpt.label}"
+                                        scope.launch { delay(1200); gestureHint = null }
+                                    }
+                                ) {
+                                    Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+
+                    // Bước 5: UI Chọn Track Phụ đề (Subtitle Tracks) bằng TrackSelectionOverride
+                    val textTracks = remember(currentVideo, loadedSubtitles, isPlaying, activeModal) {
+                        playerManager.getAvailableTracks(C.TRACK_TYPE_TEXT)
+                    }
+                    if (textTracks.isNotEmpty()) {
+                        Text("💬 Chọn Kênh Phụ Đề (Subtitle Track):", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            textTracks.forEach { trackOpt ->
+                                LiquidGlassPill(
+                                    active = subtitlesEnabled && trackOpt.isSelected,
+                                    onClick = {
+                                        subtitlesEnabled = true
+                                        playerManager.selectTrackOverride(trackOpt)
+                                        gestureHint = "💬 Đã chọn phụ đề: ${trackOpt.label}"
+                                        scope.launch { delay(1200); gestureHint = null }
+                                    }
+                                ) {
+                                    Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1241,7 +1298,7 @@ fun PlayerScreen(
                 onClick = { isLocked = false },
                 modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
             ) {
-                Icon(Icons.Default.LockOpen, contentDescription = "Mở khóa", tint = Color.White)
+                Icon(AppIcons.LockOpen, contentDescription = "Mở khóa", tint = Color.White)
                 Spacer(Modifier.width(6.dp))
                 Text("Chạm để Mở khóa", color = Color.White, fontWeight = FontWeight.Bold)
             }
@@ -1335,7 +1392,7 @@ fun PlayerScreen(
                                 Text("${playbackSpeed}x", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                             }
                             DropdownMenu(expanded = showSpeedMenu, onDismissRequest = { showSpeedMenu = false }) {
-                                listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f, 4.0f).forEach { spd ->
+                                listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { spd ->
                                     DropdownMenuItem(
                                         text = {
                                             val label = if (spd == 1.0f) "1.0x (Chuẩn)" else "${spd}x"
@@ -1359,7 +1416,7 @@ fun PlayerScreen(
                                 modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.SkipPrevious,
+                                    AppIcons.SkipPrevious,
                                     contentDescription = "Trước",
                                     tint = if (currentIndex > 0) Color.White else Color.White.copy(alpha = 0.3f)
                                 )
@@ -1391,7 +1448,7 @@ fun PlayerScreen(
                                     }
                                     isPlaying = !isPlaying
                                 }) {
-                                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
+                                    Icon(if (isPlaying) AppIcons.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
                                 }
                             }
 
@@ -1401,7 +1458,7 @@ fun PlayerScreen(
                                 modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.SkipNext,
+                                    AppIcons.SkipNext,
                                     contentDescription = "Tiếp",
                                     tint = if (effectivePlaylist.isNotEmpty() && currentIndex in 0 until effectivePlaylist.size - 1) Color.White else Color.White.copy(alpha = 0.3f)
                                 )
@@ -1422,7 +1479,7 @@ fun PlayerScreen(
                                     .background(Color.White.copy(alpha = 0.14f))
                             ) {
                                 Icon(
-                                    Icons.Default.ScreenRotation,
+                                    AppIcons.ScreenRotation,
                                     contentDescription = "Xoay màn hình",
                                     tint = Color.White,
                                     modifier = Modifier.size(17.dp)
@@ -1433,7 +1490,7 @@ fun PlayerScreen(
                                 active = loopPointA != null || isMirrorFlipped || audioBoostPercent > 0 || bassBoostPercent > 0 || abs(videoSaturation - 1f) > 0.05f,
                                 onClick = { activeModal = ActiveModal.STUDIO }
                             ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = "Studio", tint = Color.White, modifier = Modifier.size(14.dp))
+                                Icon(AppIcons.AutoAwesome, contentDescription = "Studio", tint = Color.White, modifier = Modifier.size(14.dp))
                                 Spacer(Modifier.width(3.dp))
                                 Text("Studio", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                             }
@@ -1442,7 +1499,7 @@ fun PlayerScreen(
                                 active = backgroundAudioEnabled || sleepTimerMinutes > 0,
                                 onClick = { activeModal = ActiveModal.TOOLS }
                             ) {
-                                Icon(Icons.Default.Tune, contentDescription = "Thêm", tint = Color.White, modifier = Modifier.size(15.dp))
+                                Icon(AppIcons.Tune, contentDescription = "Thêm", tint = Color.White, modifier = Modifier.size(15.dp))
                             }
                         }
                     }

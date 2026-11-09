@@ -15,22 +15,39 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.videoplayer.app.data.local.readCustomSubtitleForVideo
 import com.videoplayer.app.data.local.saveCustomSubtitleForVideo
 import com.videoplayer.app.data.model.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
+import okhttp3.OkHttpClient
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 data class ExternalSubtitleItem(
     val name: String,
     val uri: Uri,
     val mimeType: String
+)
+
+data class MediaTrackOption(
+    val trackType: Int,
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val trackGroup: TrackGroup,
+    val label: String,
+    val isSelected: Boolean
 )
 
 data class VideoNerdStats(
@@ -68,9 +85,26 @@ class PlayerManager(private val context: Context) {
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
 
+    // Bước 5: Đặt EXTENSION_RENDERER_MODE_PREFER để ưu tiên tối đa bộ giải mã mở rộng AC3/EAC3/DTS
     private val renderersFactory = DefaultRenderersFactory(context)
         .setEnableDecoderFallback(true)
-        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
+    // Bước 4: OkHttpClient riêng dành cho luồng Stream của người dùng (hỗ trợ cả MODERN_TLS và CLEARTEXT khi được phép)
+    private val streamHttpClient = OkHttpClient.Builder()
+        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+
+    private val okHttpDataSourceFactory = OkHttpDataSource.Factory(streamHttpClient)
+        .setUserAgent("VideoPlayerPro/1.1")
+
+    private val baseDataSourceFactory = DefaultDataSource.Factory(context, okHttpDataSourceFactory)
+
+    // Bước 2: Bọc trong VaultCipherDataSource.Factory để giải mã trực tiếp scheme vault:// trên RAM
+    private val vaultAwareDataSourceFactory = VaultCipherDataSource.Factory(baseDataSourceFactory)
 
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var equalizer: Equalizer? = null
@@ -87,6 +121,7 @@ class PlayerManager(private val context: Context) {
     val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(vaultAwareDataSourceFactory))
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -106,6 +141,7 @@ class PlayerManager(private val context: Context) {
 
             override fun onPlayerError(error: PlaybackException) {
                 val vid = currentPlaylist.getOrNull(currentIndex) ?: return
+                if (vid.path.startsWith("vault://")) return
                 val curPos = getCurrentPosition()
                 val fallbackUri = Uri.fromFile(File(vid.path))
                 if (player.currentMediaItem?.localConfiguration?.uri != fallbackUri) {
@@ -116,6 +152,63 @@ class PlayerManager(private val context: Context) {
                 }
             }
         })
+    }
+
+    /**
+     * Bước 5: Lấy danh sách các Track Âm thanh (C.TRACK_TYPE_AUDIO) hoặc Phụ đề (C.TRACK_TYPE_TEXT) hiện có trong video
+     */
+    fun getAvailableTracks(trackType: Int): List<MediaTrackOption> {
+        val result = mutableListOf<MediaTrackOption>()
+        val groups = player.currentTracks.groups
+        for (gIdx in 0 until groups.size) {
+            val group = groups[gIdx]
+            if (group.type == trackType) {
+                val mediaTrackGroup = group.mediaTrackGroup
+                for (tIdx in 0 until mediaTrackGroup.length) {
+                    val format = group.getTrackFormat(tIdx)
+                    val lang = format.language?.uppercase() ?: ""
+                    val label = format.label ?: ""
+                    val mime = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
+                    val ch = if (format.channelCount > 0) "${format.channelCount}ch" else ""
+                    val display = listOf(label, lang, mime, ch)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" • ")
+                        .ifBlank { "Track #${tIdx + 1}" }
+
+                    result.add(
+                        MediaTrackOption(
+                            trackType = trackType,
+                            groupIndex = gIdx,
+                            trackIndex = tIdx,
+                            trackGroup = mediaTrackGroup,
+                            label = display,
+                            isSelected = group.isTrackSelected(tIdx)
+                        )
+                    )
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * Bước 5: Chọn Track cụ thể bằng TrackSelectionOverride của Media3
+     */
+    fun selectTrackOverride(option: MediaTrackOption) {
+        if (option.trackType == C.TRACK_TYPE_TEXT) {
+            toggleSubtitles(true)
+        }
+        val override = TrackSelectionOverride(option.trackGroup, listOf(option.trackIndex))
+        trackSelector.parameters = trackSelector.buildUponParameters()
+            .clearOverridesOfType(option.trackType)
+            .addOverride(override)
+            .build()
+    }
+
+    fun clearTrackOverrides(trackType: Int) {
+        trackSelector.parameters = trackSelector.buildUponParameters()
+            .clearOverridesOfType(trackType)
+            .build()
     }
 
     private fun setupAudioEffects(audioSessionId: Int) {
@@ -225,15 +318,9 @@ class PlayerManager(private val context: Context) {
         }
     }
 
-    /**
-     * Quét tìm Phụ đề theo thứ tự ưu tiên:
-     * 1. Phụ đề người dùng đã chọn trước đó (lưu vĩnh viễn trong DataStore + filesDir/subtitles)
-     * 2. Phụ đề có sẵn cùng tên trong cùng thư mục với video
-     */
     suspend fun findSubtitlesIo(video: VideoItem): List<ExternalSubtitleItem> = withContext(Dispatchers.IO) {
         val result = mutableListOf<ExternalSubtitleItem>()
         try {
-            // 1. Kiểm tra phụ đề đã lưu vĩnh viễn từ lần mở trước
             val savedSub = context.readCustomSubtitleForVideo(video.id)
             if (savedSub != null) {
                 val (uriOrPath, displayName) = savedSub
@@ -248,23 +335,24 @@ class PlayerManager(private val context: Context) {
                 }
             }
 
-            // 2. Quét phụ đề cùng tên trong cùng thư mục
-            val videoFile = File(video.path)
-            val parentDir = videoFile.parentFile
-            if (parentDir != null) {
-                val baseName = videoFile.nameWithoutExtension
-                val candidates = listOf(
-                    "$baseName.srt" to MimeTypes.APPLICATION_SUBRIP,
-                    "$baseName.vi.srt" to MimeTypes.APPLICATION_SUBRIP,
-                    "$baseName.en.srt" to MimeTypes.APPLICATION_SUBRIP,
-                    "$baseName.ass" to MimeTypes.TEXT_SSA,
-                    "$baseName.ssa" to MimeTypes.TEXT_SSA,
-                    "$baseName.vtt" to MimeTypes.TEXT_VTT
-                )
-                for ((fileName, mime) in candidates) {
-                    val subFile = File(parentDir, fileName)
-                    if (subFile.exists() && subFile.isFile) {
-                        result.add(ExternalSubtitleItem(subFile.name, Uri.fromFile(subFile), mime))
+            if (!video.path.startsWith("vault://") && !video.path.startsWith("content://")) {
+                val videoFile = File(video.path)
+                val parentDir = videoFile.parentFile
+                if (parentDir != null) {
+                    val baseName = videoFile.nameWithoutExtension
+                    val candidates = listOf(
+                        "$baseName.srt" to MimeTypes.APPLICATION_SUBRIP,
+                        "$baseName.vi.srt" to MimeTypes.APPLICATION_SUBRIP,
+                        "$baseName.en.srt" to MimeTypes.APPLICATION_SUBRIP,
+                        "$baseName.ass" to MimeTypes.TEXT_SSA,
+                        "$baseName.ssa" to MimeTypes.TEXT_SSA,
+                        "$baseName.vtt" to MimeTypes.TEXT_VTT
+                    )
+                    for ((fileName, mime) in candidates) {
+                        val subFile = File(parentDir, fileName)
+                        if (subFile.exists() && subFile.isFile) {
+                            result.add(ExternalSubtitleItem(subFile.name, Uri.fromFile(subFile), mime))
+                        }
                     }
                 }
             }
@@ -273,6 +361,9 @@ class PlayerManager(private val context: Context) {
     }
 
     private fun resolveVideoUri(video: VideoItem, useFileUriFallback: Boolean = false): Uri {
+        if (video.path.startsWith("vault://") || video.path.startsWith("content://") || video.path.startsWith("http://") || video.path.startsWith("https://")) {
+            return Uri.parse(video.path)
+        }
         val idLong = video.id.toLongOrNull()
         return if (!useFileUriFallback && idLong != null) {
             ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, idLong)
@@ -335,11 +426,6 @@ class PlayerManager(private val context: Context) {
         return targetVideo to subs
     }
 
-    /**
-     * Khi người dùng chọn 1 file Phụ đề từ máy:
-     * Sao lưu thẳng 1 bản vào bộ nhớ nội bộ của ứng dụng (filesDir/subtitles) và ghi vào DataStore
-     * để các lần mở sau tự động có sẵn vĩnh viễn mà không bao giờ phải chọn lại!
-     */
     suspend fun attachExternalSubtitleToCurrent(video: VideoItem, uri: Uri, displayName: String): List<ExternalSubtitleItem> {
         val curPos = getCurrentPosition()
         val persistedPathOrUri = withContext(Dispatchers.IO) {
@@ -349,15 +435,9 @@ class PlayerManager(private val context: Context) {
                 val ext = displayName.substringAfterLast('.', "srt")
                 val destFile = File(subDir, "sub_${video.id}.$ext")
                 context.contentResolver.openInputStream(uri)?.use { input ->
-                    destFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
+                    destFile.outputStream().use { output -> input.copyTo(output) }
                 }
-                if (destFile.exists() && destFile.length() > 0L) {
-                    destFile.absolutePath
-                } else {
-                    uri.toString()
-                }
+                if (destFile.exists() && destFile.length() > 0L) destFile.absolutePath else uri.toString()
             } catch (_: Exception) {
                 uri.toString()
             }
@@ -384,10 +464,7 @@ class PlayerManager(private val context: Context) {
         player.play()
     }
 
-    fun seekToFast(positionMs: Long) {
-        player.seekTo(positionMs.coerceAtLeast(0L))
-    }
-
+    fun seekToFast(positionMs: Long) = player.seekTo(positionMs.coerceAtLeast(0L))
     fun seekTo(positionMs: Long) = player.seekTo(positionMs.coerceAtLeast(0L))
     fun setPlaybackSpeed(speed: Float) { player.playbackParameters = PlaybackParameters(speed) }
     fun pause() = player.pause()

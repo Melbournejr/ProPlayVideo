@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="datastore/" />
+    <exclude domain="file" path="vault/" />
+    <exclude domain="file" path="subtitles/" />
+    <exclude domain="sharedpref" path="." />
+</full-backup-content>

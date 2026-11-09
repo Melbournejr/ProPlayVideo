@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayCircleFilled
+
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -117,7 +117,7 @@ fun VideoThumbnailView(
             )
         } else {
             Icon(
-                imageVector = Icons.Default.PlayCircleFilled,
+                imageVector = AppIcons.PlayCircleFilled,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
                 modifier = Modifier.size(34.dp)

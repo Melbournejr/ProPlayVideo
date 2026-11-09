@@ -3,6 +3,7 @@ package com.videoplayer.app.data.local
 import android.content.Context
 import android.provider.Settings
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -21,14 +22,89 @@ private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
-private val vaultPinKey = stringPreferencesKey("private_vault_pin")
-private val vaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
+
+// Các key cũ (Dùng để kiểm tra và Migration tự động cho người dùng cũ)
+private val legacyVaultPinKey = stringPreferencesKey("private_vault_pin")
+private val legacyVaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
+
+// Các key bảo mật mới (PBKDF2 Hash + Salt + Brute-force Lockout)
+private val vaultPinHashKey = stringPreferencesKey("vault_pin_pbkdf2_hash")
+private val vaultPinSaltKey = stringPreferencesKey("vault_pin_pbkdf2_salt")
+private val vaultFailedAttemptsKey = intPreferencesKey("vault_failed_attempts")
+private val vaultLockoutUntilMsKey = longPreferencesKey("vault_lockout_until_ms")
+private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
+
 private val savedBrightnessKey = floatPreferencesKey("saved_player_brightness")
 private val subtitleSizeSpKey = floatPreferencesKey("saved_subtitle_size_sp")
 private val subtitleColorArgbKey = intPreferencesKey("saved_subtitle_color_argb")
 
 typealias PositionMap = Map<String, Long>
 typealias VaultIdSet = Set<String>
+
+data class VaultSecurityState(
+    val pinHash: String? = null,
+    val pinSalt: String? = null,
+    val failedAttempts: Int = 0,
+    val lockoutUntilMs: Long = 0L,
+    val legacyPlainPin: String? = null,
+    val legacyVaultIds: Set<String> = emptySet()
+) {
+    val isConfigured: Boolean get() = !pinHash.isNullOrBlank() && !pinSalt.isNullOrBlank()
+    val needsMigration: Boolean get() = !legacyPlainPin.isNullOrBlank() || legacyVaultIds.isNotEmpty()
+}
+
+fun Context.observeVaultSecurityState(): Flow<VaultSecurityState> {
+    return this.datastore.data.map { prefs ->
+        VaultSecurityState(
+            pinHash = prefs[vaultPinHashKey],
+            pinSalt = prefs[vaultPinSaltKey],
+            failedAttempts = prefs[vaultFailedAttemptsKey] ?: 0,
+            lockoutUntilMs = prefs[vaultLockoutUntilMsKey] ?: 0L,
+            legacyPlainPin = prefs[legacyVaultPinKey],
+            legacyVaultIds = prefs[legacyVaultVideoIdsKey] ?: emptySet()
+        )
+    }
+}
+
+suspend fun Context.saveHashedVaultPin(hashBase64: String, saltBase64: String) {
+    this.datastore.edit { prefs ->
+        prefs[vaultPinHashKey] = hashBase64
+        prefs[vaultPinSaltKey] = saltBase64
+        prefs[vaultFailedAttemptsKey] = 0
+        prefs[vaultLockoutUntilMsKey] = 0L
+        prefs.remove(legacyVaultPinKey)
+    }
+}
+
+suspend fun Context.clearLegacyVaultDataAfterMigration() {
+    this.datastore.edit { prefs ->
+        prefs.remove(legacyVaultPinKey)
+        prefs.remove(legacyVaultVideoIdsKey)
+    }
+}
+
+suspend fun Context.recordVaultPinAttempt(success: Boolean, lockoutDurationMs: Long = 0L) {
+    this.datastore.edit { prefs ->
+        if (success) {
+            prefs[vaultFailedAttemptsKey] = 0
+            prefs[vaultLockoutUntilMsKey] = 0L
+        } else {
+            val nextCount = (prefs[vaultFailedAttemptsKey] ?: 0) + 1
+            prefs[vaultFailedAttemptsKey] = nextCount
+            if (lockoutDurationMs > 0L) {
+                prefs[vaultLockoutUntilMsKey] = System.currentTimeMillis() + lockoutDurationMs
+            }
+        }
+    }
+}
+
+fun Context.observeHttpWarnAcknowledged(): Flow<Boolean> {
+    return this.datastore.data.map { prefs -> prefs[httpCleartextWarnAckKey] ?: false }
+}
+
+suspend fun Context.saveHttpWarnAcknowledged(ack: Boolean) {
+    this.datastore.edit { prefs -> prefs[httpCleartextWarnAckKey] = ack }
+}
 
 suspend fun Context.saveLastPosition(videoId: String, positionMs: Long) {
     if (videoId.isBlank() || positionMs < 0L) return
@@ -80,9 +156,6 @@ suspend fun Context.readFolderScrollState(folderKey: String): Pair<Int, Int> {
     return idx to off
 }
 
-/**
- * Đọc độ sáng thực tế của máy (0.01f .. 1.0f) hoặc độ sáng người dùng đã lưu lần trước
- */
 fun Context.getSystemScreenBrightness(): Float {
     return try {
         val sysVal = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
@@ -103,9 +176,6 @@ suspend fun Context.savePreferredBrightness(brightness: Float) {
     }
 }
 
-/**
- * Lưu & Đọc thông tin Phụ đề đã chọn riêng cho từng videoId
- */
 suspend fun Context.saveCustomSubtitleForVideo(videoId: String, localPathOrUri: String, displayName: String) {
     if (videoId.isBlank()) return
     val uriKey = stringPreferencesKey("sub_uri_$videoId")
@@ -139,7 +209,7 @@ suspend fun Context.readSubtitleAppearance(): Pair<Float, Int> {
 }
 
 suspend fun Context.saveGithubRepo(ownerAndRepo: String) {
-    this.datastore.edit { prefs -> prefs[githubRepoKey] = ownerAndRepo }
+    this.datastore.edit { prefs -> prefs[githubRepoKey] = ownerAndRepo.trim() }
 }
 
 fun Context.readGithubRepo(defaultRepo: String): Flow<String> {
@@ -168,32 +238,4 @@ suspend fun Context.saveGlassFrostAlpha(alpha: Float) {
 
 fun Context.observeGlassFrostAlpha(): Flow<Float> {
     return this.datastore.data.map { prefs -> prefs[glassFrostAlphaKey] ?: 0.16f }
-}
-
-fun Context.observeVaultPin(): Flow<String?> {
-    return this.datastore.data.map { prefs -> prefs[vaultPinKey] }
-}
-
-suspend fun Context.saveVaultPin(pin: String) {
-    this.datastore.edit { prefs -> prefs[vaultPinKey] = pin.trim() }
-}
-
-fun Context.observeVaultVideoIds(): Flow<VaultIdSet> {
-    return this.datastore.data.map { prefs -> prefs[vaultVideoIdsKey] ?: emptySet() }
-}
-
-suspend fun Context.toggleVideoInVault(videoId: String, addToVault: Boolean) {
-    this.datastore.edit { prefs ->
-        val current = prefs[vaultVideoIdsKey]?.toMutableSet() ?: mutableSetOf()
-        if (addToVault) current.add(videoId) else current.remove(videoId)
-        prefs[vaultVideoIdsKey] = current
-    }
-}
-
-suspend fun Context.toggleMultipleVideosInVault(videoIds: Collection<String>, addToVault: Boolean) {
-    this.datastore.edit { prefs ->
-        val current = prefs[vaultVideoIdsKey]?.toMutableSet() ?: mutableSetOf()
-        if (addToVault) current.addAll(videoIds) else current.removeAll(videoIds.toSet())
-        prefs[vaultVideoIdsKey] = current
-    }
 }

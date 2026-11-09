@@ -1,14 +1,13 @@
 package com.videoplayer.app.update
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import androidx.core.content.ContextCompat
+import android.provider.Settings
+import androidx.annotation.Keep
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -20,11 +19,14 @@ import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
+@Keep
 data class GitHubRelease(
     val tag_name: String = "",
     val name: String = "",
@@ -32,10 +34,19 @@ data class GitHubRelease(
     val assets: List<GitHubAsset> = emptyList()
 )
 
+@Keep
 data class GitHubAsset(
     val name: String = "",
     val browser_download_url: String = "",
     val size: Long = 0L
+)
+
+@Keep
+data class VersionMetadata(
+    val versionCode: Int = 0,
+    val versionName: String = "",
+    val sha256: String = "",
+    val apkName: String = ""
 )
 
 class UpdateManager(private val context: Context) {
@@ -45,47 +56,148 @@ class UpdateManager(private val context: Context) {
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
-        .followSslRedirects(true)
+        .followSslRedirects(false) // Không cho phép hạ cấp từ HTTPS xuống HTTP
         .build()
 
     private val gson = Gson()
+    private val validRepoRegex = Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
     private val mirrors = listOf(
-        "", // Trực tiếp GitHub
+        "",
         "https://ghfast.top/",
         "https://mirror.ghproxy.com/"
     )
 
-    suspend fun checkLatestRelease(repoFullName: String): Result<GitHubRelease> = withContext(Dispatchers.IO) {
+    fun isValidRepoFormat(repoFullName: String): Boolean {
+        return validRepoRegex.matches(repoFullName.trim())
+    }
+
+    /**
+     * Chỉ gọi trực tiếp api.github.com qua HTTPS để lấy thông tin Release & Hash gốc
+     */
+    suspend fun checkLatestRelease(repoFullName: String): Result<Pair<GitHubRelease, VersionMetadata>> = withContext(Dispatchers.IO) {
         try {
-            val url = "https://api.github.com/repos/${repoFullName.trim()}/releases/latest"
+            val cleanRepo = repoFullName.trim()
+            if (!isValidRepoFormat(cleanRepo)) {
+                return@withContext Result.failure(Exception("Định dạng Repo không hợp lệ (chỉ chấp nhận owner/repo)"))
+            }
+
+            val url = "https://api.github.com/repos/$cleanRepo/releases/latest"
             val request = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "ProPlayVideo-OTA")
                 .build()
-            client.newCall(request).execute().use { response ->
+
+            val release = client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("HTTP ${response.code}: Không tìm thấy bản Release"))
                 }
                 val body = response.body?.string() ?: return@withContext Result.failure(Exception("Dữ liệu trống"))
-                Result.success(gson.fromJson(body, GitHubRelease::class.java))
+                gson.fromJson(body, GitHubRelease::class.java)
             }
+
+            val metadata = fetchVersionAndHashMetadata(release)
+                ?: return@withContext Result.failure(Exception("Bản Release thiếu dữ liệu xác thực versionCode hoặc SHA-256"))
+
+            Result.success(release to metadata)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     /**
-     * Tải bằng 8 luồng song song (8-Thread Parallel Downloader) + Báo cáo tốc độ thực tế MB/s
+     * Đọc versionCode và mã băm SHA-256 trực tiếp từ GitHub (ưu tiên version.json, .sha256 asset hoặc dòng SHA-256 trong body)
+     * Tuyệt đối KHÔNG qua Mirror khi lấy Hash!
      */
-    suspend fun downloadApkMultiThread(
+    private fun fetchVersionAndHashMetadata(release: GitHubRelease): VersionMetadata? {
+        // 1. Tìm file version.json trong assets (chứa versionCode + sha256)
+        val versionAsset = release.assets.firstOrNull { it.name.equals("version.json", ignoreCase = true) }
+        if (versionAsset != null && versionAsset.browser_download_url.startsWith("https://github.com/")) {
+            try {
+                val req = Request.Builder().url(versionAsset.browser_download_url).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val json = resp.body?.string()
+                        if (!json.isNullOrBlank()) {
+                            val parsed = gson.fromJson(json, VersionMetadata::class.java)
+                            if (parsed.versionCode > 0 && parsed.sha256.length == 64) {
+                                return parsed
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 2. Tìm file .sha256 trong assets + trích xuất versionCode từ body hoặc tag
+        var sha256Hex = ""
+        val shaAsset = release.assets.firstOrNull { it.name.endsWith(".sha256", ignoreCase = true) }
+        if (shaAsset != null && shaAsset.browser_download_url.startsWith("https://github.com/")) {
+            try {
+                val req = Request.Builder().url(shaAsset.browser_download_url).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val text = resp.body?.string()?.trim() ?: ""
+                        val token = text.split(Regex("\\s+")).firstOrNull() ?: ""
+                        if (token.matches(Regex("^[a-fA-F0-9]{64}$"))) {
+                            sha256Hex = token.lowercase()
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Nếu chưa có .sha256 asset, tìm dòng cố định `SHA-256: <64-hex>` trong release.body
+        if (sha256Hex.isEmpty()) {
+            val match = Regex("SHA-256:\\s*([a-fA-F0-9]{64})", RegexOption.IGNORE_CASE).find(release.body)
+            if (match != null) {
+                sha256Hex = match.groupValues[1].lowercase()
+            }
+        }
+
+        // Trích xuất versionCode từ dòng `VersionCode: <number>` trong body
+        val vcMatch = Regex("VersionCode:\\s*(\\d+)", RegexOption.IGNORE_CASE).find(release.body)
+        val parsedVc = vcMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+        if (parsedVc <= 0 || sha256Hex.length != 64) return null
+        val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+        return VersionMetadata(
+            versionCode = parsedVc,
+            versionName = release.tag_name.removePrefix("v"),
+            sha256 = sha256Hex,
+            apkName = apkAsset?.name ?: ""
+        )
+    }
+
+    fun isRemoteVersionCodeNewer(currentVersionCode: Int, remoteMetadata: VersionMetadata): Boolean {
+        return remoteMetadata.versionCode > currentVersionCode
+    }
+
+    /**
+     * Tải APK qua HTTPS (cho phép dùng Mirror đối với file APK), sau đó:
+     * 1. Tính SHA-256 của file APK và so khớp với expectedSha256 lấy từ GitHub gốc.
+     * 2. Kiểm tra Package Name và Signing Certificate của APK phải trùng khít với App đang chạy.
+     * Sai bất kỳ bước nào -> Xóa ngay file APK và báo lỗi!
+     */
+    suspend fun downloadAndVerifyApk(
         rawUrl: String,
         expectedSize: Long = 0L,
+        expectedSha256: String,
         mirrorIndex: Int = 0,
         onProgress: (percent: Int, speedText: String) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
+        val apkFile = File(context.cacheDir, "update_ota_verified.apk")
         try {
+            if (!rawUrl.startsWith("https://")) {
+                return@withContext Result.failure(Exception("Từ chối tải: Chỉ chấp nhận giao thức HTTPS"))
+            }
+            if (!expectedSha256.matches(Regex("^[a-fA-F0-9]{64}$"))) {
+                return@withContext Result.failure(Exception("Không có mã băm SHA-256 hợp lệ từ GitHub. Hủy cài đặt!"))
+            }
+
+            cleanupOldApks()
+
             val prefix = mirrors.getOrElse(mirrorIndex) { "" }
             val downloadUrl = if (prefix.isNotEmpty() && rawUrl.startsWith("https://github.com/")) {
                 "$prefix$rawUrl"
@@ -93,17 +205,15 @@ class UpdateManager(private val context: Context) {
                 rawUrl
             }
 
-            val apkFile = File(context.cacheDir, "update_ota.apk")
-            if (apkFile.exists()) apkFile.delete()
+            if (!downloadUrl.startsWith("https://")) {
+                return@withContext Result.failure(Exception("Mirror URL phải dùng HTTPS"))
+            }
 
             val totalSize = if (expectedSize > 0L) expectedSize else fetchContentLength(downloadUrl)
             val startTimeMs = System.currentTimeMillis()
 
             if (totalSize > 1_000_000L) {
-                RandomAccessFile(apkFile, "rw").use { raf ->
-                    raf.setLength(totalSize)
-                }
-
+                RandomAccessFile(apkFile, "rw").use { raf -> raf.setLength(totalSize) }
                 val threadCount = 8
                 val chunkSize = totalSize / threadCount
                 val totalDownloaded = AtomicLong(0L)
@@ -113,7 +223,6 @@ class UpdateManager(private val context: Context) {
                     val jobs = (0 until threadCount).map { index ->
                         val start = index * chunkSize
                         val end = if (index == threadCount - 1) totalSize - 1 else (start + chunkSize - 1)
-
                         async(Dispatchers.IO) {
                             downloadChunk(downloadUrl, apkFile, start, end) { bytesRead ->
                                 val currentTotal = totalDownloaded.addAndGet(bytesRead)
@@ -133,56 +242,145 @@ class UpdateManager(private val context: Context) {
                 downloadSingleStream(downloadUrl, apkFile, totalSize, startTimeMs, onProgress)
             }
 
+            // BƯỚC KIỂM TRA 1: TÍNH SHA-256 VÀ SO KHỚP
+            val actualSha256 = computeFileSha256(apkFile)
+            if (!actualSha256.equals(expectedSha256.trim(), ignoreCase = true)) {
+                apkFile.delete()
+                return@withContext Result.failure(
+                    SecurityException("CẢNH BÁO BẢO MẬT: Mã băm SHA-256 của APK không khớp! Đã xóa file tải về.")
+                )
+            }
+
+            // BƯỚC KIỂM TRA 2: XÁC MINH PACKAGE NAME & CHỮ KÝ SỐ (SIGNING CERTIFICATE)
+            val certError = verifyApkPackageAndSignature(apkFile)
+            if (certError != null) {
+                apkFile.delete()
+                return@withContext Result.failure(SecurityException(certError))
+            }
+
             Result.success(apkFile)
         } catch (e: Exception) {
+            if (apkFile.exists()) apkFile.delete()
             Result.failure(e)
         }
     }
 
-    /**
-     * Tải bằng trình DownloadManager cấp hệ thống của Android (Tự động tối ưu hóa phần cứng mạng & tự mở cài đặt)
-     */
-    fun downloadWithSystemManager(rawUrl: String, fileName: String, useMirror: Boolean): Long {
-        val downloadUrl = if (useMirror && rawUrl.startsWith("https://github.com/")) {
-            "https://ghfast.top/$rawUrl"
-        } else {
-            rawUrl
+    fun computeFileSha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buf = ByteArray(64 * 1024)
+            var r: Int
+            while (input.read(buf).also { r = it } != -1) {
+                digest.update(buf, 0, r)
+            }
         }
-        cleanupOldApks()
-        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-        if (destFile.exists()) destFile.delete()
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
-        val request = DownloadManager.Request(Uri.parse(downloadUrl))
-            .setTitle("Đang cập nhật $fileName")
-            .setDescription("Tải bản cập nhật OTA bằng trình tăng tốc hệ thống")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationUri(Uri.fromFile(destFile))
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
+    /**
+     * Kiểm tra packageName và chứng chỉ ký (Signing Certificate) của file APK tải về phải trùng khớp với ứng dụng đang chạy
+     */
+    @Suppress("DEPRECATION")
+    fun verifyApkPackageAndSignature(apkFile: File): String? {
+        return try {
+            val pm = context.packageManager
+            val archivePath = apkFile.absolutePath
 
-        val downloadId = dm.enqueue(request)
+            val archivePkgName: String?
+            val archiveCertDigests: Set<String>
+            val installedCertDigests: Set<String>
 
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
-                if (id == downloadId) {
-                    try { context.unregisterReceiver(this) } catch (_: Exception) {}
-                    if (destFile.exists()) {
-                        installApk(destFile)
-                    }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val archiveInfo = pm.getPackageArchiveInfo(archivePath, PackageManager.GET_SIGNING_CERTIFICATES)
+                    ?: return "File APK tải về bị hỏng hoặc không đọc được cấu trúc Package."
+                archivePkgName = archiveInfo.packageName
+                val signingInfo = archiveInfo.signingInfo
+                    ?: return "File APK tải về không có chữ ký số (Unsigned APK)."
+                val sigs = if (signingInfo.hasMultipleSigners()) signingInfo.apkContentsSigners else signingInfo.signingCertificateHistory
+                archiveCertDigests = sigs?.map { sha256Bytes(it.toByteArray()) }?.toSet() ?: emptySet()
+
+                val installedInfo = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                val instSigning = installedInfo.signingInfo
+                val instSigs = if (instSigning?.hasMultipleSigners() == true) instSigning.apkContentsSigners else instSigning?.signingCertificateHistory
+                installedCertDigests = instSigs?.map { sha256Bytes(it.toByteArray()) }?.toSet() ?: emptySet()
+            } else {
+                val archiveInfo = pm.getPackageArchiveInfo(archivePath, PackageManager.GET_SIGNATURES)
+                    ?: return "File APK tải về bị hỏng."
+                archivePkgName = archiveInfo.packageName
+                archiveCertDigests = archiveInfo.signatures?.map { sha256Bytes(it.toByteArray()) }?.toSet() ?: emptySet()
+
+                val installedInfo = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+                installedCertDigests = installedInfo.signatures?.map { sha256Bytes(it.toByteArray()) }?.toSet() ?: emptySet()
+            }
+
+            if (archivePkgName != context.packageName) {
+                return "Package Name của APK ($archivePkgName) không khớp với ứng dụng hiện tại (${context.packageName})!"
+            }
+
+            if (archiveCertDigests.isEmpty() || installedCertDigests.isEmpty() || archiveCertDigests.intersect(installedCertDigests).isEmpty()) {
+                return "Chứng chỉ ký số (Signing Certificate) của APK không trùng khớp với ứng dụng đang chạy!"
+            }
+            null
+        } catch (e: Exception) {
+            "Lỗi xác minh chữ ký APK: ${e.message}"
+        }
+    }
+
+    private fun sha256Bytes(bytes: ByteArray): String {
+        return MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    }
+
+    fun canRequestPackageInstalls(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    fun openManageUnknownAppSourcesSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }
+    }
+
+    fun installVerifiedApk(apkFile: File): Boolean {
+        if (!canRequestPackageInstalls()) {
+            openManageUnknownAppSourcesSettings()
+            return false
+        }
+        val apkUri = FileProvider.getUriForFile(context, "com.videoplayer.app.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+        return true
+    }
+
+    fun cleanupOldApks(): Long {
+        var freedBytes = 0L
+        val dirsToClean = listOfNotNull(
+            context.cacheDir,
+            context.externalCacheDir,
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            context.filesDir
+        )
+        dirsToClean.forEach { dir ->
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    val len = file.length()
+                    if (file.delete()) freedBytes += len
                 }
             }
         }
-
-        ContextCompat.registerReceiver(
-            context,
-            receiver,
-            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-            ContextCompat.RECEIVER_EXPORTED
-        )
-
-        return downloadId
+        return freedBytes
     }
 
     private fun fetchContentLength(url: String): Long {
@@ -194,13 +392,7 @@ class UpdateManager(private val context: Context) {
         } catch (_: Exception) { -1L }
     }
 
-    private fun downloadChunk(
-        url: String,
-        file: File,
-        start: Long,
-        end: Long,
-        onBytes: (Long) -> Unit
-    ) {
+    private fun downloadChunk(url: String, file: File, start: Long, end: Long, onBytes: (Long) -> Unit) {
         val request = Request.Builder()
             .url(url)
             .header("Range", "bytes=$start-$end")
@@ -208,14 +400,12 @@ class UpdateManager(private val context: Context) {
             .build()
 
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful && response.code != 206) {
-                throw Exception("HTTP ${response.code}")
-            }
+            if (!response.isSuccessful && response.code != 206) throw Exception("HTTP ${response.code}")
             val body = response.body ?: throw Exception("Rỗng")
             body.byteStream().use { input ->
                 RandomAccessFile(file, "rw").use { raf ->
                     raf.seek(start)
-                    val buffer = ByteArray(128 * 1024) // Bộ đệm 128KB siêu tốc
+                    val buffer = ByteArray(128 * 1024)
                     var read: Int
                     while (input.read(buffer).also { read = it } != -1) {
                         raf.write(buffer, 0, read)
@@ -226,13 +416,7 @@ class UpdateManager(private val context: Context) {
         }
     }
 
-    private fun downloadSingleStream(
-        url: String,
-        file: File,
-        totalSize: Long,
-        startTimeMs: Long,
-        onProgress: (Int, String) -> Unit
-    ) {
+    private fun downloadSingleStream(url: String, file: File, totalSize: Long, startTimeMs: Long, onProgress: (Int, String) -> Unit) {
         val request = Request.Builder().url(url).header("User-Agent", "ProPlayVideo-OTA").build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
@@ -262,73 +446,5 @@ class UpdateManager(private val context: Context) {
                 }
             }
         }
-    }
-
-    fun installApk(apkFile: File) {
-        val apkUri = FileProvider.getUriForFile(context, "com.videoplayer.app.fileprovider", apkFile)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
-    }
-    /**
-     * Quét và xóa sạch toàn bộ các file .apk cập nhật cũ bị tích tụ trong User Data (ExternalFilesDir) & Cache
-     * Trả về tổng số Bytes đã giải phóng được.
-     */
-    fun cleanupOldApks(): Long {
-        var freedBytes = 0L
-        val dirsToClean = listOfNotNull(
-            context.cacheDir,
-            context.externalCacheDir,
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            context.filesDir
-        )
-        dirsToClean.forEach { dir ->
-            dir.listFiles()?.forEach { file ->
-                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
-                    val len = file.length()
-                    if (file.delete()) {
-                        freedBytes += len
-                    }
-                }
-            }
-        }
-        return freedBytes
-    }
-
-    fun getOccupiedApkStorageBytes(): Long {
-        var total = 0L
-        val dirs = listOfNotNull(
-            context.cacheDir,
-            context.externalCacheDir,
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            context.filesDir
-        )
-        dirs.forEach { dir ->
-            dir.listFiles()?.forEach { file ->
-                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
-                    total += file.length()
-                }
-            }
-        }
-        return total
-    }
-
-    fun isRemoteVersionNewer(currentVersion: String, remoteTag: String): Boolean {
-        val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V")
-        val cleanRemote = remoteTag.trim().removePrefix("v").removePrefix("V")
-        if (cleanCurrent == cleanRemote) return false
-
-        val curParts = cleanCurrent.split(".", "-").mapNotNull { it.toIntOrNull() }
-        val remParts = cleanRemote.split(".", "-").mapNotNull { it.toIntOrNull() }
-        val maxLen = maxOf(curParts.size, remParts.size)
-        for (i in 0 until maxLen) {
-            val c = curParts.getOrElse(i) { 0 }
-            val r = remParts.getOrElse(i) { 0 }
-            if (r > c) return true
-            if (r < c) return false
-        }
-        return cleanRemote != cleanCurrent
     }
 }

@@ -12,6 +12,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      SIGNING_STORE_FILE: ota-signing.jks
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || 'androidpassword' }}
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS || 'otakey' }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || 'androidpassword' }}
     steps:
       - name: Checkout mã nguồn
         uses: actions/checkout@v4
@@ -24,68 +29,91 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Tạo và lưu Keystore cố định cho OTA (nếu chưa có)
+      - name: Đảm bảo Keystore cố định cho OTA
         run: |
           if [ ! -f app/ota-signing.jks ]; then
             keytool -genkeypair -v \
               -keystore app/ota-signing.jks \
               -keyalg RSA -keysize 2048 -validity 10000 \
-              -alias otakey \
-              -storepass androidpassword \
-              -keypass androidpassword \
+              -alias "$SIGNING_KEY_ALIAS" \
+              -storepass "$SIGNING_STORE_PASSWORD" \
+              -keypass "$SIGNING_KEY_PASSWORD" \
               -dname "CN=ProPlayVideo, OU=Dev, O=ProPlay, L=Hanoi, S=HN, C=VN"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add app/ota-signing.jks
-            git commit -m "chore: persist fixed OTA signing keystore [skip ci]"
-            git push origin HEAD:main || true
           fi
         shell: bash
 
-      - name: Xác định tên Repo và Phiên bản
+      - name: Xác định tên Repo, VersionName và VersionCode
         id: meta
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          VER_CODE=$((100 + ${GITHUB_RUN_NUMBER}))
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VER_NAME="${GITHUB_REF#refs/tags/v}"
           else
-            VER_NAME="1.0.${GITHUB_RUN_NUMBER}"
+            VER_NAME="1.1.${GITHUB_RUN_NUMBER}"
           fi
           echo "repo_name=${REPO_NAME}" >> $GITHUB_OUTPUT
           echo "version_name=${VER_NAME}" >> $GITHUB_OUTPUT
+          echo "version_code=${VER_CODE}" >> $GITHUB_OUTPUT
           echo "tag_name=v${VER_NAME}" >> $GITHUB_OUTPUT
           echo "apk_name=${REPO_NAME}-v${VER_NAME}.apk" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Tải Gradle 8.4 và Build APK trực tiếp (Không qua bước :wrapper tránh lỗi mạng)
+      - name: Tải Gradle 8.4 và Build APK Release (R8 Minify + Resource Shrinking)
         run: |
           if [ ! -f /tmp/gradle-8.4/bin/gradle ]; then
             curl -L --retry 5 --retry-delay 3 -sS https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
             unzip -q -o /tmp/gradle.zip -d /tmp
           fi
-          /tmp/gradle-8.4/bin/gradle assembleDebug \
+          /tmp/gradle-8.4/bin/gradle assembleRelease \
             -PrepoName="${{ steps.meta.outputs.repo_name }}" \
             -PversionName="${{ steps.meta.outputs.version_name }}" \
-            -PversionCode="${{ github.run_number }}" \
+            -PversionCode="${{ steps.meta.outputs.version_code }}" \
             --no-daemon
         shell: bash
 
-      - name: Đổi tên file APK theo chuẩn Repo + Phiên bản
-        id: rename_apk
+      - name: Tạo file .sha256 và version.json cho OTA Security
+        id: package_ota
         run: |
-          RAW_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
-          TARGET_APK="app/build/outputs/apk/debug/${{ steps.meta.outputs.apk_name }}"
+          RAW_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          OUT_DIR="app/build/outputs/apk/release"
+          APK_NAME="${{ steps.meta.outputs.apk_name }}"
+          TARGET_APK="${OUT_DIR}/${APK_NAME}"
+          SHA_FILE="${TARGET_APK}.sha256"
+          JSON_FILE="${OUT_DIR}/version.json"
+
           cp "$RAW_APK" "$TARGET_APK"
+          SHA256_HEX=$(sha256sum "$TARGET_APK" | awk '{print $1}')
+          echo "${SHA256_HEX}  ${APK_NAME}" > "$SHA_FILE"
+
+          cat <<EOF > "$JSON_FILE"
+          {
+            "versionCode": ${{ steps.meta.outputs.version_code }},
+            "versionName": "${{ steps.meta.outputs.version_name }}",
+            "sha256": "${SHA256_HEX}",
+            "apkName": "${APK_NAME}"
+          }
+          EOF
+
           echo "apk_path=$TARGET_APK" >> $GITHUB_OUTPUT
+          echo "sha_path=$SHA_FILE" >> $GITHUB_OUTPUT
+          echo "json_path=$JSON_FILE" >> $GITHUB_OUTPUT
+          echo "sha256_hex=$SHA256_HEX" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Tạo GitHub Release và tải APK lên cho OTA
+      - name: Tạo GitHub Release kèm APK + .sha256 + version.json
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag_name }}
           name: "${{ steps.meta.outputs.repo_name }} ${{ steps.meta.outputs.tag_name }}"
-          body: "Bản phát hành tự động **${{ steps.meta.outputs.apk_name }}**. Hỗ trợ cập nhật OTA siêu tốc."
-          files: ${{ steps.rename_apk.outputs.apk_path }}
+          body: |
+            Bản phát hành Release **${{ steps.meta.outputs.apk_name }}** (R8 Minified & Shrunk).
+            VersionCode: ${{ steps.meta.outputs.version_code }}
+            SHA-256: ${{ steps.package_ota.outputs.sha256_hex }}
+          files: |
+            ${{ steps.package_ota.outputs.apk_path }}
+            ${{ steps.package_ota.outputs.sha_path }}
+            ${{ steps.package_ota.outputs.json_path }}
           draft: false
           prerelease: false
         env:

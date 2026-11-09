@@ -1,7 +1,11 @@
 package com.videoplayer.app.ui.main
 
+import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,11 +35,13 @@ import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
+import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.ui.components.VideoThumbnailView
 import com.videoplayer.app.util.FileOperationHelper
+import com.videoplayer.app.util.VaultManager
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -85,15 +91,19 @@ fun HomeScreen(
     val rawVideos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
-    val vaultIds by context.observeVaultVideoIds().collectAsState(initial = emptySet())
 
+    // Danh sách video đã được mã hóa AES-256-GCM trong Vault
+    val vaultEntries = remember(refreshTrigger, isVaultMode) {
+        VaultManager.getVaultVideosAsVideoItems(context).map { VaultManager.toVideoItem(context, it) }
+    }
+
+    var isProcessingVault by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchExpanded by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.DATE_DESC) }
     var showSortMenu by remember { mutableStateOf(false) }
     var isGridView by remember { mutableStateOf(false) }
 
-    // Chế độ Chọn nhiều video (Multi-Select Mode)
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val selectedVideoIds = remember { mutableStateListOf<String>() }
 
@@ -101,12 +111,32 @@ fun HomeScreen(
     var dialogType by remember { mutableStateOf(FileDialogType.NONE) }
     var showBottomSheetFor by remember { mutableStateOf<VideoItem?>(null) }
 
+    // Launcher cho MediaStore.createDeleteRequest / createWriteRequest (Bước 4)
+    var pendingRenameNewName by remember { mutableStateOf<String?>(null) }
+    val mediaStorePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val vid = activeVideoForAction
+            val newName = pendingRenameNewName
+            if (vid != null && !newName.isNullOrBlank()) {
+                scope.launch {
+                    FileOperationHelper.renameVideo(context, vid, newName)
+                    pendingRenameNewName = null
+                    refreshTrigger++
+                }
+            } else {
+                Toast.makeText(context, "Đã thực hiện thao tác tệp!", Toast.LENGTH_SHORT).show()
+                refreshTrigger++
+            }
+        }
+    }
+
     fun exitMultiSelect() {
         isMultiSelectMode = false
         selectedVideoIds.clear()
     }
 
-    // Khi đổi thư mục thì thoát chế độ chọn nhiều
     LaunchedEffect(selectedFolder, isVaultMode) {
         exitMultiSelect()
     }
@@ -123,9 +153,8 @@ fun HomeScreen(
         }
     }
 
-    val visibleVideos = remember(rawVideos, vaultIds, isVaultMode) {
-        if (isVaultMode) rawVideos.filter { it.id in vaultIds }
-        else rawVideos.filter { it.id !in vaultIds }
+    val visibleVideos = remember(rawVideos, vaultEntries, isVaultMode) {
+        if (isVaultMode) vaultEntries else rawVideos
     }
 
     fun applySorting(list: List<VideoItem>, sort: SortOption): List<VideoItem> {
@@ -172,13 +201,11 @@ fun HomeScreen(
         applySorting(filtered, sortOption)
     }
 
-    // ================= LƯU & KHÔI PHỤC VỊ TRÍ CUỘN CỦA TỪNG THƯ MỤC VÀO DATASTORE =================
     val currentScrollKey = remember(selectedFolder, isVaultMode) {
         if (isVaultMode) "__VAULT__" else (selectedFolder ?: "")
     }
     var hasRestoredScrollForFolder by remember(currentScrollKey) { mutableStateOf(false) }
 
-    // 1. Khôi phục vị trí cuộn ngay khi mở vào thư mục (và khi danh sách video đã tải xong)
     LaunchedEffect(currentScrollKey, displayedVideos.size) {
         if (currentScrollKey.isNotEmpty() && displayedVideos.isNotEmpty() && !hasRestoredScrollForFolder) {
             hasRestoredScrollForFolder = true
@@ -189,7 +216,6 @@ fun HomeScreen(
         }
     }
 
-    // 2. Tự động ghi nhớ vị trí cuộn mỗi khi người dùng lướt danh sách trong thư mục
     LaunchedEffect(videoListState, currentScrollKey, hasRestoredScrollForFolder) {
         if (currentScrollKey.isNotEmpty() && hasRestoredScrollForFolder) {
             snapshotFlow {
@@ -204,14 +230,18 @@ fun HomeScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // ================= THANH CÔNG CỤ ĐẦU TRANG / THANH CHỌN NHIỀU VIDEO =================
+        if (isProcessingVault) {
+            LinearProgressIndicator(
+                color = palette.primaryGlow,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            )
+        }
+
         if (isMultiSelectMode) {
             LiquidGlassCard(
                 cornerRadius = 20.dp,
                 highlighted = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
@@ -228,9 +258,8 @@ fun HomeScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             LiquidGlassPill(
                                 onClick = {
-                                    if (selectedVideoIds.size == displayedVideos.size) {
-                                        selectedVideoIds.clear()
-                                    } else {
+                                    if (selectedVideoIds.size == displayedVideos.size) selectedVideoIds.clear()
+                                    else {
                                         selectedVideoIds.clear()
                                         selectedVideoIds.addAll(displayedVideos.map { it.id })
                                     }
@@ -252,59 +281,63 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_COPY }
-                        ) {
-                            Icon(Icons.Default.ContentCopy, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Copy", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        if (!isVaultMode) {
+                            LiquidGlassPill(onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_COPY }) {
+                                Icon(AppIcons.ContentCopy, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Copy", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
+                            LiquidGlassPill(onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_MOVE }) {
+                                Icon(AppIcons.DriveFileMove, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Chuyển", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                         LiquidGlassPill(
-                            active = false,
-                            onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_MOVE }
-                        ) {
-                            Icon(Icons.Default.DriveFileMove, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Chuyển", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
-                        LiquidGlassPill(
-                            active = false,
                             onClick = {
-                                if (selectedVideoIds.isNotEmpty()) {
-                                    val ids = selectedVideoIds.toList()
+                                if (selectedVideoIds.isNotEmpty() && !isProcessingVault) {
+                                    val targets = displayedVideos.filter { it.id in selectedVideoIds }
                                     scope.launch {
-                                        context.toggleMultipleVideosInVault(ids, !isVaultMode)
-                                        Toast.makeText(
-                                            context,
-                                            if (!isVaultMode) "🔒 Đã ẩn ${ids.size} video vào Kho!" else "🔓 Đã khôi phục ${ids.size} video!",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        isProcessingVault = true
+                                        var okCount = 0
+                                        if (isVaultMode) {
+                                            targets.forEach { v ->
+                                                if (VaultManager.restoreVideoFromVault(context, v.id).isSuccess) okCount++
+                                            }
+                                            Toast.makeText(context, "🔓 Đã giải mã khôi phục $okCount video về Movies!", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            targets.forEach { v ->
+                                                if (VaultManager.moveVideoToVault(context, v).isSuccess) okCount++
+                                            }
+                                            Toast.makeText(context, "🔒 Đã mã hóa AES-256-GCM $okCount video vào Kho!", Toast.LENGTH_LONG).show()
+                                        }
+                                        isProcessingVault = false
                                         exitMultiSelect()
+                                        refreshTrigger++
                                     }
                                 }
                             }
                         ) {
-                            Icon(if (isVaultMode) Icons.Default.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                            Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(if (isVaultMode) "Bỏ ẩn" else "Ẩn Kho", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text(if (isVaultMode) "Giải mã ra ngoài" else "Mã hóa vào Kho", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
-                        LiquidGlassPill(
-                            active = true,
-                            onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_DELETE }
-                        ) {
-                            Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Xóa (${selectedVideoIds.size})", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        if (!isVaultMode) {
+                            LiquidGlassPill(
+                                active = true,
+                                onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_DELETE }
+                            ) {
+                                Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Xóa (${selectedVideoIds.size})", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
         } else {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -335,20 +368,16 @@ fun HomeScreen(
                         Icon(Icons.Default.Search, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (isVaultMode) "Tìm trong Kho..." else "Tìm kiếm...",
+                            text = if (isVaultMode) "Tìm trong Kho AES-256..." else "Tìm kiếm...",
                             color = Color.White.copy(alpha = 0.85f),
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1
                         )
                     }
 
-                    // Nút bật chế độ Chọn nhiều video (hiện khi đang ở trong thư mục hoặc Kho)
                     if (selectedFolder != null || isVaultMode) {
-                        LiquidGlassPill(
-                            active = false,
-                            onClick = { isMultiSelectMode = true }
-                        ) {
-                            Icon(Icons.Default.Checklist, contentDescription = "Chọn nhiều", tint = Color.White, modifier = Modifier.size(18.dp))
+                        LiquidGlassPill(onClick = { isMultiSelectMode = true }) {
+                            Icon(AppIcons.Checklist, contentDescription = "Chọn nhiều", tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Chọn", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
@@ -359,12 +388,9 @@ fun HomeScreen(
                             active = sortOption != SortOption.DATE_DESC,
                             onClick = { showSortMenu = true }
                         ) {
-                            Icon(Icons.Default.Sort, contentDescription = "Sắp xếp", tint = Color.White, modifier = Modifier.size(18.dp))
+                            Icon(AppIcons.Sort, contentDescription = "Sắp xếp", tint = Color.White, modifier = Modifier.size(18.dp))
                         }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false }
-                        ) {
+                        DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                             SortOption.values().forEach { opt ->
                                 DropdownMenuItem(
                                     text = {
@@ -382,12 +408,9 @@ fun HomeScreen(
                         }
                     }
 
-                    LiquidGlassPill(
-                        active = isGridView,
-                        onClick = { isGridView = !isGridView }
-                    ) {
+                    LiquidGlassPill(active = isGridView, onClick = { isGridView = !isGridView }) {
                         Icon(
-                            imageVector = if (isGridView) Icons.Default.ViewList else Icons.Default.GridView,
+                            imageVector = if (isGridView) AppIcons.ViewList else AppIcons.GridView,
                             contentDescription = "Đổi kiểu xem",
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
@@ -401,7 +424,6 @@ fun HomeScreen(
             }
         }
 
-        // ================= NỘI DUNG DANH SÁCH =================
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val isSearchingAll = searchQuery.isNotBlank() && selectedFolder == null && !isVaultMode
 
@@ -413,14 +435,14 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxWidth().padding(28.dp)
                         ) {
                             Icon(
-                                if (isVaultMode) Icons.Default.Lock else Icons.Default.VideoLibrary,
+                                if (isVaultMode) Icons.Default.Lock else AppIcons.VideoLibrary,
                                 contentDescription = null,
                                 modifier = Modifier.size(64.dp),
                                 tint = palette.primaryGlow
                             )
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                if (isVaultMode) "Kho Riêng Tư đang trống.\nBấm nút 3 chấm (⋮) hoặc nhấn giữ vào video để đưa vào Kho."
+                                if (isVaultMode) "Kho Riêng Tư (Mã hóa AES-256-GCM) đang trống.\nBấm nút 3 chấm (⋮) ở bất kỳ video nào để mã hóa đưa vào Kho."
                                 else "Chưa tìm thấy video hoặc chưa cấp quyền bộ nhớ.",
                                 color = Color.White,
                                 style = MaterialTheme.typography.bodyLarge
@@ -429,7 +451,6 @@ fun HomeScreen(
                     }
                 }
             } else if (selectedFolder == null && !isVaultMode && !isSearchingAll) {
-                // ================= TRANG DANH SÁCH THƯ MỤC =================
                 LazyColumn(
                     state = folderListState,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
@@ -524,7 +545,7 @@ fun HomeScreen(
                                             .padding(4.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Folder,
+                                            imageVector = AppIcons.Folder,
                                             contentDescription = null,
                                             tint = Color(0xFF001F29),
                                             modifier = Modifier.size(13.dp)
@@ -563,7 +584,7 @@ fun HomeScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.ChevronRight,
+                                        imageVector = Icons.Default.KeyboardArrowRight,
                                         contentDescription = null,
                                         tint = Color.White
                                     )
@@ -573,7 +594,6 @@ fun HomeScreen(
                     }
                 }
             } else {
-                // ================= TRANG DANH SÁCH VIDEO (HỖ TRỢ NHẤN GIỮ CHỌN NHIỀU & NHỚ VỊ TRÍ CUỘN) =================
                 fun handleItemClick(video: VideoItem) {
                     if (isMultiSelectMode) {
                         if (video.id in selectedVideoIds) selectedVideoIds.remove(video.id)
@@ -720,13 +740,15 @@ fun HomeScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = if (savedPos > 2000L) {
+                                            text = if (isVaultMode) {
+                                                "🔒 AES-256-GCM • ${video.sizeFormatted}"
+                                            } else if (savedPos > 2000L) {
                                                 "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
                                             } else {
                                                 video.sizeFormatted
                                             },
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = if (savedPos > 2000L) palette.primaryGlow else Color(0xFFA7B8D8)
+                                            color = if (savedPos > 2000L || isVaultMode) palette.primaryGlow else Color(0xFFA7B8D8)
                                         )
                                         if (progress > 0f) {
                                             Spacer(modifier = Modifier.height(6.dp))
@@ -754,11 +776,9 @@ fun HomeScreen(
                 LiquidGlassPill(
                     active = true,
                     onClick = onStreamClick,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(18.dp)
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Stream, contentDescription = "Stream URL", tint = Color.White)
+                    Icon(imageVector = AppIcons.Stream, contentDescription = "Stream URL", tint = Color.White)
                     Spacer(Modifier.width(8.dp))
                     Text("Stream Mạng", color = Color.White, fontWeight = FontWeight.Bold)
                 }
@@ -768,7 +788,7 @@ fun HomeScreen(
 
     // ================= MENU QUẢN LÝ FILE ĐƠN LẺ =================
     showBottomSheetFor?.let { targetVideo ->
-        val isInVault = targetVideo.id in vaultIds
+        val isVaultItem = targetVideo.path.startsWith("vault://")
         AlertDialog(
             onDismissRequest = { showBottomSheetFor = null },
             containerColor = palette.deepBgMid.copy(alpha = 0.96f),
@@ -777,7 +797,7 @@ fun HomeScreen(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     ListItem(
                         headlineContent = { Text("Chọn nhiều video...") },
-                        leadingContent = { Icon(Icons.Default.Checklist, null, tint = palette.primaryGlow) },
+                        leadingContent = { Icon(AppIcons.Checklist, null, tint = palette.primaryGlow) },
                         modifier = Modifier.clickable {
                             showBottomSheetFor = null
                             isMultiSelectMode = true
@@ -788,18 +808,40 @@ fun HomeScreen(
                     ListItem(
                         headlineContent = {
                             Text(
-                                if (isInVault) "Khôi phục ra khỏi Kho Riêng Tư" else "Đưa vào Kho Riêng Tư (Ẩn video)",
+                                if (isVaultItem) "Giải mã & Khôi phục ra ngoài (Movies)" else "Mã hóa AES-256 đưa vào Kho Riêng Tư",
                                 fontWeight = FontWeight.Bold,
                                 color = palette.primaryGlow
                             )
                         },
                         leadingContent = {
-                            Icon(if (isInVault) Icons.Default.LockOpen else Icons.Default.Lock, null, tint = palette.primaryGlow)
+                            Icon(if (isVaultItem) AppIcons.LockOpen else Icons.Default.Lock, null, tint = palette.primaryGlow)
                         },
                         modifier = Modifier.clickable {
+                            showBottomSheetFor = null
                             scope.launch {
-                                context.toggleVideoInVault(targetVideo.id, !isInVault)
-                                showBottomSheetFor = null
+                                isProcessingVault = true
+                                if (isVaultItem) {
+                                    VaultManager.restoreVideoFromVault(context, targetVideo.id).onSuccess { path ->
+                                        Toast.makeText(context, "🔓 Đã giải mã trả về: $path", Toast.LENGTH_LONG).show()
+                                        refreshTrigger++
+                                    }.onFailure { err ->
+                                        Toast.makeText(context, "Lỗi giải mã: ${err.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    VaultManager.moveVideoToVault(context, targetVideo).onSuccess {
+                                        Toast.makeText(context, "🔒 Đã mã hóa AES-256-GCM vào Kho & xóa bản gốc!", Toast.LENGTH_LONG).show()
+                                        refreshTrigger++
+                                    }.onFailure { err ->
+                                        // Nếu thiếu quyền xóa bản gốc trên Android 11+, xin quyền qua MediaStore
+                                        val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, listOf(targetVideo))
+                                        if (pi != null) {
+                                            mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                        } else {
+                                            Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                                isProcessingVault = false
                             }
                         }
                     )
@@ -812,42 +854,44 @@ fun HomeScreen(
                             showBottomSheetFor = null
                         }
                     )
-                    ListItem(
-                        headlineContent = { Text("Đổi tên video") },
-                        leadingContent = { Icon(Icons.Default.Edit, null, tint = palette.primaryGlow) },
-                        modifier = Modifier.clickable {
-                            activeVideoForAction = targetVideo
-                            dialogType = FileDialogType.RENAME
-                            showBottomSheetFor = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Sao chép (Copy) sang thư mục khác") },
-                        leadingContent = { Icon(Icons.Default.ContentCopy, null, tint = palette.primaryGlow) },
-                        modifier = Modifier.clickable {
-                            activeVideoForAction = targetVideo
-                            dialogType = FileDialogType.COPY
-                            showBottomSheetFor = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Di chuyển (Move) sang thư mục khác") },
-                        leadingContent = { Icon(Icons.Default.DriveFileMove, null, tint = palette.primaryGlow) },
-                        modifier = Modifier.clickable {
-                            activeVideoForAction = targetVideo
-                            dialogType = FileDialogType.MOVE
-                            showBottomSheetFor = null
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Xóa vĩnh viễn", color = MaterialTheme.colorScheme.error) },
-                        leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
-                        modifier = Modifier.clickable {
-                            activeVideoForAction = targetVideo
-                            dialogType = FileDialogType.DELETE
-                            showBottomSheetFor = null
-                        }
-                    )
+                    if (!isVaultItem) {
+                        ListItem(
+                            headlineContent = { Text("Đổi tên video") },
+                            leadingContent = { Icon(Icons.Default.Edit, null, tint = palette.primaryGlow) },
+                            modifier = Modifier.clickable {
+                                activeVideoForAction = targetVideo
+                                dialogType = FileDialogType.RENAME
+                                showBottomSheetFor = null
+                            }
+                        )
+                        ListItem(
+                            headlineContent = { Text("Sao chép (Copy) sang thư mục khác") },
+                            leadingContent = { Icon(AppIcons.ContentCopy, null, tint = palette.primaryGlow) },
+                            modifier = Modifier.clickable {
+                                activeVideoForAction = targetVideo
+                                dialogType = FileDialogType.COPY
+                                showBottomSheetFor = null
+                            }
+                        )
+                        ListItem(
+                            headlineContent = { Text("Di chuyển (Move) sang thư mục khác") },
+                            leadingContent = { Icon(AppIcons.DriveFileMove, null, tint = palette.primaryGlow) },
+                            modifier = Modifier.clickable {
+                                activeVideoForAction = targetVideo
+                                dialogType = FileDialogType.MOVE
+                                showBottomSheetFor = null
+                            }
+                        )
+                        ListItem(
+                            headlineContent = { Text("Xóa vĩnh viễn", color = MaterialTheme.colorScheme.error) },
+                            leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                            modifier = Modifier.clickable {
+                                activeVideoForAction = targetVideo
+                                dialogType = FileDialogType.DELETE
+                                showBottomSheetFor = null
+                            }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -856,7 +900,7 @@ fun HomeScreen(
         )
     }
 
-    // ================= CÁC HỘP THOẠI XỬ LÝ FILE ĐƠN LẺ & HÀNG LOẠT =================
+    // ================= CÁC HỘP THOẠI XỬ LÝ FILE =================
     when (dialogType) {
         FileDialogType.BATCH_DELETE -> {
             val targets = remember(selectedVideoIds.toList(), rawVideos) {
@@ -866,7 +910,7 @@ fun HomeScreen(
                 onDismissRequest = { dialogType = FileDialogType.NONE },
                 containerColor = palette.deepBgMid,
                 title = { Text("Xóa ${targets.size} video đã chọn?") },
-                text = { Text("Bạn có chắc chắn muốn xóa vĩnh viễn ${targets.size} video này khỏi bộ nhớ máy không?") },
+                text = { Text("Bạn có chắc chắn muốn xóa vĩnh viễn ${targets.size} video này không?") },
                 confirmButton = {
                     Button(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -876,7 +920,14 @@ fun HomeScreen(
                                 targets.forEach { v ->
                                     if (FileOperationHelper.deleteVideo(context, v).isSuccess) count++
                                 }
-                                Toast.makeText(context, "Đã xóa $count/${targets.size} video!", Toast.LENGTH_SHORT).show()
+                                if (count < targets.size) {
+                                    val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, targets)
+                                    if (pi != null) {
+                                        mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                    }
+                                } else {
+                                    Toast.makeText(context, "Đã xóa $count video!", Toast.LENGTH_SHORT).show()
+                                }
                                 dialogType = FileDialogType.NONE
                                 exitMultiSelect()
                                 refreshTrigger++
@@ -894,7 +945,7 @@ fun HomeScreen(
             val targets = remember(selectedVideoIds.toList(), rawVideos) {
                 rawVideos.filter { it.id in selectedVideoIds }
             }
-            var targetPath by remember { mutableStateOf("/storage/emulated/0/Movies") }
+            var targetPath by remember { mutableStateOf("/storage/emulated/0/Movies/VideoPlayerPro") }
             AlertDialog(
                 onDismissRequest = { dialogType = FileDialogType.NONE },
                 containerColor = palette.deepBgMid,
@@ -909,7 +960,7 @@ fun HomeScreen(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                                 ) {
                                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Folder, null, tint = palette.primaryGlow)
+                                        Icon(AppIcons.Folder, null, tint = palette.primaryGlow)
                                         Spacer(Modifier.width(8.dp))
                                         Column {
                                             Text(f.name, fontWeight = FontWeight.SemiBold, color = Color.White)
@@ -922,7 +973,7 @@ fun HomeScreen(
                         OutlinedTextField(
                             value = targetPath,
                             onValueChange = { targetPath = it },
-                            label = { Text("Đường dẫn thư mục đích") },
+                            label = { Text("Tên thư mục đích") },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -937,7 +988,6 @@ fun HomeScreen(
                             Toast.makeText(context, "Hoàn tất $ok/${targets.size} video!", Toast.LENGTH_SHORT).show()
                             dialogType = FileDialogType.NONE
                             exitMultiSelect()
-                            kotlinx.coroutines.delay(400)
                             refreshTrigger++
                         }
                     }) { Text(if (isMove) "Di chuyển ngay" else "Sao chép ngay") }
@@ -959,11 +1009,10 @@ fun HomeScreen(
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("• Tên tệp: ${video.displayName}")
                                     Text("• Thư mục: ${video.folder}")
-                                    Text("• Đường dẫn: ${video.path}")
-                                    Text("• Dung lượng: ${video.sizeFormatted} (${video.size} bytes)")
+                                    Text("• Nguồn: ${if (video.path.startsWith("vault://")) "Kho Mã hóa AES-256-GCM" else video.path}")
+                                    Text("• Dung lượng gốc: ${video.sizeFormatted} (${video.size} bytes)")
                                     Text("• Thời lượng: ${video.durationFormatted}")
                                     Text("• Định dạng: ${video.mimeType}")
-                                    Text("• Ngày thêm: ${FileOperationHelper.formatDate(video.dateAdded)}")
                                 }
                             },
                             confirmButton = {
@@ -972,7 +1021,7 @@ fun HomeScreen(
                         )
                     }
                     FileDialogType.RENAME -> {
-                        var newName by remember(video) { mutableStateOf(File(video.path).nameWithoutExtension) }
+                        var newName by remember(video) { mutableStateOf(video.displayName.substringBeforeLast('.')) }
                         AlertDialog(
                             onDismissRequest = { dialogType = FileDialogType.NONE },
                             containerColor = palette.deepBgMid,
@@ -989,12 +1038,16 @@ fun HomeScreen(
                                 Button(onClick = {
                                     scope.launch {
                                         FileOperationHelper.renameVideo(context, video, newName).onSuccess {
-                                            Toast.makeText(context, "Đã đổi tên thành: ${it.name}", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Đã đổi tên thành: $it", Toast.LENGTH_SHORT).show()
                                             dialogType = FileDialogType.NONE
-                                            kotlinx.coroutines.delay(400)
                                             refreshTrigger++
-                                        }.onFailure { err ->
-                                            Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }.onFailure {
+                                            pendingRenameNewName = newName
+                                            val pi = FileOperationHelper.createWriteRequestPendingIntent(context, listOf(video))
+                                            if (pi != null) {
+                                                dialogType = FileDialogType.NONE
+                                                mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                            }
                                         }
                                     }
                                 }) { Text("Lưu") }
@@ -1007,7 +1060,7 @@ fun HomeScreen(
                     FileDialogType.COPY, FileDialogType.MOVE -> {
                         val isMove = (dialogType == FileDialogType.MOVE)
                         var targetPath by remember(video) {
-                            mutableStateOf(File(video.path).parent ?: "/storage/emulated/0/Movies")
+                            mutableStateOf(File(video.path).parent ?: "/storage/emulated/0/Movies/VideoPlayerPro")
                         }
                         AlertDialog(
                             onDismissRequest = { dialogType = FileDialogType.NONE },
@@ -1023,7 +1076,7 @@ fun HomeScreen(
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                                             ) {
                                                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(Icons.Default.Folder, null, tint = palette.primaryGlow)
+                                                    Icon(AppIcons.Folder, null, tint = palette.primaryGlow)
                                                     Spacer(Modifier.width(8.dp))
                                                     Column {
                                                         Text(f.name, fontWeight = FontWeight.SemiBold, color = Color.White)
@@ -1036,7 +1089,7 @@ fun HomeScreen(
                                     OutlinedTextField(
                                         value = targetPath,
                                         onValueChange = { targetPath = it },
-                                        label = { Text("Đường dẫn thư mục đích") },
+                                        label = { Text("Thư mục đích") },
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 }
@@ -1045,9 +1098,8 @@ fun HomeScreen(
                                 Button(onClick = {
                                     scope.launch {
                                         FileOperationHelper.copyOrMoveVideo(context, video, targetPath, isMove).onSuccess {
-                                            Toast.makeText(context, "Hoàn tất!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Đã lưu tới: $it", Toast.LENGTH_SHORT).show()
                                             dialogType = FileDialogType.NONE
-                                            kotlinx.coroutines.delay(400)
                                             refreshTrigger++
                                         }.onFailure { err ->
                                             Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
@@ -1065,7 +1117,7 @@ fun HomeScreen(
                             onDismissRequest = { dialogType = FileDialogType.NONE },
                             containerColor = palette.deepBgMid,
                             title = { Text("Xác nhận xóa vĩnh viễn") },
-                            text = { Text("Xóa tệp '${video.displayName}' khỏi bộ nhớ máy?") },
+                            text = { Text("Xóa tệp '${video.displayName}' khỏi thiết bị?") },
                             confirmButton = {
                                 Button(
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -1075,8 +1127,12 @@ fun HomeScreen(
                                                 Toast.makeText(context, "Đã xóa tệp!", Toast.LENGTH_SHORT).show()
                                                 dialogType = FileDialogType.NONE
                                                 refreshTrigger++
-                                            }.onFailure { err ->
-                                                Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                            }.onFailure {
+                                                val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, listOf(video))
+                                                dialogType = FileDialogType.NONE
+                                                if (pi != null) {
+                                                    mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                                }
                                             }
                                         }
                                     }
