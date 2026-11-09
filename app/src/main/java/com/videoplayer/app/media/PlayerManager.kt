@@ -364,6 +364,7 @@ class PlayerManager(private val context: Context) {
         if (video.path.startsWith("vault://") || video.path.startsWith("content://") || video.path.startsWith("http://") || video.path.startsWith("https://")) {
             return Uri.parse(video.path)
         }
+        if (video.id.startsWith("vault_") && !video.path.startsWith("vault://")) return Uri.fromFile(File(video.path))
         val idLong = video.id.toLongOrNull()
         return if (!useFileUriFallback && idLong != null) {
             ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, idLong)

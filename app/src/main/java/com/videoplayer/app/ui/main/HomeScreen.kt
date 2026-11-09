@@ -41,6 +41,11 @@ import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.ui.components.VideoThumbnailView
 import com.videoplayer.app.util.FileOperationHelper
+import android.content.ContextWrapper
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.fragment.app.FragmentActivity
+import com.videoplayer.app.util.PinSecurityManager
+import com.videoplayer.app.util.VaultHideOutcome
 import com.videoplayer.app.util.VaultManager
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -97,7 +102,40 @@ fun HomeScreen(
         VaultManager.getVaultVideosAsVideoItems(context).map { VaultManager.toVideoItem(context, it) }
     }
 
+    val fragmentActivity = remember(context) {
+        var ctx = context
+        while (ctx is ContextWrapper) {
+            if (ctx is FragmentActivity) return@remember ctx
+            ctx = ctx.baseContext
+        }
+        null
+    }
+    val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
+    var pendingVaultAuthAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showConfirmHidePinDialog by remember { mutableStateOf(false) }
     var isProcessingVault by remember { mutableStateOf(false) }
+
+    // Hàm yêu cầu Xác thực Vân tay hoặc Mã PIN trước khi cho phép Ẩn video vào Kho
+    fun requireAuthBeforeVaultAction(action: () -> Unit) {
+        val act = fragmentActivity
+        val now = System.currentTimeMillis()
+        if (vaultSecState.isConfigured && act != null && PinSecurityManager.canUseBiometric(act) && vaultSecState.lockoutUntilMs <= now) {
+            PinSecurityManager.showBiometricPrompt(
+                activity = act,
+                onSuccess = {
+                    scope.launch { context.recordVaultPinAttempt(true) }
+                    action()
+                },
+                onUsePinFallback = {
+                    pendingVaultAuthAction = action
+                    showConfirmHidePinDialog = true
+                }
+            )
+        } else {
+            pendingVaultAuthAction = action
+            showConfirmHidePinDialog = true
+        }
+    }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchExpanded by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.DATE_DESC) }
@@ -297,30 +335,46 @@ fun HomeScreen(
                             onClick = {
                                 if (selectedVideoIds.isNotEmpty() && !isProcessingVault) {
                                     val targets = displayedVideos.filter { it.id in selectedVideoIds }
-                                    scope.launch {
-                                        isProcessingVault = true
-                                        var okCount = 0
-                                        if (isVaultMode) {
-                                            targets.forEach { v ->
-                                                if (VaultManager.restoreVideoFromVault(context, v.id).isSuccess) okCount++
+                                    requireAuthBeforeVaultAction {
+                                        scope.launch {
+                                            isProcessingVault = true
+                                            var okCount = 0
+                                            val needConfirmVideos = mutableListOf<VideoItem>()
+                                            if (isVaultMode) {
+                                                targets.forEach { v ->
+                                                    if (VaultManager.restoreVideoFromVault(context, v.id).isSuccess) okCount++
+                                                }
+                                                Toast.makeText(context, "🔓 Đã khôi phục tức thì $okCount video ra ngoài!", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                targets.forEach { v ->
+                                                    when (VaultManager.hideVideoToVaultFast(context, v)) {
+                                                        is VaultHideOutcome.Success -> okCount++
+                                                        is VaultHideOutcome.NeedsDeleteConfirmation -> {
+                                                            okCount++
+                                                            needConfirmVideos.add(v)
+                                                        }
+                                                        is VaultHideOutcome.Error -> {}
+                                                    }
+                                                }
+                                                if (needConfirmVideos.isNotEmpty()) {
+                                                    val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, needConfirmVideos)
+                                                    if (pi != null) {
+                                                        mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                                    }
+                                                }
+                                                Toast.makeText(context, "🔒 Đã chuyển tức thì $okCount video vào Kho Ẩn!", Toast.LENGTH_LONG).show()
                                             }
-                                            Toast.makeText(context, "🔓 Đã giải mã khôi phục $okCount video về Movies!", Toast.LENGTH_LONG).show()
-                                        } else {
-                                            targets.forEach { v ->
-                                                if (VaultManager.moveVideoToVault(context, v).isSuccess) okCount++
-                                            }
-                                            Toast.makeText(context, "🔒 Đã mã hóa AES-256-GCM $okCount video vào Kho!", Toast.LENGTH_LONG).show()
+                                            isProcessingVault = false
+                                            exitMultiSelect()
+                                            refreshTrigger++
                                         }
-                                        isProcessingVault = false
-                                        exitMultiSelect()
-                                        refreshTrigger++
                                     }
                                 }
                             }
                         ) {
                             Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(if (isVaultMode) "Giải mã ra ngoài" else "Mã hóa vào Kho", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text(if (isVaultMode) "Khôi phục ra ngoài" else "Đưa vào Kho Ẩn", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                         if (!isVaultMode) {
                             LiquidGlassPill(
@@ -741,7 +795,7 @@ fun HomeScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = if (isVaultMode) {
-                                                "🔒 AES-256-GCM • ${video.sizeFormatted}"
+                                                "🔒 Đã ẩn an toàn • ${video.sizeFormatted}"
                                             } else if (savedPos > 2000L) {
                                                 "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
                                             } else {
@@ -788,7 +842,7 @@ fun HomeScreen(
 
     // ================= MENU QUẢN LÝ FILE ĐƠN LẺ =================
     showBottomSheetFor?.let { targetVideo ->
-        val isVaultItem = targetVideo.path.startsWith("vault://")
+        val isVaultItem = (targetVideo.id.startsWith("vault_") || targetVideo.path.startsWith("vault://"))
         AlertDialog(
             onDismissRequest = { showBottomSheetFor = null },
             containerColor = palette.deepBgMid.copy(alpha = 0.96f),
@@ -808,7 +862,7 @@ fun HomeScreen(
                     ListItem(
                         headlineContent = {
                             Text(
-                                if (isVaultItem) "Giải mã & Khôi phục ra ngoài (Movies)" else "Mã hóa AES-256 đưa vào Kho Riêng Tư",
+                                if (isVaultItem) "Khôi phục video ra khỏi Kho Ẩn" else "Đưa vào Kho Ẩn (Tức thì • Khóa Vân tay/PIN)",
                                 fontWeight = FontWeight.Bold,
                                 color = palette.primaryGlow
                             )
@@ -818,30 +872,35 @@ fun HomeScreen(
                         },
                         modifier = Modifier.clickable {
                             showBottomSheetFor = null
-                            scope.launch {
-                                isProcessingVault = true
-                                if (isVaultItem) {
-                                    VaultManager.restoreVideoFromVault(context, targetVideo.id).onSuccess { path ->
-                                        Toast.makeText(context, "🔓 Đã giải mã trả về: $path", Toast.LENGTH_LONG).show()
-                                        refreshTrigger++
-                                    }.onFailure { err ->
-                                        Toast.makeText(context, "Lỗi giải mã: ${err.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                } else {
-                                    VaultManager.moveVideoToVault(context, targetVideo).onSuccess {
-                                        Toast.makeText(context, "🔒 Đã mã hóa AES-256-GCM vào Kho & xóa bản gốc!", Toast.LENGTH_LONG).show()
-                                        refreshTrigger++
-                                    }.onFailure { err ->
-                                        // Nếu thiếu quyền xóa bản gốc trên Android 11+, xin quyền qua MediaStore
-                                        val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, listOf(targetVideo))
-                                        if (pi != null) {
-                                            mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-                                        } else {
-                                            Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                            requireAuthBeforeVaultAction {
+                                scope.launch {
+                                    isProcessingVault = true
+                                    if (isVaultItem) {
+                                        VaultManager.restoreVideoFromVault(context, targetVideo.id).onSuccess { path ->
+                                            Toast.makeText(context, "🔓 Đã khôi phục về: $path", Toast.LENGTH_LONG).show()
+                                            refreshTrigger++
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Lỗi khôi phục: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        when (val out = VaultManager.hideVideoToVaultFast(context, targetVideo)) {
+                                            is VaultHideOutcome.Success -> {
+                                                Toast.makeText(context, "🔒 Đã ẩn tức thì vào Kho Riêng Tư!", Toast.LENGTH_SHORT).show()
+                                                refreshTrigger++
+                                            }
+                                            is VaultHideOutcome.NeedsDeleteConfirmation -> {
+                                                // Với video tải từ Zalo/App khác trên Android 11+, bật bảng xác nhận xóa file gốc ở thư mục Zalo
+                                                Toast.makeText(context, "🔒 Đã đưa vào Kho! Hãy bấm 'Cho phép' để xóa bản gốc ở thư mục ngoài.", Toast.LENGTH_LONG).show()
+                                                mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(out.pendingIntent.intentSender).build())
+                                                refreshTrigger++
+                                            }
+                                            is VaultHideOutcome.Error -> {
+                                                Toast.makeText(context, "Lỗi: ${out.message}", Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                     }
+                                    isProcessingVault = false
                                 }
-                                isProcessingVault = false
                             }
                         }
                     )
@@ -896,6 +955,85 @@ fun HomeScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showBottomSheetFor = null }) { Text("Đóng") }
+            }
+        )
+    }
+
+    // ================= HỘP THOẠI XÁC THỰC MÃ PIN TRƯỚC KHI ẨN VIDEO =================
+    if (showConfirmHidePinDialog) {
+        var pinInput by remember { mutableStateOf("") }
+        val isSettingNewPin = !vaultSecState.isConfigured
+        AlertDialog(
+            onDismissRequest = {
+                showConfirmHidePinDialog = false
+                pendingVaultAuthAction = null
+            },
+            containerColor = palette.deepBgMid,
+            title = {
+                Text(
+                    if (isSettingNewPin) "🔐 Tạo Mã PIN Kho Ẩn" else "🔒 Xác nhận Mã PIN để Ẩn Video",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (isSettingNewPin) "Thiết lập mã PIN (tối thiểu 6 ký tự) để bảo vệ video ẩn của bạn:"
+                        else "Nhập mã PIN của bạn để xác nhận đưa video vào Kho Ẩn:",
+                        color = Color.White
+                    )
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { pinInput = it },
+                        label = { Text("Mã PIN (>= 6 ký tự)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (isSettingNewPin) {
+                        if (PinSecurityManager.isValidNewPin(pinInput)) {
+                            scope.launch {
+                                val salt = PinSecurityManager.generateSaltBase64()
+                                val hash = PinSecurityManager.hashPinPbkdf2(pinInput, salt)
+                                context.saveHashedVaultPin(hash, salt)
+                                showConfirmHidePinDialog = false
+                                val act = pendingVaultAuthAction
+                                pendingVaultAuthAction = null
+                                act?.invoke()
+                            }
+                        } else {
+                            Toast.makeText(context, "Mã PIN phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        val ok = PinSecurityManager.verifyPinConstantTime(
+                            inputPin = pinInput,
+                            storedHashBase64 = vaultSecState.pinHash ?: "",
+                            storedSaltBase64 = vaultSecState.pinSalt ?: ""
+                        )
+                        if (ok) {
+                            scope.launch { context.recordVaultPinAttempt(true) }
+                            showConfirmHidePinDialog = false
+                            val act = pendingVaultAuthAction
+                            pendingVaultAuthAction = null
+                            act?.invoke()
+                        } else {
+                            Toast.makeText(context, "Sai mã PIN!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) {
+                    Text("Xác nhận")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showConfirmHidePinDialog = false
+                    pendingVaultAuthAction = null
+                }) { Text("Hủy") }
             }
         )
     }

@@ -461,7 +461,7 @@ fun PlayerScreen(
     // Giữ sáng màn hình & Ẩn thanh thông báo (Không tự ép xoay màn hình khi mới mở để chống khựng!)
     DisposableEffect(activity, currentVideo) {
         val window = activity?.window
-        val isVaultVideo = currentVideo?.path?.startsWith("vault://") == true
+        val isVaultVideo = (currentVideo?.id?.startsWith("vault_") == true || currentVideo?.path?.startsWith("vault://") == true)
         if (window != null) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             if (isVaultVideo) {
