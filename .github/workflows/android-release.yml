@@ -12,11 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      SIGNING_STORE_FILE: ota-signing.jks
-      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || 'androidpassword' }}
-      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS || 'otakey' }}
-      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || 'androidpassword' }}
     steps:
       - name: Checkout mã nguồn
         uses: actions/checkout@v4
@@ -29,17 +24,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Đảm bảo Keystore cố định cho OTA
+      - name: Decode Keystore
         run: |
-          if [ ! -f app/ota-signing.jks ]; then
-            keytool -genkeypair -v \
-              -keystore app/ota-signing.jks \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -alias "$SIGNING_KEY_ALIAS" \
-              -storepass "$SIGNING_STORE_PASSWORD" \
-              -keypass "$SIGNING_KEY_PASSWORD" \
-              -dname "CN=ProPlayVideo, OU=Dev, O=ProPlay, L=Hanoi, S=HN, C=VN"
-          fi
+          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > app/ota-signing.jks
         shell: bash
 
       - name: Xác định tên Repo, VersionName và VersionCode
@@ -60,6 +47,11 @@ jobs:
         shell: bash
 
       - name: Tải Gradle 8.4 và Build APK Release (R8 Minify + Resource Shrinking)
+        env:
+          SIGNING_STORE_FILE: ota-signing.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           if [ ! -f /tmp/gradle-8.4/bin/gradle ]; then
             curl -L --retry 5 --retry-delay 3 -sS https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
