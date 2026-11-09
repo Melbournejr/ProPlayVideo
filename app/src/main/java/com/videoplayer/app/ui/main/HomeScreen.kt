@@ -374,7 +374,7 @@ fun HomeScreen(
                         ) {
                             Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(if (isVaultMode) "Khôi phục ra ngoài" else "Đưa vào Kho Ẩn", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text(if (isVaultMode) "Khôi phục" else "Lưu bảo mật", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                         if (!isVaultMode) {
                             LiquidGlassPill(
@@ -422,7 +422,7 @@ fun HomeScreen(
                         Icon(Icons.Default.Search, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (isVaultMode) "Tìm trong Kho AES-256..." else "Tìm kiếm...",
+                            text = if (isVaultMode) "Tìm trong thư mục..." else "Tìm kiếm...",
                             color = Color.White.copy(alpha = 0.85f),
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1
@@ -795,7 +795,7 @@ fun HomeScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = if (isVaultMode) {
-                                                "🔒 Đã ẩn an toàn • ${video.sizeFormatted}"
+                                                "📁 Lưu trữ • ${video.sizeFormatted}"
                                             } else if (savedPos > 2000L) {
                                                 "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
                                             } else {
@@ -862,7 +862,7 @@ fun HomeScreen(
                     ListItem(
                         headlineContent = {
                             Text(
-                                if (isVaultItem) "Khôi phục video ra khỏi Kho Ẩn" else "Đưa vào Kho Ẩn (Tức thì • Khóa Vân tay/PIN)",
+                                if (isVaultItem) "Khôi phục về thư mục gốc" else "Lưu trữ bảo mật",
                                 fontWeight = FontWeight.Bold,
                                 color = palette.primaryGlow
                             )
@@ -983,11 +983,21 @@ fun HomeScreen(
                         else "Nhập mã PIN của bạn để xác nhận đưa video vào Kho Ẩn:",
                         color = Color.White
                     )
+                    var pinVisible by remember { mutableStateOf(false) }
                     OutlinedTextField(
                         value = pinInput,
                         onValueChange = { pinInput = it },
                         label = { Text("Mã PIN (>= 6 ký tự)") },
-                        visualTransformation = PasswordVisualTransformation(),
+                        visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { pinVisible = !pinVisible }) {
+                                Icon(
+                                    imageVector = if (pinVisible) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                    contentDescription = "Hiện/Ẩn ký tự",
+                                    tint = Color.White
+                                )
+                            }
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

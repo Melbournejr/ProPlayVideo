@@ -12,9 +12,11 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -110,6 +113,7 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    @OptIn(ExperimentalFoundationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { UpdateManager(this).cleanupOldApks() } catch (_: Exception) {}
@@ -162,15 +166,41 @@ class MainActivity : FragmentActivity() {
                     videoListStates.getOrPut(key) { LazyListState() }
                 }
 
-                // Bước 2: Tự động phát hiện dữ liệu Vault cũ (ID và PIN thô) khi mở app lần đầu sau cập nhật
+                // Hàm kích hoạt mở Kho Ẩn bí mật (khi người dùng Nhấn Giữ vào Tiêu đề hoặc nút Home)
+                fun triggerStealthVaultAccess() {
+                    if (isVaultUnlocked) {
+                        isVaultUnlocked = false
+                    } else if (vaultSecState.needsMigration) {
+                        showMigrationDialog = true
+                    } else if (vaultSecState.isConfigured && PinSecurityManager.canUseBiometric(this@MainActivity)) {
+                        val now = System.currentTimeMillis()
+                        if (vaultSecState.lockoutUntilMs > now) {
+                            showVaultPinDialog = true
+                        } else {
+                            PinSecurityManager.showBiometricPrompt(
+                                activity = this@MainActivity,
+                                onSuccess = {
+                                    scope.launch { context.recordVaultPinAttempt(true) }
+                                    isVaultUnlocked = true
+                                    screen = Screen.Home
+                                },
+                                onUsePinFallback = {
+                                    showVaultPinDialog = true
+                                }
+                            )
+                        }
+                    } else {
+                        showVaultPinDialog = true
+                    }
+                }
+
                 LaunchedEffect(vaultSecState.needsMigration) {
                     if (vaultSecState.needsMigration) {
                         showMigrationDialog = true
                     }
                 }
 
-                // Bước 2: Đặt FLAG_SECURE cho các màn hình Vault và Player đang phát video từ Vault
-                val isPlayingVaultVideo = (screen == Screen.Player && selectedVideo?.path?.startsWith("vault://") == true)
+                val isPlayingVaultVideo = (screen == Screen.Player && (selectedVideo?.id?.startsWith("vault_") == true || selectedVideo?.path?.startsWith("vault://") == true))
                 DisposableEffect(isVaultUnlocked, isPlayingVaultVideo) {
                     if (isVaultUnlocked || isPlayingVaultVideo) {
                         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -180,7 +210,6 @@ class MainActivity : FragmentActivity() {
                     onDispose {}
                 }
 
-                // Bước 5: Xử lý mở video trực tiếp từ ACTION_VIEW (File Manager / Browser)
                 LaunchedEffect(externalViewIntentUri) {
                     val uri = externalViewIntentUri ?: return@LaunchedEffect
                     externalViewIntentUri = null
@@ -256,15 +285,30 @@ class MainActivity : FragmentActivity() {
                                         Spacer(Modifier.width(8.dp))
                                     }
 
+                                    // Tên tiêu đề kín đáo (Không hiện chữ "Kho Riêng Tư" lộ liễu)
                                     val titleText = when {
-                                        screen == Screen.Home && isVaultUnlocked -> "🔒 Kho AES-256 Riêng Tư"
+                                        screen == Screen.Home && isVaultUnlocked -> "📁 Lưu trữ nội bộ"
                                         screen == Screen.Home && selectedFolder != null -> selectedFolder!!
                                         screen == Screen.Stream -> "Stream Mạng"
                                         screen == Screen.Settings -> "Tùy biến Kính & OTA"
                                         else -> "Video Player Pro"
                                     }
 
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    // Cử chỉ Bí Mật 1: Nhấn giữ (Long Press) vào Tiêu đề để mở Kho Ẩn!
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .combinedClickable(
+                                                onClick = {
+                                                    if (isVaultUnlocked) isVaultUnlocked = false
+                                                },
+                                                onLongClick = {
+                                                    triggerStealthVaultAccess()
+                                                }
+                                            )
+                                            .padding(vertical = 2.dp, horizontal = 4.dp)
+                                    ) {
                                         Text(
                                             text = titleText,
                                             style = MaterialTheme.typography.titleMedium,
@@ -280,53 +324,35 @@ class MainActivity : FragmentActivity() {
                                         )
                                     }
 
-                                    // Nút Mở Kho Video Riêng Tư (Ưu tiên BiometricPrompt nếu đã cài PIN, có fallback PIN)
-                                    IconButton(onClick = {
-                                        if (isVaultUnlocked) {
-                                            isVaultUnlocked = false
-                                        } else if (vaultSecState.needsMigration) {
-                                            showMigrationDialog = true
-                                        } else if (vaultSecState.isConfigured && PinSecurityManager.canUseBiometric(this@MainActivity)) {
-                                            val now = System.currentTimeMillis()
-                                            if (vaultSecState.lockoutUntilMs > now) {
-                                                showVaultPinDialog = true
-                                            } else {
-                                                PinSecurityManager.showBiometricPrompt(
-                                                    activity = this@MainActivity,
-                                                    onSuccess = {
-                                                        scope.launch { context.recordVaultPinAttempt(true) }
-                                                        isVaultUnlocked = true
-                                                        screen = Screen.Home
-                                                    },
-                                                    onUsePinFallback = {
-                                                        showVaultPinDialog = true
-                                                    }
-                                                )
-                                            }
-                                        } else {
-                                            showVaultPinDialog = true
-                                        }
-                                    }) {
-                                        Icon(
-                                            if (isVaultUnlocked) AppIcons.LockOpen else Icons.Default.Lock,
-                                            contentDescription = "Kho Riêng Tư",
-                                            tint = if (isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
-                                        )
-                                    }
-
-                                    IconButton(onClick = {
-                                        screen = Screen.Home
-                                        selectedFolder = null
-                                        isVaultUnlocked = false
-                                    }) {
+                                    // Cử chỉ Bí Mật 2: Chạm 1 lần vào Home thì về Trang chủ, Nhấn giữ (Long Press) vào Home thì mở Kho Ẩn!
+                                    // (Đã xóa hoàn toàn biểu tượng Ổ khóa trên thanh tiêu đề để ngụy trang tuyệt đối)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(CircleShape)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    screen = Screen.Home
+                                                    selectedFolder = null
+                                                    isVaultUnlocked = false
+                                                },
+                                                onLongClick = {
+                                                    triggerStealthVaultAccess()
+                                                }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Icon(
                                             Icons.Default.Home,
-                                            contentDescription = "Thư mục gốc",
-                                            tint = if (screen == Screen.Home && selectedFolder == null && !isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
+                                            contentDescription = "Trang chủ",
+                                            tint = if (screen == Screen.Home && selectedFolder == null) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
 
-                                    IconButton(onClick = { screen = Screen.Settings }) {
+                                    IconButton(onClick = {
+                                        isVaultUnlocked = false
+                                        screen = Screen.Settings
+                                    }) {
                                         Icon(
                                             Icons.Default.Settings,
                                             contentDescription = "Cài đặt & OTA",
@@ -369,22 +395,23 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
-                        // ================= HỘP THOẠI MIGRATION CHO NGƯỜI DÙNG CŨ (BƯỚC 2) =================
+                        // Hộp thoại Migration cho người dùng cũ (Có nút Con mắt hiện ký tự)
                         if (showMigrationDialog) {
                             var oldPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
+                            var showPinChars by remember { mutableStateOf(false) }
                             val hasLegacyPin = !vaultSecState.legacyPlainPin.isNullOrBlank()
 
                             AlertDialog(
                                 onDismissRequest = { if (!isMigratingVault) showMigrationDialog = false },
                                 containerColor = styleConfig.palette.deepBgMid,
                                 title = {
-                                    Text("🛡️ Nâng cấp Bảo mật Kho Riêng Tư (AES-256)", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("🛡️ Nâng cấp Lưu trữ Bảo mật", color = Color.White, fontWeight = FontWeight.Bold)
                                 },
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            "Phát hiện ${vaultSecState.legacyVaultIds.size} video trong Kho phiên bản cũ. Hãy xác nhận mã PIN cũ và đặt mã PIN mới (tối thiểu 6 ký tự) để băm PBKDF2 và mã hóa AES-256-GCM toàn bộ video của bạn:",
+                                            "Xác nhận mã PIN cũ và đặt mã PIN mới (tối thiểu 6 ký tự):",
                                             color = Color.White,
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -392,8 +419,8 @@ class MainActivity : FragmentActivity() {
                                             OutlinedTextField(
                                                 value = oldPinInput,
                                                 onValueChange = { oldPinInput = it },
-                                                label = { Text("Mã PIN cũ của bạn") },
-                                                visualTransformation = PasswordVisualTransformation(),
+                                                label = { Text("Mã PIN cũ") },
+                                                visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
                                                 singleLine = true,
                                                 modifier = Modifier.fillMaxWidth()
                                             )
@@ -401,15 +428,20 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = newPinInput,
                                             onValueChange = { newPinInput = it },
-                                            label = { Text("Mã PIN mới (Tối thiểu 6 ký tự)") },
-                                            visualTransformation = PasswordVisualTransformation(),
+                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
+                                            visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                            trailingIcon = {
+                                                IconButton(onClick = { showPinChars = !showPinChars }) {
+                                                    Icon(
+                                                        imageVector = if (showPinChars) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                                        contentDescription = "Hiện/Ẩn",
+                                                        tint = Color.White
+                                                    )
+                                                }
+                                            },
                                             singleLine = true,
                                             modifier = Modifier.fillMaxWidth()
                                         )
-                                        if (isMigratingVault) {
-                                            LinearProgressIndicator(color = styleConfig.palette.primaryGlow, modifier = Modifier.fillMaxWidth())
-                                            Text("Đang mã hóa AES-256-GCM các video cũ...", color = styleConfig.palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
-                                        }
                                     }
                                 },
                                 confirmButton = {
@@ -442,12 +474,9 @@ class MainActivity : FragmentActivity() {
                                                 isMigratingVault = false
                                                 showMigrationDialog = false
                                                 isVaultUnlocked = true
-                                                Toast.makeText(context, "✅ Đã nâng cấp mã hóa AES-256-GCM hoàn tất!", Toast.LENGTH_LONG).show()
                                             }
                                         }
-                                    ) {
-                                        Text("Nâng cấp & Mã hóa")
-                                    }
+                                    ) { Text("Lưu & Hoàn tất") }
                                 },
                                 dismissButton = {
                                     if (!isMigratingVault) {
@@ -457,9 +486,10 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        // ================= HỘP THOẠI MÃ PIN PBKDF2 + KHÓA TĂNG DẦN (BƯỚC 2) =================
+                        // Hộp thoại nhập Mã PIN mở Kho Ẩn (Có nút Con mắt 👁️ bật/tắt hiển thị ký tự)
                         if (showVaultPinDialog) {
                             var pinInput by remember { mutableStateOf("") }
+                            var pinVisible by remember { mutableStateOf(false) }
                             val isSettingNewPin = !vaultSecState.isConfigured
                             var remainingLockSec by remember { mutableLongStateOf(0L) }
 
@@ -477,7 +507,7 @@ class MainActivity : FragmentActivity() {
                                 containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text(
-                                        if (isSettingNewPin) "🔐 Thiết lập Mã PIN Kho AES-256" else "🔒 Mở Kho Video Riêng Tư",
+                                        if (isSettingNewPin) "🔐 Thiết lập Mã PIN Bảo Mật" else "🔒 Xác thực Lưu trữ nội bộ",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -492,8 +522,8 @@ class MainActivity : FragmentActivity() {
                                             )
                                         } else {
                                             Text(
-                                                if (isSettingNewPin) "Nhập mã PIN (tối thiểu 6 ký tự, băm PBKDF2-HMAC-SHA256 120.000 vòng):"
-                                                else "Nhập mã PIN của bạn để giải mã xem Kho Riêng Tư:",
+                                                if (isSettingNewPin) "Nhập mã PIN mới (tối thiểu 6 ký tự):"
+                                                else "Nhập mã PIN của bạn:",
                                                 color = Color.White
                                             )
                                         }
@@ -502,7 +532,16 @@ class MainActivity : FragmentActivity() {
                                             onValueChange = { pinInput = it },
                                             label = { Text("Mã PIN (>= 6 ký tự)") },
                                             enabled = remainingLockSec <= 0L,
-                                            visualTransformation = PasswordVisualTransformation(),
+                                            visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                            trailingIcon = {
+                                                IconButton(onClick = { pinVisible = !pinVisible }) {
+                                                    Icon(
+                                                        imageVector = if (pinVisible) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                                        contentDescription = "Hiện/Ẩn ký tự",
+                                                        tint = Color.White
+                                                    )
+                                                }
+                                            },
                                             singleLine = true,
                                             modifier = Modifier.fillMaxWidth()
                                         )
@@ -519,7 +558,7 @@ class MainActivity : FragmentActivity() {
                                                     onUsePinFallback = { showVaultPinDialog = true }
                                                 )
                                             }) {
-                                                Text("👆 Dùng Vân tay / Khuôn mặt (Biometrics)", color = styleConfig.palette.primaryGlow)
+                                                Text("👆 Dùng Vân tay / Khuôn mặt", color = styleConfig.palette.primaryGlow)
                                             }
                                         }
                                     }
@@ -570,7 +609,7 @@ class MainActivity : FragmentActivity() {
                                             }
                                         }
                                     ) {
-                                        Text(if (isSettingNewPin) "Lưu & Mở Kho" else "Mở Kho")
+                                        Text(if (isSettingNewPin) "Lưu & Mở" else "Mở")
                                     }
                                 },
                                 dismissButton = {
@@ -579,7 +618,6 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        // Hộp thoại cảnh báo HTTP Cleartext khi mở link http:// từ trình duyệt bên ngoài (Bước 4 & 5)
                         pendingHttpIntentUrl?.let { httpUrl ->
                             AlertDialog(
                                 onDismissRequest = { pendingHttpIntentUrl = null },
@@ -625,6 +663,9 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
     val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
     val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
+    val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
+
+    var showChangePinDialog by remember { mutableStateOf(false) }
 
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
@@ -641,7 +682,39 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH
+        // 1. ĐỔI MÃ PIN LƯU TRỮ BẢO MẬT
+        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = palette.primaryGlow)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Bảo mật & Mã PIN lưu trữ",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    "Mẹo kín đáo: Nhấn giữ (Long Press) vào tên ứng dụng 'Video Player Pro' hoặc nút Trang chủ (🏠) trên thanh tiêu đề để mở thư mục ẩn.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFA7B8D8)
+                )
+                LiquidGlassPill(
+                    active = true,
+                    onClick = { showChangePinDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (vaultSecState.isConfigured) "🔑 Thay đổi Mã PIN hiện tại" else "🔐 Thiết lập Mã PIN mới",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // 2. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -709,7 +782,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // 2. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN
+        // 3. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -772,7 +845,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // 3. TRUNG TÂM CẬP NHẬT OTA AN TOÀN (SHA-256 + VERSIONCODE + CERT VERIFY)
+        // 4. TRUNG TÂM CẬP NHẬT OTA AN TOÀN
         LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
@@ -935,5 +1008,109 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+
+    // ================= HỘP THOẠI ĐỔI MẬT KHẨU PIN KHO ẨN (CÓ NÚT CON MẮT HIỆN KÝ TỰ) =================
+    if (showChangePinDialog) {
+        var currentPinInput by remember { mutableStateOf("") }
+        var newPinInput by remember { mutableStateOf("") }
+        var confirmNewPinInput by remember { mutableStateOf("") }
+        var showChars by remember { mutableStateOf(false) }
+        val hasExistingPin = vaultSecState.isConfigured
+
+        AlertDialog(
+            onDismissRequest = { showChangePinDialog = false },
+            containerColor = palette.deepBgMid,
+            title = {
+                Text(
+                    if (hasExistingPin) "🔑 Thay đổi Mã PIN Lưu trữ" else "🔐 Thiết lập Mã PIN Lưu trữ",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (hasExistingPin) {
+                        OutlinedTextField(
+                            value = currentPinInput,
+                            onValueChange = { currentPinInput = it },
+                            label = { Text("Mã PIN hiện tại") },
+                            visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showChars = !showChars }) {
+                                    Icon(
+                                        imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                        contentDescription = "Hiện/Ẩn ký tự",
+                                        tint = Color.White
+                                    )
+                                }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    OutlinedTextField(
+                        value = newPinInput,
+                        onValueChange = { newPinInput = it },
+                        label = { Text("Mã PIN mới (>= 6 ký tự)") },
+                        visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showChars = !showChars }) {
+                                Icon(
+                                    imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                    contentDescription = "Hiện/Ẩn ký tự",
+                                    tint = Color.White
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirmNewPinInput,
+                        onValueChange = { confirmNewPinInput = it },
+                        label = { Text("Nhập lại Mã PIN mới") },
+                        visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (hasExistingPin) {
+                        val validOld = PinSecurityManager.verifyPinConstantTime(
+                            inputPin = currentPinInput,
+                            storedHashBase64 = vaultSecState.pinHash ?: "",
+                            storedSaltBase64 = vaultSecState.pinSalt ?: ""
+                        )
+                        if (!validOld) {
+                            Toast.makeText(context, "Mã PIN hiện tại không đúng!", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                    }
+                    if (!PinSecurityManager.isValidNewPin(newPinInput)) {
+                        Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (newPinInput.trim() != confirmNewPinInput.trim()) {
+                        Toast.makeText(context, "Hai ô Mã PIN mới không khớp nhau!", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    scope.launch {
+                        val newSalt = PinSecurityManager.generateSaltBase64()
+                        val newHash = PinSecurityManager.hashPinPbkdf2(newPinInput, newSalt)
+                        context.saveHashedVaultPin(newHash, newSalt)
+                        showChangePinDialog = false
+                        Toast.makeText(context, "✅ Đã cập nhật Mã PIN mới thành công!", Toast.LENGTH_LONG).show()
+                    }
+                }) {
+                    Text("Lưu Mã PIN mới")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangePinDialog = false }) { Text("Hủy") }
+            }
+        )
     }
 }
