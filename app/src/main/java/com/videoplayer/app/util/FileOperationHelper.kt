@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import androidx.core.content.FileProvider
 import com.videoplayer.app.data.model.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,6 +45,60 @@ object FileOperationHelper {
                 context.startActivity(intent)
             }
         }
+    }
+
+    fun resolveShareableUri(context: Context, video: VideoItem): Uri? {
+        return try {
+            val idLong = video.id.toLongOrNull()
+            if (idLong != null && !video.id.startsWith("vault_")) {
+                ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, idLong)
+            } else {
+                val rawPath = video.path.removePrefix("vault://")
+                val file = File(rawPath)
+                if (file.exists()) {
+                    FileProvider.getUriForFile(context, "com.videoplayer.app.fileprovider", file)
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun shareVideo(context: Context, video: VideoItem) {
+        val uri = resolveShareableUri(context, video) ?: return
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = video.mimeType.ifBlank { "video/*" }
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TITLE, video.displayName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(intent, "Chia sẻ: ${video.displayName}").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    }
+
+    fun shareMultipleVideos(context: Context, videos: List<VideoItem>) {
+        if (videos.isEmpty()) return
+        if (videos.size == 1) {
+            shareVideo(context, videos.first())
+            return
+        }
+        val uris = ArrayList<Uri>()
+        videos.forEach { v ->
+            resolveShareableUri(context, v)?.let { uris.add(it) }
+        }
+        if (uris.isEmpty()) return
+
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "video/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(intent, "Chia sẻ ${uris.size} video").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
     }
 
     fun formatDate(timestampSec: Long): String {

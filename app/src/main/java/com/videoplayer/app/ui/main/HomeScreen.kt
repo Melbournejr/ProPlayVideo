@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -40,6 +41,8 @@ import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.ui.components.AppIcons
+import com.videoplayer.app.ui.components.FastGridScrollbar
+import com.videoplayer.app.ui.components.FastListScrollbar
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
@@ -326,6 +329,19 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        LiquidGlassPill(
+                            onClick = {
+                                if (selectedVideoIds.isNotEmpty()) {
+                                    val targets = displayedVideos.filter { it.id in selectedVideoIds }
+                                    FileOperationHelper.shareMultipleVideos(context, targets)
+                                    exitMultiSelect()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Chia sẻ", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        }
                         if (!isVaultMode) {
                             LiquidGlassPill(onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_COPY }) {
                                 Icon(AppIcons.ContentCopy, null, tint = Color.White, modifier = Modifier.size(15.dp))
@@ -659,6 +675,11 @@ fun HomeScreen(
                         }
                     }
                 }
+                FastListScrollbar(
+                    listState = folderListState,
+                    totalItemsCount = folders.size,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
             } else {
                 fun handleItemClick(video: VideoItem) {
                     if (isMultiSelectMode) {
@@ -678,7 +699,10 @@ fun HomeScreen(
                 }
 
                 if (isGridView) {
+                    val gridState = rememberLazyGridState()
+                    Box(modifier = Modifier.fillMaxSize()) {
                     LazyVerticalGrid(
+                        state = gridState,
                         columns = GridCells.Fixed(2),
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
@@ -756,7 +780,14 @@ fun HomeScreen(
                             }
                         }
                     }
+                    FastGridScrollbar(
+                        gridState = gridState,
+                        totalItemsCount = displayedVideos.size,
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
+                    }
                 } else {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         state = videoListState,
                         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
@@ -835,6 +866,12 @@ fun HomeScreen(
                             }
                         }
                     }
+                    FastListScrollbar(
+                        listState = videoListState,
+                        totalItemsCount = displayedVideos.size,
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
+                    }
                 }
             }
         }
@@ -849,6 +886,14 @@ fun HomeScreen(
             title = { Text(targetVideo.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    ListItem(
+                        headlineContent = { Text("Chia sẻ video...", fontWeight = FontWeight.SemiBold) },
+                        leadingContent = { Icon(Icons.Default.Share, null, tint = palette.primaryGlow) },
+                        modifier = Modifier.clickable {
+                            showBottomSheetFor = null
+                            FileOperationHelper.shareVideo(context, targetVideo)
+                        }
+                    )
                     ListItem(
                         headlineContent = { Text("Chọn nhiều video...") },
                         leadingContent = { Icon(AppIcons.Checklist, null, tint = palette.primaryGlow) },

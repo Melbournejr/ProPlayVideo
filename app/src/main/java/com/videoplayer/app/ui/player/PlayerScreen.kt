@@ -78,6 +78,7 @@ import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
+import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.VideoSnapshotHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1127,6 +1128,21 @@ fun PlayerScreen(
                             Icon(AppIcons.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Cửa sổ PiP", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (currentVideo != null) {
+                            LiquidGlassPill(
+                                onClick = {
+                                    activeModal = ActiveModal.NONE
+                                    playerManager.pause()
+                                    isPlaying = false
+                                    FileOperationHelper.shareVideo(context, currentVideo!!)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Chia sẻ", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
 
