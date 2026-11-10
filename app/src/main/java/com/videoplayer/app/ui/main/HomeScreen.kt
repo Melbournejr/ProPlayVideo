@@ -988,7 +988,7 @@ fun HomeScreen(
                         value = pinInput,
                         onValueChange = { pinInput = it },
                         label = { Text("Mã PIN (>= 6 ký tự)") },
-                        visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = if (pinVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { pinVisible = !pinVisible }) {
                                 Icon(
