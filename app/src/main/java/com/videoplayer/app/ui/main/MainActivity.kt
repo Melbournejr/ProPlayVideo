@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -136,16 +137,20 @@ class MainActivity : FragmentActivity() {
         setContent {
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
+            val engineId by context.observeThemeEngineMode().collectAsState(initial = "liquid_glass")
+            val subVariantId by context.observeThemeSubVariant().collectAsState(initial = "gold_signature")
             val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
             val tintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
             val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
             val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
             val httpWarnAck by context.observeHttpWarnAcknowledged().collectAsState(initial = false)
 
-            val styleConfig = remember(themeId, tintId, frostAlpha) {
-                GlassStyleConfig(
-                    palette = getGlassPaletteById(themeId),
-                    tint = getGlassTintById(tintId),
+            val styleConfig = remember(engineId, subVariantId, themeId, tintId, frostAlpha) {
+                buildEffectiveStyleConfig(
+                    engineId = engineId,
+                    subVariantId = subVariantId,
+                    glassThemeId = themeId,
+                    glassTintId = tintId,
                     frostAlpha = frostAlpha
                 )
             }
@@ -323,7 +328,7 @@ class MainActivity : FragmentActivity() {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = if (isVaultUnlocked) "Chế độ bảo mật riêng tư" else "Apple Liquid Glass • v${BuildConfig.VERSION_NAME}",
+                                            text = if (isVaultUnlocked) "Chế độ bảo mật riêng tư" else "${ThemeEngineId.values().find { it.id == engineId }?.title ?: "Liquid Glass"} • v${BuildConfig.VERSION_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = styleConfig.palette.primaryGlow
                                         )
@@ -1113,9 +1118,14 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val updateManager = remember { UpdateManager(context) }
 
+    val activeEngineId by context.observeThemeEngineMode().collectAsState(initial = ThemeEngineId.LIQUID_GLASS.id)
+    val activeSubVariantId by context.observeThemeSubVariant().collectAsState(initial = "gold_signature")
     val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
     val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
     val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
+
+    // Trạng thái thu gọn / mở rộng menu con của từng bộ Theme (Mặc định đóng gọn để nhìn rõ cả 6 bộ Theme)
+    var expandedEngineId by remember { mutableStateOf<String?>(null) }
 
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
@@ -1132,150 +1142,286 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. CHẤT LIỆU & MÀU PHỦ TẤM KÍNH
+        // ================= 1. HỆ THỐNG 6 BỘ GIAO DIỆN (CÓ MENU THU GỌN ACCORDION) =================
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
                 .background(palette.deepBgMid)
                 .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.BlurOn, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Chất liệu & Màu Kính (Glass Material)",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
-            Text("Độ đục sương mờ: $pct%", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA7B8D8))
-            Slider(
-                value = currentFrostAlpha,
-                onValueChange = { newAlpha -> scope.launch { context.saveGlassFrostAlpha(newAlpha) } },
-                valueRange = 0.04f..0.45f,
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = palette.primaryGlow,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                )
-            )
-
-            GlassTintPresets.forEach { tintOpt ->
-                val isSelected = (tintOpt.id == currentTintId)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (isSelected) tintOpt.surfaceColor.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.28f))
-                        .border(
-                            width = if (isSelected) 1.5.dp else 0.8.dp,
-                            color = if (isSelected) tintOpt.rimTint else Color.White.copy(alpha = 0.18f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .clickable { scope.launch { context.saveGlassTint(tintOpt.id) } }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clip(CircleShape)
-                                .background(tintOpt.surfaceColor)
-                                .border(1.dp, Color.White, CircleShape)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = tintOpt.name,
-                            color = Color.White,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    if (isSelected) {
-                        Text("✓", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
-                    }
-                }
-            }
-        }
-
-        // 2. TÔNG MÀU ÁNH SÁNG NỀN
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(palette.deepBgMid)
-                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(AppIcons.Palette, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "Tông màu Ánh sáng Nền (Ambient Glow)",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Bộ Giao Diện Chủ Đề (6 Theme Engines)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        "Chạm vào bộ Theme để áp dụng & mở/đóng menu tùy chỉnh riêng",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFA7B8D8)
+                    )
+                }
             }
 
-            GlassThemePresets.forEach { preset ->
-                val isSelected = (preset.id == currentThemeId)
-                Row(
+            ThemeEngineId.values().forEach { engine ->
+                val isSelectedEngine = (activeEngineId == engine.id)
+                val isExpanded = (expandedEngineId == engine.id)
+
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(
-                            if (isSelected) Brush.horizontalGradient(
-                                listOf(preset.primaryGlow.copy(alpha = 0.25f), preset.secondaryGlow.copy(alpha = 0.25f))
-                            ) else Brush.horizontalGradient(
-                                listOf(Color.Black.copy(alpha = 0.28f), Color.Black.copy(alpha = 0.28f))
-                            )
+                            if (isSelectedEngine) palette.primaryGlow.copy(alpha = 0.14f)
+                            else Color.Black.copy(alpha = 0.30f)
                         )
                         .border(
-                            width = if (isSelected) 1.5.dp else 0.8.dp,
-                            brush = Brush.horizontalGradient(
-                                listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)
-                            ),
-                            shape = RoundedCornerShape(12.dp)
+                            width = if (isSelectedEngine) 1.5.dp else 0.8.dp,
+                            color = if (isSelectedEngine) palette.primaryGlow else Color.White.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(16.dp)
                         )
-                        .clickable { scope.launch { context.saveGlassTheme(preset.id) } }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    // Đầu mục của từng bộ Theme (Bấm vào để chọn Theme và Bật/Tắt Menu thu gọn)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                scope.launch {
+                                    context.saveThemeEngineMode(engine.id)
+                                    // Nếu chưa có biến thể con thuộc engine này thì tự chọn biến thể đầu tiên
+                                    if (engine != ThemeEngineId.LIQUID_GLASS) {
+                                        val firstVar = ThemeSubVariants.firstOrNull { it.engineId == engine.id }
+                                        val currentMatches = ThemeSubVariants.any { it.engineId == engine.id && it.id == activeSubVariantId }
+                                        if (!currentMatches && firstVar != null) {
+                                            context.saveThemeSubVariant(firstVar.id)
+                                        }
+                                    }
+                                }
+                                expandedEngineId = if (isExpanded) null else engine.id
+                            }
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = engine.title,
+                                    color = if (isSelectedEngine) palette.primaryGlow else Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (isSelectedEngine) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "• Đang dùng",
+                                        color = Color(0xFF80FFDB),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = engine.subtitle,
+                                color = Color(0xFFA7B8D8),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+
+                        // Nút mũi tên báo trạng thái Thu gọn (▼) / Đang mở (▲)
                         Box(
                             modifier = Modifier
-                                .size(18.dp)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)))
-                                .border(1.dp, Color.White, CircleShape)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = preset.name,
-                            color = Color.White,
-                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(alpha = 0.10f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isExpanded) "Thu gọn ▲" else "Tùy chỉnh ▼",
+                                color = if (isSelectedEngine) palette.primaryGlow else Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
-                    if (isSelected) {
-                        Text("✓", color = preset.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+
+                    // ================= MENU CON THU GỌN CỦA TỪNG BỘ THEME =================
+                    AnimatedVisibility(visible = isExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.Black.copy(alpha = 0.35f))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Divider(color = Color.White.copy(alpha = 0.12f))
+
+                            if (engine == ThemeEngineId.LIQUID_GLASS) {
+                                // Menu thu gọn dành riêng cho Apple Liquid Glass
+                                val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
+                                Text(
+                                    "1. Độ đục sương mờ của kính (Frost Opacity): $pct%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = palette.primaryGlow,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Slider(
+                                    value = currentFrostAlpha,
+                                    onValueChange = { newAlpha -> scope.launch { context.saveGlassFrostAlpha(newAlpha) } },
+                                    valueRange = 0.04f..0.45f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = Color.White,
+                                        activeTrackColor = palette.primaryGlow,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                                    )
+                                )
+
+                                Text(
+                                    "2. Màu phủ tấm kính (Glass Surface Tint):",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = palette.primaryGlow,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                GlassTintPresets.forEach { tintOpt ->
+                                    val isTintSelected = (tintOpt.id == currentTintId)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isTintSelected) tintOpt.surfaceColor.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
+                                            .border(
+                                                width = if (isTintSelected) 1.3.dp else 0.6.dp,
+                                                color = if (isTintSelected) tintOpt.rimTint else Color.White.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable { scope.launch { context.saveGlassTint(tintOpt.id) } }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clip(CircleShape)
+                                                    .background(tintOpt.surfaceColor)
+                                                    .border(1.dp, Color.White, CircleShape)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(tintOpt.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                                        }
+                                        if (isTintSelected) {
+                                            Text("✓", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                }
+
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "3. Tông màu Ánh sáng Nền (Ambient Glow):",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = palette.primaryGlow,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                GlassThemePresets.forEach { preset ->
+                                    val isGlowSelected = (preset.id == currentThemeId)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isGlowSelected) preset.primaryGlow.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.05f))
+                                            .border(
+                                                width = if (isGlowSelected) 1.3.dp else 0.6.dp,
+                                                color = if (isGlowSelected) preset.primaryGlow else Color.White.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable { scope.launch { context.saveGlassTheme(preset.id) } }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(preset.primaryGlow, preset.secondaryGlow)))
+                                                    .border(1.dp, Color.White, CircleShape)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(preset.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                                        }
+                                        if (isGlowSelected) {
+                                            Text("✓", color = preset.primaryGlow, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Menu thu gọn cho 5 Bộ Theme mới (Brushed Metal, AMOLED, Cyberpunk, Velvet Cinema, Nordic Matte)
+                                val subList = ThemeSubVariants.filter { it.engineId == engine.id }
+                                Text(
+                                    "Chọn phiên bản phối màu cho ${engine.title}:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = palette.primaryGlow,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                subList.forEach { variant ->
+                                    val isVarSelected = (isSelectedEngine && activeSubVariantId == variant.id)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isVarSelected) variant.primaryAccent.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f))
+                                            .border(
+                                                width = if (isVarSelected) 1.4.dp else 0.6.dp,
+                                                color = if (isVarSelected) variant.primaryAccent else Color.White.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable {
+                                                scope.launch {
+                                                    context.saveThemeEngineMode(engine.id)
+                                                    context.saveThemeSubVariant(variant.id)
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(18.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(variant.primaryAccent, variant.secondaryAccent)))
+                                                    .border(1.dp, Color.White, CircleShape)
+                                            )
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                text = variant.name,
+                                                color = Color.White,
+                                                fontWeight = if (isVarSelected) FontWeight.Bold else FontWeight.Normal,
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                        }
+                                        if (isVarSelected) {
+                                            Text("✓", color = variant.primaryAccent, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 3. TRUNG TÂM CẬP NHẬT OTA
+        // ================= 2. TRUNG TÂM CẬP NHẬT OTA =================
         Column(
             modifier = Modifier
                 .fillMaxWidth()

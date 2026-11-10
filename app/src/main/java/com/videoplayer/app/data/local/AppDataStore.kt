@@ -22,6 +22,8 @@ private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
+private val themeEngineModeKey = stringPreferencesKey("theme_engine_mode")
+private val themeSubVariantKey = stringPreferencesKey("theme_sub_variant")
 
 // Các key cũ (Dùng để kiểm tra và Migration tự động cho người dùng cũ)
 private val legacyVaultPinKey = stringPreferencesKey("private_vault_pin")
@@ -247,4 +249,19 @@ suspend fun Context.saveGlassFrostAlpha(alpha: Float) {
 
 fun Context.observeGlassFrostAlpha(): Flow<Float> {
     return this.datastore.data.map { prefs -> prefs[glassFrostAlphaKey] ?: 0.16f }
+}
+suspend fun Context.saveThemeEngineMode(modeId: String) {
+    this.datastore.edit { prefs -> prefs[themeEngineModeKey] = modeId }
+}
+
+fun Context.observeThemeEngineMode(): Flow<String> {
+    return this.datastore.data.map { prefs -> prefs[themeEngineModeKey] ?: "liquid_glass" }
+}
+
+suspend fun Context.saveThemeSubVariant(variantId: String) {
+    this.datastore.edit { prefs -> prefs[themeSubVariantKey] = variantId }
+}
+
+fun Context.observeThemeSubVariant(): Flow<String> {
+    return this.datastore.data.map { prefs -> prefs[themeSubVariantKey] ?: "gold_signature" }
 }
