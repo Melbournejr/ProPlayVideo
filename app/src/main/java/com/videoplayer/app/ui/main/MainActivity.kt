@@ -448,7 +448,7 @@ class MainActivity : FragmentActivity() {
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgStart,
+                                        color = styleConfig.palette.deepBgMid,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .heightIn(max = 640.dp)
@@ -526,7 +526,7 @@ class MainActivity : FragmentActivity() {
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgStart,
+                                        color = styleConfig.palette.deepBgMid,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .border(
@@ -699,7 +699,7 @@ class MainActivity : FragmentActivity() {
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgStart,
+                                        color = styleConfig.palette.deepBgMid,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .border(1.2.dp, styleConfig.palette.primaryGlow, RoundedCornerShape(28.dp))
@@ -756,7 +756,7 @@ class MainActivity : FragmentActivity() {
 
                             AlertDialog(
                                 onDismissRequest = { showVaultChangePinDialog = false },
-                                containerColor = styleConfig.palette.deepBgStart,
+                                containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text(
                                         if (hasExistingPin) "🔑 Thay đổi Mã PIN Lưu trữ" else "🔐 Thiết lập Mã PIN Lưu trữ",
@@ -859,7 +859,7 @@ class MainActivity : FragmentActivity() {
 
                             AlertDialog(
                                 onDismissRequest = { if (!isMigratingVault) showMigrationDialog = false },
-                                containerColor = styleConfig.palette.deepBgStart,
+                                containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text("🛡️ Nâng cấp Lưu trữ Bảo mật", color = Color.White, fontWeight = FontWeight.Bold)
                                 },
@@ -959,7 +959,7 @@ class MainActivity : FragmentActivity() {
 
                             AlertDialog(
                                 onDismissRequest = { showVaultPinDialog = false },
-                                containerColor = styleConfig.palette.deepBgStart,
+                                containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text(
                                         if (isSettingNewPin) "🔐 Thiết lập Mã PIN Bảo Mật" else "🔒 Xác thực Lưu trữ nội bộ",
@@ -1073,7 +1073,7 @@ class MainActivity : FragmentActivity() {
                         pendingHttpIntentUrl?.let { httpUrl ->
                             AlertDialog(
                                 onDismissRequest = { pendingHttpIntentUrl = null },
-                                containerColor = styleConfig.palette.deepBgStart,
+                                containerColor = styleConfig.palette.deepBgMid,
                                 title = { Text("⚠️ Cảnh báo luồng HTTP không mã hóa", color = Color.White, fontWeight = FontWeight.Bold) },
                                 text = {
                                     Text("Liên kết bên ngoài ($httpUrl) sử dụng giao thức HTTP không mã hóa. Bạn có muốn tiếp tục phát không?", color = Color.White)
