@@ -465,20 +465,20 @@ fun LiquidGlassCard(
                                 )
                                 ly += step
                             }
-                            valchamferRim = Brush.linearGradient(
-                                colors = listOf(
-                                    palette.primaryGlow.copy(alpha = if (highlighted) 1f else 0.78f),
-                                    Color.White.copy(alpha = 0.25f),
-                                    palette.primaryGlow.copy(alpha = if (highlighted) 0.85f else 0.35f)
-                                ),
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, size.height)
-                            )
-                            drawRoundRect(
-                                brush = chamferRim,
-                                cornerRadius = cr,
-                                style = Stroke(width = if (highlighted) 1.8.dp.toPx() else 1.1.dp.toPx())
-                            )
+                           val chamferRim = Brush.linearGradient(
+    colors = listOf(
+        palette.primaryGlow.copy(alpha = if (highlighted) 1f else 0.78f),
+        Color.White.copy(alpha = 0.25f),
+        palette.primaryGlow.copy(alpha = if (highlighted) 0.85f else 0.35f)
+    ),
+    start = Offset(0f, 0f),
+    end = Offset(size.width, size.height)
+)
+drawRoundRect(
+    brush = chamferRim,
+    cornerRadius = cr,
+    style = Stroke(width = if (highlighted) 1.8.dp.toPx() else 1.1.dp.toPx())
+)
                         }
                         ThemeEngineId.CYBERPUNK_NEON.id -> {
                             // Nền Cyber tối + Viền kép phát sáng Neon
