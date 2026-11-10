@@ -429,15 +429,15 @@ fun HomeScreen(
                         )
                     }
 
-                    // CHỈ KHI ĐANG MỞ KHO ẨN MỚI HIỆN NÚT "ĐỔI PIN" DÀNH RIÊNG CHO KHO ẨN!
+                    // Khi đang ở trong Kho Ẩn: hiện nút "Cài đặt Kho" với icon Khiên bảo mật
                     if (isVaultMode) {
                         LiquidGlassPill(
                             active = true,
                             onClick = onOpenVaultPinSettings
                         ) {
-                            Icon(Icons.Default.Lock, contentDescription = "Đổi PIN Kho Ẩn", tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.Shield, contentDescription = "Cài đặt Kho", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Đổi PIN", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("Cài đặt Kho", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         }
                     }
 

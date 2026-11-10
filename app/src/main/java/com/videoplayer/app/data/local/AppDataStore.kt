@@ -33,6 +33,7 @@ private val vaultPinSaltKey = stringPreferencesKey("vault_pin_pbkdf2_salt")
 private val vaultFailedAttemptsKey = intPreferencesKey("vault_failed_attempts")
 private val vaultLockoutUntilMsKey = longPreferencesKey("vault_lockout_until_ms")
 private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
+private val vaultBiometricEnabledKey = booleanPreferencesKey("vault_biometric_enabled")
 
 private val savedBrightnessKey = floatPreferencesKey("saved_player_brightness")
 private val subtitleSizeSpKey = floatPreferencesKey("saved_subtitle_size_sp")
@@ -47,7 +48,8 @@ data class VaultSecurityState(
     val failedAttempts: Int = 0,
     val lockoutUntilMs: Long = 0L,
     val legacyPlainPin: String? = null,
-    val legacyVaultIds: Set<String> = emptySet()
+    val legacyVaultIds: Set<String> = emptySet(),
+    val biometricEnabled: Boolean = true
 ) {
     val isConfigured: Boolean get() = !pinHash.isNullOrBlank() && !pinSalt.isNullOrBlank()
     val needsMigration: Boolean get() = !legacyPlainPin.isNullOrBlank() || legacyVaultIds.isNotEmpty()
@@ -61,7 +63,8 @@ fun Context.observeVaultSecurityState(): Flow<VaultSecurityState> {
             failedAttempts = prefs[vaultFailedAttemptsKey] ?: 0,
             lockoutUntilMs = prefs[vaultLockoutUntilMsKey] ?: 0L,
             legacyPlainPin = prefs[legacyVaultPinKey],
-            legacyVaultIds = prefs[legacyVaultVideoIdsKey] ?: emptySet()
+            legacyVaultIds = prefs[legacyVaultVideoIdsKey] ?: emptySet(),
+            biometricEnabled = prefs[vaultBiometricEnabledKey] ?: true
         )
     }
 }
@@ -96,6 +99,10 @@ suspend fun Context.recordVaultPinAttempt(success: Boolean, lockoutDurationMs: L
             }
         }
     }
+}
+
+suspend fun Context.saveVaultBiometricEnabled(enabled: Boolean) {
+    this.datastore.edit { prefs -> prefs[vaultBiometricEnabledKey] = enabled }
 }
 
 fun Context.observeHttpWarnAcknowledged(): Flow<Boolean> {

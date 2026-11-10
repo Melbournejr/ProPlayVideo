@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
 object AppIcons {
-    private fun createIcon(name: String, block: androidx.compose.ui.graphics.vector.ImageVector.Builder.() -> Unit): ImageVector {
+    private fun createIcon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector {
         return ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp,
@@ -102,6 +102,35 @@ object AppIcons {
             curveTo(4.9f, 8f, 4f, 8.9f, 4f, 10f); lineTo(4f, 20f); curveTo(4f, 21.1f, 4.9f, 22f, 6f, 22f)
             lineTo(18f, 22f); curveTo(19.1f, 22f, 20f, 21.1f, 20f, 20f); lineTo(20f, 10f)
             curveTo(20f, 8.9f, 19.1f, 8f, 18f, 8f); close()
+        }
+    }
+
+    val Key: ImageVector = createIcon("Key") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(12.65f, 10f); curveTo(11.83f, 7.67f, 9.61f, 6f, 7f, 6f)
+            curveTo(3.69f, 6f, 1f, 8.69f, 1f, 12f); curveTo(1f, 15.31f, 3.69f, 18f, 7f, 18f)
+            curveTo(9.61f, 18f, 11.83f, 16.33f, 12.65f, 14f); lineTo(17f, 14f); lineTo(17f, 18f)
+            lineTo(21f, 18f); lineTo(21f, 14f); lineTo(23f, 14f); lineTo(23f, 10f); lineTo(12.65f, 10f); close()
+            moveTo(7f, 14f); curveTo(5.9f, 14f, 5f, 13.1f, 5f, 12f); curveTo(5f, 10.9f, 5.9f, 10f, 7f, 10f)
+            curveTo(8.1f, 10f, 9f, 10.9f, 9f, 12f); curveTo(9f, 13.1f, 8.1f, 14f, 7f, 14f); close()
+        }
+    }
+
+    val Shield: ImageVector = createIcon("Shield") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(12f, 1f); lineTo(3f, 5f); lineTo(3f, 11f)
+            curveTo(3f, 16.55f, 6.84f, 21.74f, 12f, 23f)
+            curveTo(17.16f, 21.74f, 21f, 16.55f, 21f, 11f); lineTo(21f, 5f); lineTo(12f, 1f); close()
+        }
+    }
+
+    val CloudDownload: ImageVector = createIcon("CloudDownload") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(19.35f, 10.04f); curveTo(18.67f, 6.59f, 15.64f, 4f, 12f, 4f)
+            curveTo(9.11f, 4f, 6.6f, 5.64f, 5.35f, 8.04f); curveTo(2.34f, 8.36f, 0f, 10.91f, 0f, 14f)
+            curveTo(0f, 17.31f, 2.69f, 20f, 6f, 20f); lineTo(19f, 20f)
+            curveTo(21.76f, 20f, 24f, 17.76f, 24f, 15f); curveTo(24f, 12.36f, 21.95f, 10.22f, 19.35f, 10.04f); close()
+            moveTo(17f, 13f); lineTo(12f, 18f); lineTo(7f, 13f); lineTo(10f, 13f); lineTo(10f, 9f); lineTo(14f, 9f); lineTo(14f, 13f); lineTo(17f, 13f); close()
         }
     }
 
@@ -202,21 +231,29 @@ object AppIcons {
 
     val Palette: ImageVector = createIcon("Palette") {
         path(fill = SolidColor(Color.White)) {
-            moveTo(12f, 3f); curveTo(7.03f, 3f, 3f, 7.03f, 3f, 12f); curveTo(3f, 16.97f, 7.03f, 21f, 12f, 21f)
-            curveTo(12.83f, 21f, 13.5f, 20.33f, 13.5f, 19.5f); curveTo(13.5f, 19.11f, 13.35f, 18.76f, 13.11f, 18.49f)
-            curveTo(12.88f, 18.23f, 12.73f, 17.88f, 12.73f, 17.5f); curveTo(12.73f, 16.67f, 13.4f, 16f, 14.23f, 16f)
-            lineTo(16f, 16f); curveTo(18.76f, 16f, 21f, 13.76f, 21f, 11f); curveTo(21f, 6.58f, 16.97f, 3f, 12f, 3f); close()
+            moveTo(12f, 2f); curveTo(6.49f, 2f, 2f, 6.49f, 2f, 12f); curveTo(2f, 17.51f, 6.49f, 22f, 12f, 22f)
+            curveTo(13.38f, 22f, 14.5f, 20.88f, 14.5f, 19.5f); curveTo(14.5f, 18.89f, 14.28f, 18.33f, 13.91f, 17.9f)
+            curveTo(13.55f, 17.5f, 13.33f, 16.98f, 13.33f, 16.4f); curveTo(13.33f, 15.02f, 14.45f, 13.9f, 15.83f, 13.9f)
+            lineTo(17.5f, 13.9f); curveTo(19.98f, 13.9f, 22f, 11.88f, 22f, 9.4f); curveTo(22f, 5.31f, 17.51f, 2f, 12f, 2f); close()
+            moveTo(6.5f, 11.5f); curveTo(5.67f, 11.5f, 5f, 10.83f, 5f, 10f); curveTo(5f, 9.17f, 5.67f, 8.5f, 6.5f, 8.5f)
+            curveTo(7.33f, 8.5f, 8f, 9.17f, 8f, 10f); curveTo(8f, 10.83f, 7.33f, 11.5f, 6.5f, 11.5f); close()
+            moveTo(9.5f, 7.5f); curveTo(8.67f, 7.5f, 8f, 6.83f, 8f, 6f); curveTo(8f, 5.17f, 8.67f, 4.5f, 9.5f, 4.5f)
+            curveTo(10.33f, 4.5f, 11f, 5.17f, 11f, 6f); curveTo(11f, 6.83f, 10.33f, 7.5f, 9.5f, 7.5f); close()
+            moveTo(14.5f, 7.5f); curveTo(13.67f, 7.5f, 13f, 6.83f, 13f, 6f); curveTo(13f, 5.17f, 13.67f, 4.5f, 14.5f, 4.5f)
+            curveTo(15.33f, 4.5f, 16f, 5.17f, 16f, 6f); curveTo(16f, 6.83f, 15.33f, 7.5f, 14.5f, 7.5f); close()
+            moveTo(17.5f, 11.5f); curveTo(16.67f, 11.5f, 16f, 10.83f, 16f, 10f); curveTo(16f, 9.17f, 16.67f, 8.5f, 17.5f, 8.5f)
+            curveTo(18.33f, 8.5f, 19f, 9.17f, 19f, 10f); curveTo(19f, 10.83f, 18.33f, 11.5f, 17.5f, 11.5f); close()
         }
     }
 
+    // Hình giọt nước / thấu kính rõ ràng (sửa lỗi chấm nhỏ ở thẻ Chất liệu Kính)
     val BlurOn: ImageVector = createIcon("BlurOn") {
         path(fill = SolidColor(Color.White)) {
-            moveTo(6f, 13f); curveTo(5.45f, 13f, 5f, 13.45f, 5f, 14f); curveTo(5f, 14.55f, 5.45f, 15f, 6f, 15f)
-            curveTo(6.55f, 15f, 7f, 14.55f, 7f, 14f); curveTo(7f, 13.45f, 6.55f, 13f, 6f, 13f); close()
-            moveTo(10f, 9f); curveTo(8.9f, 9f, 8f, 9.9f, 8f, 11f); curveTo(8f, 12.1f, 8.9f, 13f, 10f, 13f)
-            curveTo(11.1f, 13f, 12f, 12.1f, 12f, 11f); curveTo(12f, 9.9f, 11.1f, 9f, 10f, 9f); close()
-            moveTo(14f, 9f); curveTo(12.9f, 9f, 12f, 9.9f, 12f, 11f); curveTo(12f, 12.1f, 12.9f, 13f, 14f, 13f)
-            curveTo(15.1f, 13f, 16f, 12.1f, 16f, 11f); curveTo(16f, 9.9f, 15.1f, 9f, 14f, 9f); close()
+            moveTo(12f, 2f); curveTo(12f, 2f, 5f, 10.15f, 5f, 15f)
+            curveTo(5f, 18.87f, 8.13f, 22f, 12f, 22f); curveTo(15.87f, 22f, 19f, 18.87f, 19f, 15f)
+            curveTo(19f, 10.15f, 12f, 2f, 12f, 2f); close()
+            moveTo(12f, 19f); curveTo(9.79f, 19f, 8f, 17.21f, 8f, 15f); lineTo(10f, 15f)
+            curveTo(10f, 16.1f, 10.9f, 17f, 12f, 17f); lineTo(12f, 19f); close()
         }
     }
 
