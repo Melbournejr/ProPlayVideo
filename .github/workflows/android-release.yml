@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout mã nguồn
         uses: actions/checkout@v4
@@ -19,14 +19,16 @@ jobs:
           fetch-depth: 0
 
       - name: Cài đặt JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
       - name: Decode Keystore
         run: |
-          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > app/ota-signing.jks
+          if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | tr -d '[:space:]' | base64 -d > app/ota-signing.jks
+          fi
         shell: bash
 
       - name: Xác định tên Repo, VersionName và VersionCode
@@ -61,7 +63,7 @@ jobs:
             -PrepoName="${{ steps.meta.outputs.repo_name }}" \
             -PversionName="${{ steps.meta.outputs.version_name }}" \
             -PversionCode="${{ steps.meta.outputs.version_code }}" \
-            --no-daemon
+            --no-daemon --stacktrace
         shell: bash
 
       - name: Tạo file .sha256 và version.json cho OTA Security

@@ -27,13 +27,13 @@ private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
 private val legacyVaultPinKey = stringPreferencesKey("private_vault_pin")
 private val legacyVaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
 
-// Các key bảo mật mới (PBKDF2 Hash + Salt + Brute-force Lockout)
+// Các key bảo mật mới (PBKDF2 Hash + Salt + Brute-force Lockout + Biometric Toggle)
 private val vaultPinHashKey = stringPreferencesKey("vault_pin_pbkdf2_hash")
 private val vaultPinSaltKey = stringPreferencesKey("vault_pin_pbkdf2_salt")
 private val vaultFailedAttemptsKey = intPreferencesKey("vault_failed_attempts")
 private val vaultLockoutUntilMsKey = longPreferencesKey("vault_lockout_until_ms")
-private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
 private val vaultBiometricEnabledKey = booleanPreferencesKey("vault_biometric_enabled")
+private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
 
 private val savedBrightnessKey = floatPreferencesKey("saved_player_brightness")
 private val subtitleSizeSpKey = floatPreferencesKey("saved_subtitle_size_sp")
@@ -69,6 +69,12 @@ fun Context.observeVaultSecurityState(): Flow<VaultSecurityState> {
     }
 }
 
+suspend fun Context.saveVaultBiometricEnabled(enabled: Boolean) {
+    this.datastore.edit { prefs ->
+        prefs[vaultBiometricEnabledKey] = enabled
+    }
+}
+
 suspend fun Context.saveHashedVaultPin(hashBase64: String, saltBase64: String) {
     this.datastore.edit { prefs ->
         prefs[vaultPinHashKey] = hashBase64
@@ -99,10 +105,6 @@ suspend fun Context.recordVaultPinAttempt(success: Boolean, lockoutDurationMs: L
             }
         }
     }
-}
-
-suspend fun Context.saveVaultBiometricEnabled(enabled: Boolean) {
-    this.datastore.edit { prefs -> prefs[vaultBiometricEnabledKey] = enabled }
 }
 
 fun Context.observeHttpWarnAcknowledged(): Flow<Boolean> {
