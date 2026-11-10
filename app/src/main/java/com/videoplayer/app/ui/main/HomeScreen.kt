@@ -1,6 +1,7 @@
 package com.videoplayer.app.ui.main
 
 import android.app.Activity
+import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,8 +31,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
@@ -41,9 +45,6 @@ import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.ui.components.VideoThumbnailView
 import com.videoplayer.app.util.FileOperationHelper
-import android.content.ContextWrapper
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.fragment.app.FragmentActivity
 import com.videoplayer.app.util.PinSecurityManager
 import com.videoplayer.app.util.VaultHideOutcome
 import com.videoplayer.app.util.VaultManager
@@ -98,7 +99,6 @@ fun HomeScreen(
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
 
-    // Danh sách video đã được mã hóa AES-256-GCM trong Vault
     val vaultEntries = remember(refreshTrigger, isVaultMode) {
         VaultManager.getVaultVideosAsVideoItems(context).map { VaultManager.toVideoItem(context, it) }
     }
@@ -116,7 +116,6 @@ fun HomeScreen(
     var showConfirmHidePinDialog by remember { mutableStateOf(false) }
     var isProcessingVault by remember { mutableStateOf(false) }
 
-    // Hàm yêu cầu Xác thực Vân tay hoặc Mã PIN trước khi cho phép Ẩn video vào Kho
     fun requireAuthBeforeVaultAction(action: () -> Unit) {
         val act = fragmentActivity
         val now = System.currentTimeMillis()
@@ -137,6 +136,7 @@ fun HomeScreen(
             showConfirmHidePinDialog = true
         }
     }
+
     var searchQuery by remember { mutableStateOf("") }
     var isSearchExpanded by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.DATE_DESC) }
@@ -150,7 +150,6 @@ fun HomeScreen(
     var dialogType by remember { mutableStateOf(FileDialogType.NONE) }
     var showBottomSheetFor by remember { mutableStateOf<VideoItem?>(null) }
 
-    // Launcher cho MediaStore.createDeleteRequest / createWriteRequest (Bước 4)
     var pendingRenameNewName by remember { mutableStateOf<String?>(null) }
     val mediaStorePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
@@ -342,35 +341,30 @@ fun HomeScreen(
                         LiquidGlassPill(
                             onClick = {
                                 if (selectedVideoIds.isNotEmpty() && !isProcessingVault) {
+                                    if (!isVaultMode && !FileOperationHelper.hasAllFilesAccess()) {
+                                        Toast.makeText(context, "Hãy bật 'Cho phép quản lý tất cả tệp' 1 lần để di chuyển trực tiếp không hỏi xóa!", Toast.LENGTH_LONG).show()
+                                        FileOperationHelper.requestAllFilesAccess(context)
+                                        return@LiquidGlassPill
+                                    }
                                     val targets = displayedVideos.filter { it.id in selectedVideoIds }
                                     requireAuthBeforeVaultAction {
                                         scope.launch {
                                             isProcessingVault = true
                                             var okCount = 0
-                                            val needConfirmVideos = mutableListOf<VideoItem>()
                                             if (isVaultMode) {
                                                 targets.forEach { v ->
                                                     if (VaultManager.restoreVideoFromVault(context, v.id).isSuccess) okCount++
                                                 }
-                                                Toast.makeText(context, "🔓 Đã khôi phục tức thì $okCount video ra ngoài!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "🔓 Đã khôi phục tức thì $okCount video về thư mục gốc!", Toast.LENGTH_SHORT).show()
                                             } else {
                                                 targets.forEach { v ->
                                                     when (VaultManager.hideVideoToVaultFast(context, v)) {
                                                         is VaultHideOutcome.Success -> okCount++
-                                                        is VaultHideOutcome.NeedsDeleteConfirmation -> {
-                                                            okCount++
-                                                            needConfirmVideos.add(v)
-                                                        }
+                                                        is VaultHideOutcome.NeedsAllFilesPermission -> {}
                                                         is VaultHideOutcome.Error -> {}
                                                     }
                                                 }
-                                                if (needConfirmVideos.isNotEmpty()) {
-                                                    val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, needConfirmVideos)
-                                                    if (pi != null) {
-                                                        mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-                                                    }
-                                                }
-                                                Toast.makeText(context, "🔒 Đã chuyển tức thì $okCount video vào Kho Ẩn!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "🔒 Đã di chuyển trực tiếp $okCount video vào lưu trữ bảo mật!", Toast.LENGTH_SHORT).show()
                                             }
                                             isProcessingVault = false
                                             exitMultiSelect()
@@ -384,15 +378,13 @@ fun HomeScreen(
                             Spacer(Modifier.width(4.dp))
                             Text(if (isVaultMode) "Khôi phục" else "Lưu bảo mật", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
-                        if (!isVaultMode) {
-                            LiquidGlassPill(
-                                active = true,
-                                onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_DELETE }
-                            ) {
-                                Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Xóa (${selectedVideoIds.size})", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                            }
+                        LiquidGlassPill(
+                            active = true,
+                            onClick = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_DELETE }
+                        ) {
+                            Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Xóa (${selectedVideoIds.size})", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -430,19 +422,20 @@ fun HomeScreen(
                         Icon(Icons.Default.Search, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (isVaultMode) "Tìm trong thư mục..." else "Tìm kiếm...",
+                            text = "Tìm kiếm...",
                             color = Color.White.copy(alpha = 0.85f),
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1
                         )
                     }
 
+                    // CHỈ KHI ĐANG MỞ KHO ẨN MỚI HIỆN NÚT "ĐỔI PIN" DÀNH RIÊNG CHO KHO ẨN!
                     if (isVaultMode) {
                         LiquidGlassPill(
                             active = true,
                             onClick = onOpenVaultPinSettings
                         ) {
-                            Icon(Icons.Default.Lock, contentDescription = "Cài đặt PIN Kho Ẩn", tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Lock, contentDescription = "Đổi PIN Kho Ẩn", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Đổi PIN", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         }
@@ -515,7 +508,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                if (isVaultMode) "Kho Riêng Tư (Mã hóa AES-256-GCM) đang trống.\nBấm nút 3 chấm (⋮) ở bất kỳ video nào để mã hóa đưa vào Kho."
+                                if (isVaultMode) "Thư mục lưu trữ bảo mật đang trống."
                                 else "Chưa tìm thấy video hoặc chưa cấp quyền bộ nhớ.",
                                 color = Color.White,
                                 style = MaterialTheme.typography.bodyLarge
@@ -527,7 +520,7 @@ fun HomeScreen(
                 LazyColumn(
                     state = folderListState,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     lastPlayedVideo?.let { recent ->
@@ -688,7 +681,7 @@ fun HomeScreen(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -767,7 +760,7 @@ fun HomeScreen(
                     LazyColumn(
                         state = videoListState,
                         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(displayedVideos, key = { it.id }) { video ->
@@ -844,8 +837,6 @@ fun HomeScreen(
                     }
                 }
             }
-
-
         }
     }
 
@@ -881,12 +872,17 @@ fun HomeScreen(
                         },
                         modifier = Modifier.clickable {
                             showBottomSheetFor = null
+                            if (!isVaultItem && !FileOperationHelper.hasAllFilesAccess()) {
+                                Toast.makeText(context, "Hãy bật 'Cho phép quản lý tất cả tệp' 1 lần để di chuyển trực tiếp không hỏi xóa!", Toast.LENGTH_LONG).show()
+                                FileOperationHelper.requestAllFilesAccess(context)
+                                return@clickable
+                            }
                             requireAuthBeforeVaultAction {
                                 scope.launch {
                                     isProcessingVault = true
                                     if (isVaultItem) {
                                         VaultManager.restoreVideoFromVault(context, targetVideo.id).onSuccess { path ->
-                                            Toast.makeText(context, "🔓 Đã khôi phục về: $path", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "🔓 Đã khôi phục về: $path", Toast.LENGTH_SHORT).show()
                                             refreshTrigger++
                                         }.onFailure { err ->
                                             Toast.makeText(context, "Lỗi khôi phục: ${err.message}", Toast.LENGTH_LONG).show()
@@ -894,14 +890,11 @@ fun HomeScreen(
                                     } else {
                                         when (val out = VaultManager.hideVideoToVaultFast(context, targetVideo)) {
                                             is VaultHideOutcome.Success -> {
-                                                Toast.makeText(context, "🔒 Đã ẩn tức thì vào Kho Riêng Tư!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "🔒 Đã chuyển trực tiếp vào lưu trữ bảo mật!", Toast.LENGTH_SHORT).show()
                                                 refreshTrigger++
                                             }
-                                            is VaultHideOutcome.NeedsDeleteConfirmation -> {
-                                                // Với video tải từ Zalo/App khác trên Android 11+, bật bảng xác nhận xóa file gốc ở thư mục Zalo
-                                                Toast.makeText(context, "🔒 Đã đưa vào Kho! Hãy bấm 'Cho phép' để xóa bản gốc ở thư mục ngoài.", Toast.LENGTH_LONG).show()
-                                                mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(out.pendingIntent.intentSender).build())
-                                                refreshTrigger++
+                                            is VaultHideOutcome.NeedsAllFilesPermission -> {
+                                                FileOperationHelper.requestAllFilesAccess(context)
                                             }
                                             is VaultHideOutcome.Error -> {
                                                 Toast.makeText(context, "Lỗi: ${out.message}", Toast.LENGTH_LONG).show()
@@ -950,16 +943,22 @@ fun HomeScreen(
                                 showBottomSheetFor = null
                             }
                         )
-                        ListItem(
-                            headlineContent = { Text("Xóa vĩnh viễn", color = MaterialTheme.colorScheme.error) },
-                            leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
-                            modifier = Modifier.clickable {
-                                activeVideoForAction = targetVideo
-                                dialogType = FileDialogType.DELETE
-                                showBottomSheetFor = null
-                            }
-                        )
                     }
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                if (isVaultItem) "Xóa vĩnh viễn khỏi Kho Ẩn" else "Xóa vĩnh viễn",
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        leadingContent = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        modifier = Modifier.clickable {
+                            activeVideoForAction = targetVideo
+                            dialogType = FileDialogType.DELETE
+                            showBottomSheetFor = null
+                        }
+                    )
                 }
             },
             confirmButton = {
@@ -971,6 +970,7 @@ fun HomeScreen(
     // ================= HỘP THOẠI XÁC THỰC MÃ PIN TRƯỚC KHI ẨN VIDEO =================
     if (showConfirmHidePinDialog) {
         var pinInput by remember { mutableStateOf("") }
+        var pinVisible by remember { mutableStateOf(false) }
         val isSettingNewPin = !vaultSecState.isConfigured
         AlertDialog(
             onDismissRequest = {
@@ -980,7 +980,7 @@ fun HomeScreen(
             containerColor = palette.deepBgMid,
             title = {
                 Text(
-                    if (isSettingNewPin) "🔐 Tạo Mã PIN Kho Ẩn" else "🔒 Xác nhận Mã PIN để Ẩn Video",
+                    if (isSettingNewPin) "🔐 Tạo Mã PIN Lưu Trữ" else "🔒 Xác nhận Mã PIN",
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
@@ -988,16 +988,15 @@ fun HomeScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (isSettingNewPin) "Thiết lập mã PIN (tối thiểu 6 ký tự) để bảo vệ video ẩn của bạn:"
-                        else "Nhập mã PIN của bạn để xác nhận đưa video vào Kho Ẩn:",
+                        if (isSettingNewPin) "Thiết lập mã PIN (tối thiểu 6 ký tự):"
+                        else "Nhập mã PIN của bạn để xác nhận:",
                         color = Color.White
                     )
-                    var pinVisible by remember { mutableStateOf(false) }
                     OutlinedTextField(
                         value = pinInput,
                         onValueChange = { pinInput = it },
                         label = { Text("Mã PIN (>= 6 ký tự)") },
-                        visualTransformation = if (pinVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { pinVisible = !pinVisible }) {
                                 Icon(
@@ -1060,37 +1059,44 @@ fun HomeScreen(
     // ================= CÁC HỘP THOẠI XỬ LÝ FILE =================
     when (dialogType) {
         FileDialogType.BATCH_DELETE -> {
-            val targets = remember(selectedVideoIds.toList(), rawVideos) {
-                rawVideos.filter { it.id in selectedVideoIds }
+            val targets = remember(selectedVideoIds.toList(), displayedVideos) {
+                displayedVideos.filter { it.id in selectedVideoIds }
             }
             AlertDialog(
                 onDismissRequest = { dialogType = FileDialogType.NONE },
                 containerColor = palette.deepBgMid,
-                title = { Text("Xóa ${targets.size} video đã chọn?") },
-                text = { Text("Bạn có chắc chắn muốn xóa vĩnh viễn ${targets.size} video này không?") },
+                title = { Text(if (isVaultMode) "Xóa vĩnh viễn ${targets.size} video khỏi Kho Ẩn?" else "Xóa ${targets.size} video đã chọn?") },
+                text = { Text("Bạn có chắc chắn muốn xóa vĩnh viễn ${targets.size} video này khỏi bộ nhớ thiết bị không? Thao tác này không thể hoàn tác.") },
                 confirmButton = {
                     Button(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                         onClick = {
                             scope.launch {
                                 var count = 0
-                                targets.forEach { v ->
-                                    if (FileOperationHelper.deleteVideo(context, v).isSuccess) count++
-                                }
-                                if (count < targets.size) {
-                                    val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, targets)
-                                    if (pi != null) {
-                                        mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                if (isVaultMode) {
+                                    targets.forEach { v ->
+                                        if (VaultManager.deleteVideoFromVault(context, v.id).isSuccess) count++
                                     }
+                                    Toast.makeText(context, "🗑️ Đã xóa vĩnh viễn $count video!", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "Đã xóa $count video!", Toast.LENGTH_SHORT).show()
+                                    targets.forEach { v ->
+                                        if (FileOperationHelper.deleteVideo(context, v).isSuccess) count++
+                                    }
+                                    if (count < targets.size) {
+                                        val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, targets)
+                                        if (pi != null) {
+                                            mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "Đã xóa $count video!", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                                 dialogType = FileDialogType.NONE
                                 exitMultiSelect()
                                 refreshTrigger++
                             }
                         }
-                    ) { Text("Xóa tất cả") }
+                    ) { Text("Xóa vĩnh viễn") }
                 },
                 dismissButton = {
                     TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Hủy") }
@@ -1166,8 +1172,8 @@ fun HomeScreen(
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("• Tên tệp: ${video.displayName}")
                                     Text("• Thư mục: ${video.folder}")
-                                    Text("• Nguồn: ${if (video.path.startsWith("vault://")) "Kho Mã hóa AES-256-GCM" else video.path}")
-                                    Text("• Dung lượng gốc: ${video.sizeFormatted} (${video.size} bytes)")
+                                    Text("• Nguồn: ${if (video.id.startsWith("vault_")) "Lưu trữ bảo mật" else video.path}")
+                                    Text("• Dung lượng: ${video.sizeFormatted} (${video.size} bytes)")
                                     Text("• Thời lượng: ${video.durationFormatted}")
                                     Text("• Định dạng: ${video.mimeType}")
                                 }
@@ -1270,30 +1276,41 @@ fun HomeScreen(
                         )
                     }
                     FileDialogType.DELETE -> {
+                        val isVaultVid = video.id.startsWith("vault_") || video.path.startsWith("vault://")
                         AlertDialog(
                             onDismissRequest = { dialogType = FileDialogType.NONE },
                             containerColor = palette.deepBgMid,
-                            title = { Text("Xác nhận xóa vĩnh viễn") },
-                            text = { Text("Xóa tệp '${video.displayName}' khỏi thiết bị?") },
+                            title = { Text(if (isVaultVid) "Xóa vĩnh viễn khỏi Kho Ẩn" else "Xác nhận xóa vĩnh viễn") },
+                            text = { Text("Bạn có chắc chắn muốn xóa vĩnh viễn '${video.displayName}' khỏi bộ nhớ thiết bị không?") },
                             confirmButton = {
                                 Button(
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                                     onClick = {
                                         scope.launch {
-                                            FileOperationHelper.deleteVideo(context, video).onSuccess {
-                                                Toast.makeText(context, "Đã xóa tệp!", Toast.LENGTH_SHORT).show()
-                                                dialogType = FileDialogType.NONE
-                                                refreshTrigger++
-                                            }.onFailure {
-                                                val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, listOf(video))
-                                                dialogType = FileDialogType.NONE
-                                                if (pi != null) {
-                                                    mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                            if (isVaultVid) {
+                                                VaultManager.deleteVideoFromVault(context, video.id).onSuccess {
+                                                    Toast.makeText(context, "🗑️ Đã xóa vĩnh viễn!", Toast.LENGTH_SHORT).show()
+                                                    dialogType = FileDialogType.NONE
+                                                    refreshTrigger++
+                                                }.onFailure { err ->
+                                                    Toast.makeText(context, "Lỗi: ${err.message}", Toast.LENGTH_LONG).show()
+                                                }
+                                            } else {
+                                                FileOperationHelper.deleteVideo(context, video).onSuccess {
+                                                    Toast.makeText(context, "Đã xóa tệp!", Toast.LENGTH_SHORT).show()
+                                                    dialogType = FileDialogType.NONE
+                                                    refreshTrigger++
+                                                }.onFailure {
+                                                    val pi = FileOperationHelper.createDeleteRequestPendingIntent(context, listOf(video))
+                                                    dialogType = FileDialogType.NONE
+                                                    if (pi != null) {
+                                                        mediaStorePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                ) { Text("Xóa") }
+                                ) { Text("Xóa vĩnh viễn") }
                             },
                             dismissButton = {
                                 TextButton(onClick = { dialogType = FileDialogType.NONE }) { Text("Hủy") }
