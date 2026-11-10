@@ -85,6 +85,7 @@ fun HomeScreen(
     lastViewedVideoId: String?,
     onSelectFolder: (String?) -> Unit,
     onExitVault: () -> Unit = {},
+    onOpenVaultPinSettings: () -> Unit = {},
     onVideoClick: (VideoItem, List<VideoItem>) -> Unit,
     onStreamClick: () -> Unit
 ) {
@@ -191,8 +192,15 @@ fun HomeScreen(
         }
     }
 
-    val visibleVideos = remember(rawVideos, vaultEntries, isVaultMode) {
-        if (isVaultMode) vaultEntries else rawVideos
+    val hiddenPaths = remember(refreshTrigger, isVaultMode, vaultEntries.size) {
+        VaultManager.getHiddenOriginalPaths(context)
+    }
+    val visibleVideos = remember(rawVideos, vaultEntries, isVaultMode, hiddenPaths, refreshTrigger) {
+        if (isVaultMode) {
+            vaultEntries
+        } else {
+            rawVideos.filter { it.path !in hiddenPaths && File(it.path).exists() }
+        }
     }
 
     fun applySorting(list: List<VideoItem>, sort: SortOption): List<VideoItem> {
@@ -427,6 +435,17 @@ fun HomeScreen(
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1
                         )
+                    }
+
+                    if (isVaultMode) {
+                        LiquidGlassPill(
+                            active = true,
+                            onClick = onOpenVaultPinSettings
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = "Cài đặt PIN Kho Ẩn", tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Đổi PIN", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     if (selectedFolder != null || isVaultMode) {
@@ -826,17 +845,7 @@ fun HomeScreen(
                 }
             }
 
-            if (!isMultiSelectMode) {
-                LiquidGlassPill(
-                    active = true,
-                    onClick = onStreamClick,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)
-                ) {
-                    Icon(imageVector = AppIcons.Stream, contentDescription = "Stream URL", tint = Color.White)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Stream Mạng", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
+
         }
     }
 

@@ -27,7 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.fragment.app.FragmentActivity
 import com.videoplayer.app.BuildConfig
 import com.videoplayer.app.data.local.*
@@ -53,6 +54,7 @@ import com.videoplayer.app.ui.theme.VideoPlayerTheme
 import com.videoplayer.app.update.GitHubRelease
 import com.videoplayer.app.update.UpdateManager
 import com.videoplayer.app.update.VersionMetadata
+import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.PermissionHelper
 import com.videoplayer.app.util.PinSecurityManager
 import com.videoplayer.app.util.VaultManager
@@ -146,10 +148,16 @@ class MainActivity : FragmentActivity() {
             }
 
             VideoPlayerTheme(styleConfig = styleConfig) {
-                var screen by remember { mutableStateOf(Screen.Home) }
+                var isInPlayer by remember { mutableStateOf(false) }
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
                 var isVaultUnlocked by remember { mutableStateOf(false) }
+
+                // Các Popup Menu Tùy Chọn nổi (Không chiếm tab riêng với màn hình video)
+                var showTopOverflowMenu by remember { mutableStateOf(false) }
+                var showSettingsPopup by remember { mutableStateOf(false) }
+                var showStreamPopup by remember { mutableStateOf(false) }
                 var showVaultPinDialog by remember { mutableStateOf(false) }
+                var showVaultChangePinDialog by remember { mutableStateOf(false) }
                 var showMigrationDialog by remember { mutableStateOf(false) }
                 var isMigratingVault by remember { mutableStateOf(false) }
                 var pendingHttpIntentUrl by remember { mutableStateOf<String?>(null) }
@@ -166,7 +174,6 @@ class MainActivity : FragmentActivity() {
                     videoListStates.getOrPut(key) { LazyListState() }
                 }
 
-                // Hàm kích hoạt mở Kho Ẩn bí mật (khi người dùng Nhấn Giữ vào Tiêu đề hoặc nút Home)
                 fun triggerStealthVaultAccess() {
                     if (isVaultUnlocked) {
                         isVaultUnlocked = false
@@ -182,7 +189,6 @@ class MainActivity : FragmentActivity() {
                                 onSuccess = {
                                     scope.launch { context.recordVaultPinAttempt(true) }
                                     isVaultUnlocked = true
-                                    screen = Screen.Home
                                 },
                                 onUsePinFallback = {
                                     showVaultPinDialog = true
@@ -200,7 +206,7 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                val isPlayingVaultVideo = (screen == Screen.Player && (selectedVideo?.id?.startsWith("vault_") == true || selectedVideo?.path?.startsWith("vault://") == true))
+                val isPlayingVaultVideo = (isInPlayer && (selectedVideo?.id?.startsWith("vault_") == true || selectedVideo?.path?.startsWith("vault://") == true))
                 DisposableEffect(isVaultUnlocked, isPlayingVaultVideo) {
                     if (isVaultUnlocked || isPlayingVaultVideo) {
                         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -220,7 +226,7 @@ class MainActivity : FragmentActivity() {
                         selectedVideo = null
                         currentPlaylist = emptyList()
                         streamUrl = uri.toString()
-                        screen = Screen.Player
+                        isInPlayer = true
                     } else {
                         val name = resolveUriDisplayName(uri)
                         val extItem = VideoItem(
@@ -237,15 +243,15 @@ class MainActivity : FragmentActivity() {
                         selectedVideo = extItem
                         currentPlaylist = listOf(extItem)
                         streamUrl = null
-                        screen = Screen.Player
+                        isInPlayer = true
                     }
                 }
 
-                LaunchedEffect(screen) {
-                    isCurrentlyInPlayerScreen = (screen == Screen.Player)
+                LaunchedEffect(isInPlayer) {
+                    isCurrentlyInPlayerScreen = isInPlayer
                 }
 
-                if (screen == Screen.Player) {
+                if (isInPlayer) {
                     PlayerScreen(
                         initialVideo = selectedVideo,
                         playlist = currentPlaylist,
@@ -254,7 +260,7 @@ class MainActivity : FragmentActivity() {
                             lastViewedVideoId = updatedVid.id
                         },
                         onBack = {
-                            screen = Screen.Home
+                            isInPlayer = false
                             selectedVideo = null
                             streamUrl = null
                         }
@@ -262,6 +268,7 @@ class MainActivity : FragmentActivity() {
                 } else {
                     LiquidAmbientBackground {
                         Column(modifier = Modifier.fillMaxSize()) {
+                            // Thanh điều hướng Floating Liquid Glass Header
                             LiquidGlassCard(
                                 cornerRadius = 24.dp,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
@@ -270,31 +277,24 @@ class MainActivity : FragmentActivity() {
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (screen == Screen.Home && (selectedFolder != null || isVaultUnlocked)) {
+                                    if (selectedFolder != null || isVaultUnlocked) {
                                         IconButton(onClick = {
                                             if (isVaultUnlocked) isVaultUnlocked = false
                                             else selectedFolder = null
                                         }) {
                                             Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
                                         }
-                                    } else if (screen != Screen.Home) {
-                                        IconButton(onClick = { screen = Screen.Home }) {
-                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
-                                        }
                                     } else {
                                         Spacer(Modifier.width(8.dp))
                                     }
 
-                                    // Tên tiêu đề kín đáo (Không hiện chữ "Kho Riêng Tư" lộ liễu)
                                     val titleText = when {
-                                        screen == Screen.Home && isVaultUnlocked -> "📁 Lưu trữ nội bộ"
-                                        screen == Screen.Home && selectedFolder != null -> selectedFolder!!
-                                        screen == Screen.Stream -> "Stream Mạng"
-                                        screen == Screen.Settings -> "Tùy biến Kính & OTA"
+                                        isVaultUnlocked -> "📁 Lưu trữ nội bộ"
+                                        selectedFolder != null -> selectedFolder!!
                                         else -> "Video Player Pro"
                                     }
 
-                                    // Cử chỉ Bí Mật 1: Nhấn giữ (Long Press) vào Tiêu đề để mở Kho Ẩn!
+                                    // Nhấn giữ (Long Press) vào Tiêu đề để mở Kho Ẩn bí mật
                                     Column(
                                         modifier = Modifier
                                             .weight(1f)
@@ -318,21 +318,19 @@ class MainActivity : FragmentActivity() {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "Apple Liquid Glass • v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                                            text = "Apple Liquid Glass • v${BuildConfig.VERSION_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = styleConfig.palette.primaryGlow
                                         )
                                     }
 
-                                    // Cử chỉ Bí Mật 2: Chạm 1 lần vào Home thì về Trang chủ, Nhấn giữ (Long Press) vào Home thì mở Kho Ẩn!
-                                    // (Đã xóa hoàn toàn biểu tượng Ổ khóa trên thanh tiêu đề để ngụy trang tuyệt đối)
+                                    // Nút Trang chủ (Chạm: về thư mục gốc, Nhấn giữ: mở Kho Ẩn)
                                     Box(
                                         modifier = Modifier
-                                            .size(42.dp)
+                                            .size(40.dp)
                                             .clip(CircleShape)
                                             .combinedClickable(
                                                 onClick = {
-                                                    screen = Screen.Home
                                                     selectedFolder = null
                                                     isVaultUnlocked = false
                                                 },
@@ -345,57 +343,241 @@ class MainActivity : FragmentActivity() {
                                         Icon(
                                             Icons.Default.Home,
                                             contentDescription = "Trang chủ",
-                                            tint = if (screen == Screen.Home && selectedFolder == null) styleConfig.palette.primaryGlow else Color.White
+                                            tint = if (selectedFolder == null && !isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
 
-                                    IconButton(onClick = {
-                                        isVaultUnlocked = false
-                                        screen = Screen.Settings
-                                    }) {
-                                        Icon(
-                                            Icons.Default.Settings,
-                                            contentDescription = "Cài đặt & OTA",
-                                            tint = if (screen == Screen.Settings) styleConfig.palette.primaryGlow else Color.White
-                                        )
+                                    // Nút Menu Tùy Chọn (⋮) gom gọn Cài đặt Kính, Stream Mạng & OTA (không tách tab riêng)
+                                    Box {
+                                        IconButton(onClick = { showTopOverflowMenu = true }) {
+                                            Icon(
+                                                Icons.Default.MoreVert,
+                                                contentDescription = "Tùy chọn",
+                                                tint = Color.White
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = showTopOverflowMenu,
+                                            onDismissRequest = { showTopOverflowMenu = false }
+                                        ) {
+                                            // CHỈ KHI ĐANG MỞ KHO ẨN MỚI HIỆN TÙY CHỌN ĐỔI MÃ PIN KHO ẨN!
+                                            if (isVaultUnlocked) {
+                                                DropdownMenuItem(
+                                                    text = { Text("🔑 Cài đặt & Đổi Mã PIN Kho Ẩn", fontWeight = FontWeight.Bold, color = styleConfig.palette.primaryGlow) },
+                                                    onClick = {
+                                                        showTopOverflowMenu = false
+                                                        showVaultChangePinDialog = true
+                                                    }
+                                                )
+                                                Divider()
+                                            }
+                                            DropdownMenuItem(
+                                                text = { Text("🎨 Tùy chỉnh Giao diện & Cập nhật OTA") },
+                                                onClick = {
+                                                    showTopOverflowMenu = false
+                                                    showSettingsPopup = true
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("🌐 Phát luồng Stream Mạng (URL)") },
+                                                onClick = {
+                                                    showTopOverflowMenu = false
+                                                    showStreamPopup = true
+                                                }
+                                            )
+                                            if (!FileOperationHelper.hasAllFilesAccess()) {
+                                                DropdownMenuItem(
+                                                    text = { Text("⚡ Cấp quyền Di chuyển tệp nhanh") },
+                                                    onClick = {
+                                                        showTopOverflowMenu = false
+                                                        FileOperationHelper.requestAllFilesAccess(context)
+                                                    }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
 
+                            // Màn hình chính luôn hiển thị danh sách Video
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                when (screen) {
-                                    Screen.Home -> HomeScreen(
-                                        selectedFolder = selectedFolder,
-                                        isVaultMode = isVaultUnlocked,
-                                        folderListState = folderListState,
-                                        videoListState = activeVideoListState,
-                                        lastViewedVideoId = lastViewedVideoId,
-                                        onSelectFolder = { folder -> selectedFolder = folder },
-                                        onExitVault = { isVaultUnlocked = false },
-                                        onVideoClick = { video, playlist ->
-                                            selectedVideo = video
-                                            lastViewedVideoId = video.id
-                                            currentPlaylist = playlist
-                                            streamUrl = null
-                                            screen = Screen.Player
-                                        },
-                                        onStreamClick = { screen = Screen.Stream }
-                                    )
-                                    Screen.Stream -> NetworkStreamScreen(
-                                        onPlayClick = { url ->
-                                            selectedVideo = null
-                                            currentPlaylist = emptyList()
-                                            streamUrl = url
-                                            screen = Screen.Player
+                                HomeScreen(
+                                    selectedFolder = selectedFolder,
+                                    isVaultMode = isVaultUnlocked,
+                                    folderListState = folderListState,
+                                    videoListState = activeVideoListState,
+                                    lastViewedVideoId = lastViewedVideoId,
+                                    onSelectFolder = { folder -> selectedFolder = folder },
+                                    onExitVault = { isVaultUnlocked = false },
+                                    onOpenVaultPinSettings = {
+                                        if (isVaultUnlocked) showVaultChangePinDialog = true
+                                    },
+                                    onVideoClick = { video, playlist ->
+                                        selectedVideo = video
+                                        lastViewedVideoId = video.id
+                                        currentPlaylist = playlist
+                                        streamUrl = null
+                                        isInPlayer = true
+                                    },
+                                    onStreamClick = { showStreamPopup = true }
+                                )
+                            }
+                        }
+
+                        // ================= POPUP MENU 1: TÙY BIẾN KÍNH & CẬP NHẬT OTA (HOÀN TOÀN KHÔNG CÓ MỤC KHO ẨN) =================
+                        if (showSettingsPopup) {
+                            Dialog(onDismissRequest = { showSettingsPopup = false }) {
+                                LiquidGlassCard(
+                                    cornerRadius = 26.dp,
+                                    highlighted = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 600.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "Tùy chỉnh Kính & Cập nhật OTA",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            LiquidGlassPill(onClick = { showSettingsPopup = false }) {
+                                                Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                            }
                                         }
-                                    )
-                                    Screen.Settings -> OtaSettingsScreen()
-                                    else -> {}
+                                        OtaSettingsScreen(modifier = Modifier.weight(1f, fill = false))
+                                    }
                                 }
                             }
                         }
 
-                        // Hộp thoại Migration cho người dùng cũ (Có nút Con mắt hiện ký tự)
+                        // ================= POPUP MENU 2: PHÁT LUỒNG STREAM MẠNG =================
+                        if (showStreamPopup) {
+                            Dialog(onDismissRequest = { showStreamPopup = false }) {
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    NetworkStreamScreen(
+                                        onPlayClick = { url ->
+                                            showStreamPopup = false
+                                            selectedVideo = null
+                                            currentPlaylist = emptyList()
+                                            streamUrl = url
+                                            isInPlayer = true
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // ================= HỘP THOẠI ĐỔI MÃ PIN KHO ẨN (CHỈ MỞ ĐƯỢC KHI ĐANG Ở TRONG KHO ẨN) =================
+                        if (showVaultChangePinDialog && isVaultUnlocked) {
+                            var currentPinInput by remember { mutableStateOf("") }
+                            var newPinInput by remember { mutableStateOf("") }
+                            var confirmNewPinInput by remember { mutableStateOf("") }
+                            var showChars by remember { mutableStateOf(false) }
+                            val hasExistingPin = vaultSecState.isConfigured
+
+                            AlertDialog(
+                                onDismissRequest = { showVaultChangePinDialog = false },
+                                containerColor = styleConfig.palette.deepBgMid,
+                                title = {
+                                    Text(
+                                        if (hasExistingPin) "🔑 Thay đổi Mã PIN Kho Ẩn" else "🔐 Thiết lập Mã PIN Kho Ẩn",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        if (hasExistingPin) {
+                                            OutlinedTextField(
+                                                value = currentPinInput,
+                                                onValueChange = { currentPinInput = it },
+                                                label = { Text("Mã PIN hiện tại") },
+                                                visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                                trailingIcon = {
+                                                    IconButton(onClick = { showChars = !showChars }) {
+                                                        Icon(
+                                                            imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                                            contentDescription = "Hiện/Ẩn",
+                                                            tint = Color.White
+                                                        )
+                                                    }
+                                                },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                        OutlinedTextField(
+                                            value = newPinInput,
+                                            onValueChange = { newPinInput = it },
+                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
+                                            visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                            trailingIcon = {
+                                                IconButton(onClick = { showChars = !showChars }) {
+                                                    Icon(
+                                                        imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
+                                                        contentDescription = "Hiện/Ẩn",
+                                                        tint = Color.White
+                                                    )
+                                                }
+                                            },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        OutlinedTextField(
+                                            value = confirmNewPinInput,
+                                            onValueChange = { confirmNewPinInput = it },
+                                            label = { Text("Nhập lại Mã PIN mới") },
+                                            visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = {
+                                        if (hasExistingPin) {
+                                            val validOld = PinSecurityManager.verifyPinConstantTime(
+                                                inputPin = currentPinInput,
+                                                storedHashBase64 = vaultSecState.pinHash ?: "",
+                                                storedSaltBase64 = vaultSecState.pinSalt ?: ""
+                                            )
+                                            if (!validOld) {
+                                                Toast.makeText(context, "Mã PIN hiện tại không đúng!", Toast.LENGTH_SHORT).show()
+                                                return@Button
+                                            }
+                                        }
+                                        if (!PinSecurityManager.isValidNewPin(newPinInput)) {
+                                            Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (newPinInput.trim() != confirmNewPinInput.trim()) {
+                                            Toast.makeText(context, "Hai ô Mã PIN mới không khớp nhau!", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        scope.launch {
+                                            val newSalt = PinSecurityManager.generateSaltBase64()
+                                            val newHash = PinSecurityManager.hashPinPbkdf2(newPinInput, newSalt)
+                                            context.saveHashedVaultPin(newHash, newSalt)
+                                            showVaultChangePinDialog = false
+                                            Toast.makeText(context, "✅ Đã cập nhật Mã PIN Kho Ẩn thành công!", Toast.LENGTH_LONG).show()
+                                        }
+                                    }) {
+                                        Text("Lưu Mã PIN")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showVaultChangePinDialog = false }) { Text("Hủy") }
+                                }
+                            )
+                        }
+
+                        // Hộp thoại Migration
                         if (showMigrationDialog) {
                             var oldPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
@@ -486,7 +668,7 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        // Hộp thoại nhập Mã PIN mở Kho Ẩn (Có nút Con mắt 👁️ bật/tắt hiển thị ký tự)
+                        // Hộp thoại nhập Mã PIN mở Kho Ẩn
                         if (showVaultPinDialog) {
                             var pinInput by remember { mutableStateOf("") }
                             var pinVisible by remember { mutableStateOf(false) }
@@ -553,7 +735,6 @@ class MainActivity : FragmentActivity() {
                                                     onSuccess = {
                                                         scope.launch { context.recordVaultPinAttempt(true) }
                                                         isVaultUnlocked = true
-                                                        screen = Screen.Home
                                                     },
                                                     onUsePinFallback = { showVaultPinDialog = true }
                                                 )
@@ -574,7 +755,6 @@ class MainActivity : FragmentActivity() {
                                                         val hash = PinSecurityManager.hashPinPbkdf2(pinInput, salt)
                                                         context.saveHashedVaultPin(hash, salt)
                                                         isVaultUnlocked = true
-                                                        screen = Screen.Home
                                                         showVaultPinDialog = false
                                                     }
                                                 } else {
@@ -590,7 +770,6 @@ class MainActivity : FragmentActivity() {
                                                     scope.launch {
                                                         context.recordVaultPinAttempt(true)
                                                         isVaultUnlocked = true
-                                                        screen = Screen.Home
                                                         showVaultPinDialog = false
                                                     }
                                                 } else {
@@ -635,7 +814,7 @@ class MainActivity : FragmentActivity() {
                                             selectedVideo = null
                                             currentPlaylist = emptyList()
                                             streamUrl = target
-                                            screen = Screen.Player
+                                            isInPlayer = true
                                         }
                                     }) { Text("Tiếp tục phát") }
                                 },
@@ -649,8 +828,6 @@ class MainActivity : FragmentActivity() {
             }
         }
     }
-
-    private enum class Screen { Home, Player, Stream, Settings }
 }
 
 @Composable
@@ -663,14 +840,11 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
     val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
     val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
-    val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
-
-    var showChangePinDialog by remember { mutableStateOf(false) }
 
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
     var selectedMirror by remember { mutableIntStateOf(0) }
-    var statusText by remember { mutableStateOf("Phiên bản hiện tại: v${BuildConfig.VERSION_NAME} (versionCode: ${BuildConfig.VERSION_CODE})") }
+    var statusText by remember { mutableStateOf("Phiên bản hiện tại: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") }
     var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
     var latestMeta by remember { mutableStateOf<VersionMetadata?>(null) }
     var isNewerAvailable by remember { mutableStateOf(false) }
@@ -679,57 +853,27 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     var isDownloading by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. ĐỔI MÃ PIN LƯU TRỮ BẢO MẬT
-        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = palette.primaryGlow)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Bảo mật & Mã PIN lưu trữ",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Text(
-                    "Mẹo kín đáo: Nhấn giữ (Long Press) vào tên ứng dụng 'Video Player Pro' hoặc nút Trang chủ (🏠) trên thanh tiêu đề để mở thư mục ẩn.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFA7B8D8)
-                )
-                LiquidGlassPill(
-                    active = true,
-                    onClick = { showChangePinDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        if (vaultSecState.isConfigured) "🔑 Thay đổi Mã PIN hiện tại" else "🔐 Thiết lập Mã PIN mới",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
+        // ĐÃ XÓA HOÀN TOÀN MỤC CÀI ĐẶT KHO ẨN KHỎI ĐÂY ĐỂ NGỤY TRANG TUYỆT ĐỐI!
 
-        // 2. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH
-        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 1. ĐỘ MỜ SƯƠNG & MÀU PHỦ BỀ MẶT KÍNH
+        LiquidGlassCard(cornerRadius = 22.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(AppIcons.BlurOn, contentDescription = null, tint = palette.primaryGlow)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "Chất liệu & Màu sắc Tấm Kính (Glass Material)",
-                        style = MaterialTheme.typography.titleMedium,
+                        "Chất liệu & Màu Kính (Glass Material)",
+                        style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
                 val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
-                Text("Độ đục sương mờ của kính (Frost Opacity): $pct%", style = MaterialTheme.typography.bodySmall, color = Color.White)
+                Text("Độ đục sương mờ: $pct%", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 Slider(
                     value = currentFrostAlpha,
                     onValueChange = { newAlpha -> scope.launch { context.saveGlassFrostAlpha(newAlpha) } },
@@ -746,32 +890,32 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(tintOpt.surfaceColor.copy(alpha = if (isSelected) 0.28f else 0.10f))
                             .border(
-                                width = if (isSelected) 1.5.dp else 0.8.dp,
+                                width = if (isSelected) 1.4.dp else 0.7.dp,
                                 color = if (isSelected) tintOpt.rimTint else Color.White.copy(alpha = 0.25f),
-                                shape = RoundedCornerShape(14.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .clickable { scope.launch { context.saveGlassTint(tintOpt.id) } }
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(22.dp)
+                                    .size(18.dp)
                                     .clip(CircleShape)
                                     .background(tintOpt.surfaceColor)
                                     .border(1.dp, Color.White, CircleShape)
                             )
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(8.dp))
                             Text(
                                 text = tintOpt.name,
                                 color = Color.White,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                         if (isSelected) {
@@ -782,15 +926,15 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // 3. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN
-        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 2. BẢNG CHỌN TÔNG MÀU ÁNH SÁNG NỀN
+        LiquidGlassCard(cornerRadius = 22.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(AppIcons.Palette, contentDescription = null, tint = palette.primaryGlow)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "Tông màu Ánh sáng Nền (Ambient Glow)",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
@@ -801,7 +945,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .background(
                                 if (isSelected) Brush.horizontalGradient(
                                     listOf(preset.primaryGlow.copy(alpha = 0.28f), preset.secondaryGlow.copy(alpha = 0.28f))
@@ -810,47 +954,47 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 )
                             )
                             .border(
-                                width = if (isSelected) 1.5.dp else 0.8.dp,
+                                width = if (isSelected) 1.4.dp else 0.7.dp,
                                 brush = Brush.horizontalGradient(
                                     listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)
                                 ),
-                                shape = RoundedCornerShape(16.dp)
+                                shape = RoundedCornerShape(14.dp)
                             )
                             .clickable { scope.launch { context.saveGlassTheme(preset.id) } }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(20.dp)
                                     .clip(CircleShape)
                                     .background(Brush.linearGradient(listOf(preset.primaryGlow, preset.secondaryGlow, preset.tertiaryGlow)))
                                     .border(1.dp, Color.White, CircleShape)
                             )
-                            Spacer(Modifier.width(12.dp))
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 text = preset.name,
                                 color = Color.White,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                         if (isSelected) {
-                            Text("Đang dùng ✓", color = preset.primaryGlow, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("✓", color = preset.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // 4. TRUNG TÂM CẬP NHẬT OTA AN TOÀN
-        LiquidGlassCard(cornerRadius = 24.dp, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 3. TRUNG TÂM CẬP NHẬT OTA
+        LiquidGlassCard(cornerRadius = 22.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Cập nhật OTA An Toàn (SHA-256 & Chữ ký số)",
-                    style = MaterialTheme.typography.titleLarge,
+                    "Cập nhật OTA An Toàn",
+                    style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
@@ -861,30 +1005,30 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         val freed = updateManager.cleanupOldApks()
                         val freedMb = "%.1f MB".format(freed / (1024f * 1024f))
                         Toast.makeText(context, "🧹 Đã dọn sạch gói cập nhật cũ ($freedMb)!", Toast.LENGTH_SHORT).show()
-                        statusText = "✅ Đã giải phóng $freedMb dữ liệu gói cài đặt cũ!"
+                        statusText = "✅ Đã giải phóng $freedMb bộ nhớ đệm!"
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("🧹 Dọn sạch gói APK cũ & Bộ nhớ đệm", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("🧹 Dọn sạch gói APK cũ & Cache", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
 
                 OutlinedTextField(
                     value = repoInput,
                     onValueChange = { repoInput = it },
-                    label = { Text("GitHub Repository (owner/repo)") },
+                    label = { Text("GitHub Repo (owner/repo)") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("Chọn tuyến máy chủ tải APK (Hash SHA-256 luôn lấy trực tiếp từ api.github.com):", style = MaterialTheme.typography.labelMedium, color = Color(0xFFA7B8D8))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     LiquidGlassPill(active = selectedMirror == 0, onClick = { selectedMirror = 0 }) {
-                        Text("GitHub Gốc", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("GitHub", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(active = selectedMirror == 1, onClick = { selectedMirror = 1 }) {
-                        Text("CDN 1 (ghfast)", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("CDN 1", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(active = selectedMirror == 2, onClick = { selectedMirror = 2 }) {
-                        Text("CDN 2 (ghproxy)", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("CDN 2", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
 
@@ -893,12 +1037,12 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     onClick = {
                         if (!isDownloading) {
                             if (!updateManager.isValidRepoFormat(repoInput)) {
-                                statusText = "❌ Lỗi: Tên Repo chỉ được phép có dạng 'owner/repo' hợp lệ!"
+                                statusText = "❌ Định dạng Repo phải là 'owner/repo'!"
                                 return@LiquidGlassPill
                             }
                             scope.launch {
                                 context.saveGithubRepo(repoInput)
-                                statusText = "Đang kiểm tra versionCode & SHA-256 từ api.github.com..."
+                                statusText = "Đang kiểm tra từ api.github.com..."
                                 val result = updateManager.checkLatestRelease(repoInput)
                                 result.onSuccess { (release, meta) ->
                                     latestRelease = release
@@ -906,9 +1050,9 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                     val newer = updateManager.isRemoteVersionCodeNewer(BuildConfig.VERSION_CODE, meta)
                                     isNewerAvailable = newer
                                     statusText = if (newer) {
-                                        "🎉 Có bản mới: v${meta.versionName} (versionCode ${meta.versionCode} > ${BuildConfig.VERSION_CODE})\n🔒 SHA-256: ${meta.sha256.take(16)}..."
+                                        "🎉 Có bản mới: v${meta.versionName} (${meta.versionCode})"
                                     } else {
-                                        "✅ Bạn đang dùng bản mới nhất (versionCode: ${BuildConfig.VERSION_CODE})!"
+                                        "✅ Đang dùng bản mới nhất (${BuildConfig.VERSION_CODE})!"
                                     }
                                 }.onFailure { err ->
                                     statusText = "❌ Lỗi: ${err.message}"
@@ -918,65 +1062,41 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("🔍 Kiểm tra bản cập nhật mới", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("🔍 Kiểm tra cập nhật", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                 }
 
                 Text(
                     text = statusText,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = if (isNewerAvailable) palette.primaryGlow else Color(0xFF80FFDB),
                     fontWeight = FontWeight.SemiBold
                 )
-            }
-        }
 
-        val currentRel = latestRelease
-        val currentMeta = latestMeta
-        if (currentRel != null && currentMeta != null && isNewerAvailable) {
-            val apkAsset = currentRel.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
-            if (apkAsset != null) {
-                val sizeMb = "%.2f MB".format(apkAsset.size / (1024f * 1024f))
-                LiquidGlassCard(
-                    cornerRadius = 24.dp,
-                    tintColor = palette.primaryGlow,
-                    highlighted = true,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            "📦 ${apkAsset.name} ($sizeMb) • Code: ${currentMeta.versionCode}",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "SHA-256: ${currentMeta.sha256}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA7B8D8)
-                        )
+                val currentRel = latestRelease
+                val currentMeta = latestMeta
+                if (currentRel != null && currentMeta != null && isNewerAvailable) {
+                    val apkAsset = currentRel.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+                    if (apkAsset != null) {
                         if (downloadProgress in 0..100) {
                             LinearProgressIndicator(
                                 progress = downloadProgress / 100f,
                                 color = palette.primaryGlow,
                                 trackColor = Color.White.copy(alpha = 0.15f),
-                                modifier = Modifier.fillMaxWidth().height(6.dp)
+                                modifier = Modifier.fillMaxWidth().height(5.dp)
                             )
-                            Text("Đang tải 8 luồng: $downloadProgress% ($speedInfo)", color = palette.primaryGlow)
+                            Text("Đang tải: $downloadProgress% ($speedInfo)", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
                         }
                         LiquidGlassPill(
                             active = true,
                             onClick = {
                                 if (!isDownloading) {
                                     if (!updateManager.canRequestPackageInstalls()) {
-                                        Toast.makeText(context, "Vui lòng bật quyền 'Cài đặt ứng dụng không rõ nguồn gốc' cho Video Player Pro!", Toast.LENGTH_LONG).show()
                                         updateManager.openManageUnknownAppSourcesSettings()
                                         return@LiquidGlassPill
                                     }
                                     scope.launch {
                                         isDownloading = true
                                         downloadProgress = 0
-                                        speedInfo = "Đang kết nối HTTPS..."
-                                        statusText = "Đang tải 8 luồng & xác minh SHA-256 + Chữ ký số..."
                                         val dl = updateManager.downloadAndVerifyApk(
                                             rawUrl = apkAsset.browser_download_url,
                                             expectedSize = apkAsset.size,
@@ -988,7 +1108,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                         }
                                         isDownloading = false
                                         dl.onSuccess { verifiedFile ->
-                                            statusText = "✅ Xác thực SHA-256 & Chữ ký APK thành công! Đang mở trình cài đặt..."
+                                            statusText = "✅ Đã xác thực SHA-256! Đang cài đặt..."
                                             updateManager.installVerifiedApk(verifiedFile)
                                         }.onFailure { err ->
                                             statusText = "❌ ${err.message}"
@@ -999,118 +1119,15 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                if (isDownloading) "⏳ Đang tải & xác minh..." else "🛡️ Tải 8 luồng, Xác minh SHA-256 & Cài đặt",
+                                if (isDownloading) "⏳ Đang tải & xác minh..." else "🛡️ Tải 8 luồng & Cài đặt ngay",
                                 color = Color.White,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
                             )
                         }
                     }
                 }
             }
         }
-    }
-
-    // ================= HỘP THOẠI ĐỔI MẬT KHẨU PIN KHO ẨN (CÓ NÚT CON MẮT HIỆN KÝ TỰ) =================
-    if (showChangePinDialog) {
-        var currentPinInput by remember { mutableStateOf("") }
-        var newPinInput by remember { mutableStateOf("") }
-        var confirmNewPinInput by remember { mutableStateOf("") }
-        var showChars by remember { mutableStateOf(false) }
-        val hasExistingPin = vaultSecState.isConfigured
-
-        AlertDialog(
-            onDismissRequest = { showChangePinDialog = false },
-            containerColor = palette.deepBgMid,
-            title = {
-                Text(
-                    if (hasExistingPin) "🔑 Thay đổi Mã PIN Lưu trữ" else "🔐 Thiết lập Mã PIN Lưu trữ",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (hasExistingPin) {
-                        OutlinedTextField(
-                            value = currentPinInput,
-                            onValueChange = { currentPinInput = it },
-                            label = { Text("Mã PIN hiện tại") },
-                            visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { showChars = !showChars }) {
-                                    Icon(
-                                        imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                        contentDescription = "Hiện/Ẩn ký tự",
-                                        tint = Color.White
-                                    )
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    OutlinedTextField(
-                        value = newPinInput,
-                        onValueChange = { newPinInput = it },
-                        label = { Text("Mã PIN mới (>= 6 ký tự)") },
-                        visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showChars = !showChars }) {
-                                Icon(
-                                    imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                    contentDescription = "Hiện/Ẩn ký tự",
-                                    tint = Color.White
-                                )
-                            }
-                        },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = confirmNewPinInput,
-                        onValueChange = { confirmNewPinInput = it },
-                        label = { Text("Nhập lại Mã PIN mới") },
-                        visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    if (hasExistingPin) {
-                        val validOld = PinSecurityManager.verifyPinConstantTime(
-                            inputPin = currentPinInput,
-                            storedHashBase64 = vaultSecState.pinHash ?: "",
-                            storedSaltBase64 = vaultSecState.pinSalt ?: ""
-                        )
-                        if (!validOld) {
-                            Toast.makeText(context, "Mã PIN hiện tại không đúng!", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                    }
-                    if (!PinSecurityManager.isValidNewPin(newPinInput)) {
-                        Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    if (newPinInput.trim() != confirmNewPinInput.trim()) {
-                        Toast.makeText(context, "Hai ô Mã PIN mới không khớp nhau!", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    scope.launch {
-                        val newSalt = PinSecurityManager.generateSaltBase64()
-                        val newHash = PinSecurityManager.hashPinPbkdf2(newPinInput, newSalt)
-                        context.saveHashedVaultPin(newHash, newSalt)
-                        showChangePinDialog = false
-                        Toast.makeText(context, "✅ Đã cập nhật Mã PIN mới thành công!", Toast.LENGTH_LONG).show()
-                    }
-                }) {
-                    Text("Lưu Mã PIN mới")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showChangePinDialog = false }) { Text("Hủy") }
-            }
-        )
     }
 }
