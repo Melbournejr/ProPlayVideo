@@ -4,41 +4,39 @@ import android.content.Context
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.util.VaultManager
-import kotlinx.coroutines.*
+import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import java.io.BufferedOutputStream
-import java.io.BufferedReader
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.io.InputStreamReader
-import java.io.RandomAccessFile
+import java.io.FileInputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.net.ServerSocket
-import java.net.Socket
-import java.net.URLDecoder
 
 data class LanServerStatus(
     val isRunning: Boolean = false,
     val url: String = "",
-    val port: Int = 8088,
+    val port: Int = 8080,
     val sharedVideoCount: Int = 0
 )
 
 /**
- * Phần D.1: Máy chủ HTTP nội bộ (Local LAN Web Server) cho Power-User:
- * - Cho phép các thiết bị khác trong cùng mạng Wi-Fi (Laptop, PC, iPad, Smart TV)
- *   mở trình duyệt tại http://<IP_LAN>:8088 để duyệt và phát trực tiếp toàn bộ video trên máy.
- * - Hỗ trợ đầy đủ HTTP 206 Partial Content (Range Request) để tua (Seek) video 4K tức thì.
- * - Tự động loại trừ 100% các video nằm trong Kho Ẩn (Vault).
+ * Local LAN Web Server su dung thu vien nhe NanoHTTPD (org.nanohttpd:nanohttpd:2.3.1):
+ * - Chay tren cong 8080 (http://192.168.x.x:8080)
+ * - Liet ke toan bo video cong khai trong thu vien va phat truc tiep qua trinh duyet
+ * - Ho tro day du HTTP 206 Partial Content (Range Request) de tua (Seek) video muot ma
+ * - Tu dong tat khi app bi kill (onDestroy) hoac nguoi dung tat thu cong
  */
 object LanVideoHttpServer {
-    private const val DEFAULT_PORT = 8088
-    private var serverSocket: ServerSocket? = null
-    private var serverJob: Job? = null
-    private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    const val DEFAULT_PORT = 8080
+    private var nanoServer: InternalNanoVideoServer? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _status = MutableStateFlow(LanServerStatus())
     val status: StateFlow<LanServerStatus> = _status.asStateFlow()
@@ -64,15 +62,16 @@ object LanVideoHttpServer {
         return "127.0.0.1"
     }
 
+    @Synchronized
     fun startServer(context: Context, port: Int = DEFAULT_PORT) {
         if (_status.value.isRunning) return
         val appCtx = context.applicationContext
-
-        serverJob = serverScope.launch {
+        scope.launch {
             try {
                 refreshVideoCatalog(appCtx)
-                val socket = ServerSocket(port)
-                serverSocket = socket
+                val server = InternalNanoVideoServer(appCtx, port)
+                server.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+                nanoServer = server
                 val ip = getLocalWifiIpAddress()
                 _status.value = LanServerStatus(
                     isRunning = true,
@@ -80,28 +79,18 @@ object LanVideoHttpServer {
                     port = port,
                     sharedVideoCount = cachedPublicVideos.size
                 )
-
-                while (isActive && !socket.isClosed) {
-                    val client = try {
-                        socket.accept()
-                    } catch (_: Exception) {
-                        break
-                    }
-                    launch { handleClientSocket(appCtx, client) }
-                }
             } catch (_: Exception) {
                 stopServer()
             }
         }
     }
 
+    @Synchronized
     fun stopServer() {
         try {
-            serverSocket?.close()
+            nanoServer?.stop()
         } catch (_: Exception) {}
-        serverSocket = null
-        serverJob?.cancel()
-        serverJob = null
+        nanoServer = null
         _status.value = LanServerStatus(isRunning = false)
     }
 
@@ -115,113 +104,73 @@ object LanVideoHttpServer {
         } catch (_: Exception) {}
     }
 
-    private suspend fun handleClientSocket(context: Context, client: Socket) {
-        client.use { sock ->
-            try {
-                sock.soTimeout = 15_000
-                val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
-                val requestLine = reader.readLine() ?: return
-                val parts = requestLine.split(" ")
-                if (parts.size < 2) return
-                val rawPath = URLDecoder.decode(parts[1], "UTF-8")
+    private class InternalNanoVideoServer(
+        private val appContext: Context,
+        port: Int
+    ) : NanoHTTPD(port) {
 
-                var rangeHeader: String? = null
-                var line = reader.readLine()
-                while (!line.isNullOrEmpty()) {
-                    if (line.startsWith("Range:", ignoreCase = true)) {
-                        rangeHeader = line.substringAfter(":").trim()
-                    }
-                    line = reader.readLine()
+        override fun serve(session: IHTTPSession): Response {
+            val uri = session.uri ?: "/"
+            return when {
+                uri == "/" || uri.startsWith("/index") -> {
+                    runBlocking { refreshVideoCatalog(appContext) }
+                    val html = buildWebPortalHtml(cachedPublicVideos)
+                    newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
                 }
-
-                val out = BufferedOutputStream(sock.getOutputStream())
-                when {
-                    rawPath == "/" || rawPath.startsWith("/index") -> {
-                        refreshVideoCatalog(context)
-                        val html = buildWebPortalHtml(cachedPublicVideos)
-                        val bytes = html.toByteArray(Charsets.UTF_8)
-                        val header = "HTTP/1.1 200 OK\r\n" +
-                            "Content-Type: text/html; charset=utf-8\r\n" +
-                            "Content-Length: ${bytes.size}\r\n" +
-                            "Connection: close\r\n\r\n"
-                        out.write(header.toByteArray(Charsets.UTF_8))
-                        out.write(bytes)
-                        out.flush()
+                uri.startsWith("/video/") -> {
+                    val id = uri.removePrefix("/video/").substringBefore("?")
+                    val video = cachedPublicVideos.find { it.id == id }
+                    val file = video?.let { File(it.path) }
+                    if (video == null || file == null || !file.exists()) {
+                        return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "404 Not Found")
                     }
-                    rawPath.startsWith("/video/") -> {
-                        val id = rawPath.removePrefix("/video/").substringBefore("?")
-                        val video = cachedPublicVideos.find { it.id == id }
-                        val file = video?.let { File(it.path) }
-                        if (video == null || file == null || !file.exists()) {
-                            val notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            out.write(notFound.toByteArray(Charsets.UTF_8))
-                            out.flush()
-                            return
-                        }
-                        streamVideoFileWithRange(file, video.mimeType.ifBlank { "video/mp4" }, rangeHeader, out)
-                    }
-                    else -> {
-                        val resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                        out.write(resp.toByteArray(Charsets.UTF_8))
-                        out.flush()
-                    }
+                    serveVideoFileWithRange(file, video.mimeType.ifBlank { "video/mp4" }, session.headers)
                 }
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun streamVideoFileWithRange(
-        file: File,
-        mimeType: String,
-        rangeHeader: String?,
-        out: BufferedOutputStream
-    ) {
-        val fileLen = file.length()
-        var start = 0L
-        var end = fileLen - 1L
-        var isPartial = false
-
-        if (!rangeHeader.isNullOrBlank() && rangeHeader.startsWith("bytes=")) {
-            isPartial = true
-            val rangeVal = rangeHeader.removePrefix("bytes=").substringBefore(",")
-            val split = rangeVal.split("-")
-            start = split.getOrNull(0)?.toLongOrNull() ?: 0L
-            end = split.getOrNull(1)?.takeIf { it.isNotBlank() }?.toLongOrNull() ?: (fileLen - 1L)
-        }
-
-        start = start.coerceIn(0L, (fileLen - 1L).coerceAtLeast(0L))
-        end = end.coerceIn(start, (fileLen - 1L).coerceAtLeast(0L))
-        val contentLen = (end - start + 1L).coerceAtLeast(0L)
-
-        val header = if (isPartial) {
-            "HTTP/1.1 206 Partial Content\r\n" +
-                "Content-Type: $mimeType\r\n" +
-                "Accept-Ranges: bytes\r\n" +
-                "Content-Range: bytes $start-$end/$fileLen\r\n" +
-                "Content-Length: $contentLen\r\n" +
-                "Connection: close\r\n\r\n"
-        } else {
-            "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: $mimeType\r\n" +
-                "Accept-Ranges: bytes\r\n" +
-                "Content-Length: $fileLen\r\n" +
-                "Connection: close\r\n\r\n"
-        }
-
-        out.write(header.toByteArray(Charsets.UTF_8))
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(start)
-            val buf = ByteArray(128 * 1024)
-            var remaining = contentLen
-            while (remaining > 0L) {
-                val toRead = minOf(buf.size.toLong(), remaining).toInt()
-                val r = raf.read(buf, 0, toRead)
-                if (r <= 0) break
-                out.write(buf, 0, r)
-                remaining -= r
+                else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
             }
         }
-        out.flush()
+
+        private fun serveVideoFileWithRange(
+            file: File,
+            mimeType: String,
+            headers: Map<String, String>
+        ): Response {
+            val fileLen = file.length()
+            val rangeHeader = headers["range"] ?: headers["Range"]
+
+            if (!rangeHeader.isNullOrBlank() && rangeHeader.startsWith("bytes=")) {
+                val rangeValue = rangeHeader.removePrefix("bytes=").substringBefore(",")
+                val parts = rangeValue.split("-")
+                val start = (parts.getOrNull(0)?.toLongOrNull() ?: 0L).coerceIn(0L, (fileLen - 1L).coerceAtLeast(0L))
+                val end = (parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.toLongOrNull() ?: (fileLen - 1L))
+                    .coerceIn(start, (fileLen - 1L).coerceAtLeast(0L))
+                val contentLength = (end - start + 1L).coerceAtLeast(0L)
+
+                val fis = FileInputStream(file)
+                fis.skip(start)
+                return newFixedLengthResponse(
+                    Response.Status.PARTIAL_CONTENT,
+                    mimeType,
+                    fis,
+                    contentLength
+                ).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                    addHeader("Content-Range", "bytes $start-$end/$fileLen")
+                    addHeader("Content-Length", contentLength.toString())
+                }
+            } else {
+                val fis = FileInputStream(file)
+                return newFixedLengthResponse(
+                    Response.Status.OK,
+                    mimeType,
+                    fis,
+                    fileLen
+                ).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                    addHeader("Content-Length", fileLen.toString())
+                }
+            }
+        }
     }
 
     private fun buildWebPortalHtml(videos: List<VideoItem>): String {
@@ -233,37 +182,45 @@ object LanVideoHttpServer {
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <title>Video Player Pro - LAN Media Server</title>
+                <title>Video Player Pro - LAN Web Server</title>
                 <style>
-                    body { background:#070D19; color:#fff; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:20px; }
-                    h1 { color:#00F0FF; font-size:22px; margin-bottom:4px; }
-                    p.sub { color:#98A8C8; font-size:13px; margin-top:0; margin-bottom:18px; }
-                    .player-box { background:#0F1A2E; border:1px solid rgba(0,240,255,0.4); border-radius:16px; padding:12px; margin-bottom:20px; display:none; }
-                    video { width:100%; max-height:72vh; border-radius:12px; background:#000; }
+                    body { background:#060B16; color:#fff; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:20px; }
+                    .top { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px; }
+                    h1 { color:#00F0FF; font-size:22px; margin:0; }
+                    p.sub { color:#98A8C8; font-size:13px; margin:4px 0 0 0; }
+                    input.search { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:20px; padding:9px 16px; width:260px; outline:none; }
+                    .player-box { background:#0D172A; border:1px solid rgba(0,240,255,0.45); border-radius:18px; padding:14px; margin-bottom:22px; display:none; }
+                    video { width:100%; max-height:74vh; border-radius:12px; background:#000; }
                     .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
-                    .card { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:14px; padding:12px; cursor:pointer; transition:0.2s; }
-                    .card:hover { border-color:#00F0FF; background:rgba(0,240,255,0.12); }
+                    .card { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:14px; padding:13px; cursor:pointer; transition:0.2s; }
+                    .card:hover { border-color:#00F0FF; background:rgba(0,240,255,0.12); transform:translateY(-2px); }
                     .title { font-weight:700; font-size:14px; margin-bottom:6px; word-break:break-word; }
                     .meta { font-size:12px; color:#80FFDB; }
                 </style>
             </head>
             <body>
-                <h1>📡 Video Player Pro • LAN Streamer</h1>
-                <p class="sub">Đang chia sẻ ${videos.size} video trong mạng nội bộ (Hỗ trợ tua trực tiếp HTTP 206 Range)</p>
+                <div class="top">
+                    <div>
+                        <h1>&#128225; Video Player Pro &bull; Local LAN Server</h1>
+                        <p class="sub">&#272;ang chia s&#7867; ${videos.size} video qua Wi-Fi n&#7897;i b&#7897;</p>
+                    </div>
+                    <input class="search" id="q" type="text" placeholder="T&#236;m t&#234;n video ho&#7863;c th&#432; m&#7909;c..." oninput="filterCards()"/>
+                </div>
                 <div id="pbox" class="player-box">
                     <div id="ptitle" style="font-weight:bold;margin-bottom:8px;color:#00F0FF;"></div>
                     <video id="vplayer" controls autoplay></video>
                 </div>
-                <div class="grid">
+                <div class="grid" id="vgrid">
             """.trimIndent()
         )
         videos.forEach { v ->
             val safeName = v.displayName.replace("\"", "&quot;").replace("<", "&lt;")
+            val safeFolder = v.folder.replace("\"", "&quot;").replace("<", "&lt;")
             sb.append(
                 """
-                <div class="card" onclick="playVid('${v.id}', '$safeName')">
-                    <div class="title">🎬 $safeName</div>
-                    <div class="meta">📁 ${v.folder} • ${v.sizeFormatted} • ${v.durationFormatted}</div>
+                <div class="card" data-name="${safeName.lowercase()} ${safeFolder.lowercase()}" onclick="playVid('${v.id}', '$safeName')">
+                    <div class="title">&#127916; $safeName</div>
+                    <div class="meta">&#128193; $safeFolder &bull; ${v.sizeFormatted} &bull; ${v.durationFormatted}</div>
                 </div>
                 """.trimIndent()
             )
@@ -275,11 +232,19 @@ object LanVideoHttpServer {
                     function playVid(id, name) {
                         var box = document.getElementById('pbox');
                         var vp = document.getElementById('vplayer');
-                        document.getElementById('ptitle').innerText = 'Đang phát: ' + name;
+                        document.getElementById('ptitle').innerText = '▶ ' + name;
                         box.style.display = 'block';
                         vp.src = '/video/' + id;
                         vp.play();
                         window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                    function filterCards() {
+                        var q = document.getElementById('q').value.toLowerCase();
+                        var cards = document.querySelectorAll('.card');
+                        cards.forEach(function(c) {
+                            var match = c.getAttribute('data-name').indexOf(q) !== -1;
+                            c.style.display = match ? 'block' : 'none';
+                        });
                     }
                 </script>
             </body>

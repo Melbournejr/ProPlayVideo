@@ -77,6 +77,11 @@ class MainActivity : FragmentActivity() {
     private var isCurrentlyInPlayerScreen = false
     private var externalViewIntentUri by mutableStateOf<Uri?>(null)
 
+    override fun onDestroy() {
+        super.onDestroy()
+        try { LanVideoHttpServer.stopServer() } catch (_: Exception) {}
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -905,13 +910,14 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
     val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
 
-    // Tráº¡ng thÃ¡i thu gá»n / má»Ÿ rá»™ng menu con cá»§a tá»«ng bá»™ Theme (Máº·c Ä‘á»‹nh Ä‘Ã³ng gá»n Ä‘á»ƒ nhÃ¬n rÃµ cáº£ 6 bá»™ Theme)
     var expandedEngineId by remember { mutableStateOf<String?>(null) }
 
     val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
     var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
     var selectedMirror by remember { mutableIntStateOf(0) }
-    var statusText by remember { mutableStateOf("PhiÃªn báº£n hiá»‡n táº¡i: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") }
+    var statusText by remember {
+        mutableStateOf("Phi\u00EAn b\u1EA3n hi\u1EC7n t\u1EA1i: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+    }
     var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
     var latestMeta by remember { mutableStateOf<VersionMetadata?>(null) }
     var isNewerAvailable by remember { mutableStateOf(false) }
@@ -923,7 +929,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ================= 1. Há»† THá»NG 6 Bá»˜ GIAO DIá»†N (CÃ“ MENU THU Gá»ŒN ACCORDION) =================
+        // 1. BO GIAO DIEN CHU DE (6 THEME ENGINES VOI MENU THU GON)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -938,13 +944,13 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Bá»™ Giao Diá»‡n Chá»§ Äá» (6 Theme Engines)",
+                        text = "B\u1ED9 Giao Di\u1EC7n Ch\u1EE7 \u0110\u1EC1 (6 Theme Engines)",
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        "Cháº¡m vÃ o bá»™ Theme Ä‘á»ƒ Ã¡p dá»¥ng & má»Ÿ/Ä‘Ã³ng menu tÃ¹y chá»‰nh riÃªng",
+                        text = "Ch\u1EA1m v\u00E0o b\u1ED9 Theme \u0111\u1EC3 \u00E1p d\u1EE5ng & m\u1EDF/\u0111\u00F3ng menu t\u00F9y ch\u1EC9nh",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFA7B8D8)
                     )
@@ -969,14 +975,12 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             shape = RoundedCornerShape(16.dp)
                         )
                 ) {
-                    // Äáº§u má»¥c cá»§a tá»«ng bá»™ Theme (Báº¥m vÃ o Ä‘á»ƒ chá»n Theme vÃ  Báº­t/Táº¯t Menu thu gá»n)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
                                 scope.launch {
                                     context.saveThemeEngineMode(engine.id)
-                                    // Náº¿u chÆ°a cÃ³ biáº¿n thá»ƒ con thuá»™c engine nÃ y thÃ¬ tá»± chá»n biáº¿n thá»ƒ Ä‘áº§u tiÃªn
                                     if (engine != ThemeEngineId.LIQUID_GLASS) {
                                         val firstVar = ThemeSubVariants.firstOrNull { it.engineId == engine.id }
                                         val currentMatches = ThemeSubVariants.any { it.engineId == engine.id && it.id == activeSubVariantId }
@@ -1001,7 +1005,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 if (isSelectedEngine) {
                                     Spacer(Modifier.width(6.dp))
                                     Text(
-                                        text = "â€¢ Äang dÃ¹ng",
+                                        text = "\u2022 \u0110ang d\u00F9ng",
                                         color = Color(0xFF80FFDB),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold
@@ -1016,7 +1020,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             )
                         }
 
-                        // NÃºt mÅ©i tÃªn bÃ¡o tráº¡ng thÃ¡i Thu gá»n (â–¼) / Äang má»Ÿ (â–²)
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
@@ -1024,7 +1027,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = if (isExpanded) "Thu gá»n â–²" else "TÃ¹y chá»‰nh â–¼",
+                                text = if (isExpanded) "Thu g\u1ECDn \u25B2" else "T\u00F9y ch\u1EC9nh \u25BC",
                                 color = if (isSelectedEngine) palette.primaryGlow else Color.White,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
@@ -1032,7 +1035,6 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         }
                     }
 
-                    // ================= MENU CON THU Gá»ŒN Cá»¦A Tá»ªNG Bá»˜ THEME =================
                     AnimatedVisibility(visible = isExpanded) {
                         Column(
                             modifier = Modifier
@@ -1044,10 +1046,9 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             Divider(color = Color.White.copy(alpha = 0.12f))
 
                             if (engine == ThemeEngineId.LIQUID_GLASS) {
-                                // Menu thu gá»n dÃ nh riÃªng cho Apple Liquid Glass
                                 val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
                                 Text(
-                                    "1. Äá»™ Ä‘á»¥c sÆ°Æ¡ng má» cá»§a kÃ­nh (Frost Opacity): $pct%",
+                                    text = "1. \u0110\u1ED9 \u0111\u1EE5c s\u01B0\u01A1ng m\u1EDD c\u1EE7a k\u00EDnh (Frost Opacity): $pct%",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = palette.primaryGlow,
                                     fontWeight = FontWeight.Bold
@@ -1064,7 +1065,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 )
 
                                 Text(
-                                    "2. MÃ u phá»§ táº¥m kÃ­nh (Glass Surface Tint):",
+                                    text = "2. M\u00E0u ph\u1EE7 t\u1EA5m k\u00EDnh (Glass Surface Tint):",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = palette.primaryGlow,
                                     fontWeight = FontWeight.Bold
@@ -1098,14 +1099,14 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                             Text(tintOpt.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
                                         }
                                         if (isTintSelected) {
-                                            Text("âœ“", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
+                                            Text("\u2713", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
                                         }
                                     }
                                 }
 
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "3. TÃ´ng mÃ u Ãnh sÃ¡ng Ná»n (Ambient Glow):",
+                                    text = "3. T\u00F4ng m\u00E0u \u00C1nh s\u00E1ng N\u1EC1n (Ambient Glow):",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = palette.primaryGlow,
                                     fontWeight = FontWeight.Bold
@@ -1139,15 +1140,14 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                             Text(preset.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
                                         }
                                         if (isGlowSelected) {
-                                            Text("âœ“", color = preset.primaryGlow, fontWeight = FontWeight.ExtraBold)
+                                            Text("\u2713", color = preset.primaryGlow, fontWeight = FontWeight.ExtraBold)
                                         }
                                     }
                                 }
                             } else {
-                                // Menu thu gá»n cho 5 Bá»™ Theme má»›i (Brushed Metal, AMOLED, Cyberpunk, Velvet Cinema, Nordic Matte)
                                 val subList = ThemeSubVariants.filter { it.engineId == engine.id }
                                 Text(
-                                    "Chá»n phiÃªn báº£n phá»‘i mÃ u cho ${engine.title}:",
+                                    text = "Ch\u1ECDn phi\u00EAn b\u1EA3n ph\u1ED1i m\u00E0u cho ${engine.title}:",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = palette.primaryGlow,
                                     fontWeight = FontWeight.Bold
@@ -1191,7 +1191,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                             )
                                         }
                                         if (isVarSelected) {
-                                            Text("âœ“", color = variant.primaryAccent, fontWeight = FontWeight.ExtraBold)
+                                            Text("\u2713", color = variant.primaryAccent, fontWeight = FontWeight.ExtraBold)
                                         }
                                     }
                                 }
@@ -1202,7 +1202,10 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // ================= 2. TRUNG TÃ‚M Cáº¬P NHáº¬T OTA =================
+        // 2. LOCAL LAN WEB SERVER (NANOHTTPD CONG 8080 + NUT COPY IP)
+        LanWebServerSettingsCard()
+
+        // 3. TRUNG TAM CAP NHAT OTA AN TOAN
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1216,7 +1219,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                 Icon(AppIcons.CloudDownload, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Cáº­p nháº­t OTA An ToÃ n (SHA-256)",
+                    text = "C\u1EADp nh\u1EADt OTA An To\u00E0n (SHA-256)",
                     style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
@@ -1228,12 +1231,12 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     val freed = updateManager.cleanupOldApks()
                     val freedMb = "%.1f MB".format(freed / (1024f * 1024f))
-                    Toast.makeText(context, "ðŸ§¹ ÄÃ£ dá»n sáº¡ch gÃ³i cáº­p nháº­t cÅ© ($freedMb)!", Toast.LENGTH_SHORT).show()
-                    statusText = "âœ… ÄÃ£ giáº£i phÃ³ng $freedMb bá»™ nhá»› Ä‘á»‡m!"
+                    Toast.makeText(context, "\uD83E\uDDF9 \u0110\u00E3 d\u1ECDn s\u1EA1ch g\u00F3i c\u1EADp nh\u1EADt c\u0169 ($freedMb)!", Toast.LENGTH_SHORT).show()
+                    statusText = "\u2705 \u0110\u00E3 gi\u1EA3i ph\u00F3ng $freedMb b\u1ED9 nh\u1EDB \u0111\u1EC7m!"
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("ðŸ§¹ Dá»n sáº¡ch gÃ³i APK cÅ© & Cache", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Text("\uD83E\uDDF9 D\u1ECDn s\u1EA1ch g\u00F3i APK c\u0169 & Cache", color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
 
             OutlinedTextField(
@@ -1261,12 +1264,12 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     if (!isDownloading) {
                         if (!updateManager.isValidRepoFormat(repoInput)) {
-                            statusText = "âŒ Äá»‹nh dáº¡ng Repo pháº£i lÃ  'owner/repo'!"
+                            statusText = "\u274C \u0110\u1ECBnh d\u1EA1ng Repo ph\u1EA3i l\u00E0 'owner/repo'!"
                             return@LiquidGlassPill
                         }
                         scope.launch {
                             context.saveGithubRepo(repoInput)
-                            statusText = "Äang kiá»ƒm tra tá»« api.github.com..."
+                            statusText = "\u0110ang ki\u1EC3m tra t\u1EEB api.github.com..."
                             val result = updateManager.checkLatestRelease(repoInput)
                             result.onSuccess { (release, meta) ->
                                 latestRelease = release
@@ -1274,19 +1277,19 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                 val newer = updateManager.isRemoteVersionCodeNewer(BuildConfig.VERSION_CODE, meta)
                                 isNewerAvailable = newer
                                 statusText = if (newer) {
-                                    "ðŸŽ‰ CÃ³ báº£n má»›i: v${meta.versionName} (${meta.versionCode})"
+                                    "\uD83C\uDF89 C\u00F3 b\u1EA3n m\u1EDBi: v${meta.versionName} (${meta.versionCode})"
                                 } else {
-                                    "âœ… Äang dÃ¹ng báº£n má»›i nháº¥t (${BuildConfig.VERSION_CODE})!"
+                                    "\u2705 \u0110ang d\u00F9ng b\u1EA3n m\u1EDBi nh\u1EA5t (${BuildConfig.VERSION_CODE})!"
                                 }
                             }.onFailure { err ->
-                                statusText = "âŒ Lá»—i: ${err.message}"
+                                statusText = "\u274C L\u1ED7i: ${err.message}"
                             }
                         }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("ðŸ” Kiá»ƒm tra cáº­p nháº­t má»›i", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                Text("\uD83D\uDD0D Ki\u1EC3m tra c\u1EADp nh\u1EADt m\u1EDBi", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
             }
 
             Text(
@@ -1308,7 +1311,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             trackColor = Color.White.copy(alpha = 0.15f),
                             modifier = Modifier.fillMaxWidth().height(5.dp)
                         )
-                        Text("Äang táº£i: $downloadProgress% ($speedInfo)", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
+                        Text("\u0110ang t\u1EA3i: $downloadProgress% ($speedInfo)", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(
                         active = true,
@@ -1332,10 +1335,10 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                                     }
                                     isDownloading = false
                                     dl.onSuccess { verifiedFile ->
-                                        statusText = "âœ… ÄÃ£ xÃ¡c thá»±c SHA-256! Äang cÃ i Ä‘áº·t..."
+                                        statusText = "\u2705 \u0110\u00E3 x\u00E1c th\u1EF1c SHA-256! \u0110ang c\u00E0i \u0111\u1EB7t..."
                                         updateManager.installVerifiedApk(verifiedFile)
                                     }.onFailure { err ->
-                                        statusText = "âŒ ${err.message}"
+                                        statusText = "\u274C ${err.message}"
                                     }
                                 }
                             }
@@ -1343,7 +1346,7 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            if (isDownloading) "â³ Äang táº£i & xÃ¡c minh..." else "ðŸ›¡ï¸ Táº£i 8 luá»“ng & CÃ i Ä‘áº·t ngay",
+                            if (isDownloading) "\u23F3 \u0110ang t\u1EA3i & x\u00E1c minh..." else "\uD83D\uDEE1\uFE0F T\u1EA3i 8 lu\u1ED3ng & C\u00E0i \u0111\u1EB7t ngay",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium

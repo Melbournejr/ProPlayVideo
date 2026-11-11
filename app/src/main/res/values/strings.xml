@@ -1,21 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Video Player Pro</string>
-    <string name="title_home">Trang chủ</string>
-    <string name="title_library">Thư viện</string>
-    <string name="title_settings">Cài đặt</string>
-    <string name="permission_storage">Cần quyền truy cập bộ nhớ để quét video</string>
-    <string name="update_available">Có phiên bản mới</string>
-    <string name="update_download">Tải xuống</string>
-    <string name="update_install">Cài đặt ngay</string>
-    <string name="update_later">Sau</string>
-    <string name="network_stream">Phát từ đường dẫn mạng</string>
-    <string name="enter_url">Nhập URL video (MP4, M3U8…)</string>
-    <string name="play">Phát</string>
-    <string name="pause">Tạm dừng</string>
-    <string name="speed">Tốc độ phát</string>
-    <string name="lock_ui">Khóa màn hình</string>
-    <string name="pip">Hình trong hình (PiP)</string>
-    <string name="subtitle">Phụ đề</string>
-    <string name="audio_track">Điều chỉnh âm thanh</string>
 </resources>

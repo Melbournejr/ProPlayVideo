@@ -50,3 +50,5 @@
 -keep class com.videoplayer.app.data.local.VideoBookmark { *; }
 -keep class com.videoplayer.app.data.local.WatchHistoryEntry { *; }
 -keep class com.videoplayer.app.data.local.WatchExperienceStoreData { *; }
+-keep class fi.iki.elonen.** { *; }
+-dontwarn fi.iki.elonen.**

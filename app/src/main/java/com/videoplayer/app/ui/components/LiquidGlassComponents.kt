@@ -1,6 +1,5 @@
 package com.videoplayer.app.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,12 +18,42 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 enum class ThemeEngineId(val id: String, val title: String, val subtitle: String, val badge: String) {
-    LIQUID_GLASS("liquid_glass", "✨ Apple Liquid Glass", "Kính lỏng khúc xạ ánh sáng đa lớp chuẩn visionOS", "Mặc định"),
-    BRUSHED_METAL("brushed_metal", "🎧 Brushed Metal Pro", "Kim loại phay xước Hi-Res & viền vát kim cương", "Walkman"),
-    AMOLED_BLACK("amoled_black", "🌑 Pitch Black AMOLED", "Đen tuyệt đối #000000 tiết kiệm pin & viền mảnh", "OLED"),
-    CYBERPUNK_NEON("cyberpunk_neon", "⚡ Cyberpunk Neon", "HUD tương lai, lưới kỹ thuật số & viền phát sáng", "Sci-Fi"),
-    VELVET_CINEMA("velvet_cinema", "🎬 Velvet Cinema", "Nhung mờ phòng chiếu IMAX ấm cúng, dịu mắt", "Cinema"),
-    NORDIC_MATTE("nordic_matte", "☁️ Soft Nordic Matte", "Thiết kế phẳng Bắc Âu tối giản, bo tròn mềm mại", "Minimal")
+    LIQUID_GLASS(
+        "liquid_glass",
+        "\u2728 Apple Liquid Glass",
+        "K\u00EDnh l\u1ECFng kh\u00FAc x\u1EA1 \u00E1nh s\u00E1ng \u0111a l\u1EDBp chu\u1EA9n visionOS",
+        "M\u1EB7c \u0111\u1ECBnh"
+    ),
+    BRUSHED_METAL(
+        "brushed_metal",
+        "\uD83C\uDFA7 Brushed Metal Pro",
+        "Kim lo\u1EA1i phay x\u01B0\u1EDBc Hi-Res & vi\u1EC1n v\u00E1t kim c\u01B0\u01A1ng",
+        "Walkman"
+    ),
+    AMOLED_BLACK(
+        "amoled_black",
+        "\uD83C\uDF11 Pitch Black AMOLED",
+        "\u0110en tuy\u1EC7t \u0111\u1ED1i #000000 ti\u1EBFt ki\u1EC7m pin & vi\u1EC1n m\u1EA3nh",
+        "OLED"
+    ),
+    CYBERPUNK_NEON(
+        "cyberpunk_neon",
+        "\u26A1 Cyberpunk Neon",
+        "HUD t\u01B0\u01A1ng lai, l\u01B0\u1EDBi k\u1EF9 thu\u1EADt s\u1ED1 & vi\u1EC1n ph\u00E1t s\u00E1ng",
+        "Sci-Fi"
+    ),
+    VELVET_CINEMA(
+        "velvet_cinema",
+        "\uD83C\uDFAC Velvet Cinema",
+        "Nhung m\u1EDD ph\u00F2ng chi\u1EBFu IMAX \u1EA5m c\u00FAng, d\u1ECBu m\u1EAFt",
+        "Cinema"
+    ),
+    NORDIC_MATTE(
+        "nordic_matte",
+        "\u2601\uFE0F Soft Nordic Matte",
+        "Thi\u1EBFt k\u1EBF ph\u1EB3ng B\u1EAFc \u00C2u t\u1ED1i gi\u1EA3n, bo tr\u00F2n m\u1EC1m m\u1EA1i",
+        "Minimal"
+    )
 }
 
 data class ThemeSubVariant(
@@ -65,22 +94,20 @@ data class GlassStyleConfig(
     val frostAlpha: Float = 0.16f
 )
 
-// 1. Danh sách màu phủ bề mặt kính (Dành cho bộ Apple Liquid Glass)
 val GlassTintPresets = listOf(
-    GlassTintOption("crystal_white", "💎 Pha lê Trắng (Apple Frost)", Color(0xFFFFFFFF), Color(0xFFFFFFFF)),
-    GlassTintOption("glacier_cyan", "🧊 Xanh Băng Giá (Glacier Cyan)", Color(0xFF64DFDF), Color(0xFF80FFDB)),
-    GlassTintOption("amethyst_purple", "🔮 Tím Thạch Anh (Amethyst Glass)", Color(0xFFB388FF), Color(0xFFEA80FC)),
-    GlassTintOption("rose_gold", "🥂 Vàng Hồng (Rose Champagne)", Color(0xFFFFAB91), Color(0xFFFFCCBC)),
-    GlassTintOption("emerald_jade", "翡翠 Ngọc Lục Bảo (Emerald Jade)", Color(0xFF69F0AE), Color(0xFFB9F6CA)),
-    GlassTintOption("ruby_crimson", "🍷 Đỏ Hồng Ngọc (Ruby Wine)", Color(0xFFFF5252), Color(0xFFFF8A80)),
-    GlassTintOption("obsidian_smoke", "🖤 Kính Khói Đen (Smoky Obsidian)", Color(0xFF263238), Color(0xFF90A4AE))
+    GlassTintOption("crystal_white", "\uD83D\uDC8E Pha l\u00EA Tr\u1EAFng (Apple Frost)", Color(0xFFFFFFFF), Color(0xFFFFFFFF)),
+    GlassTintOption("glacier_cyan", "\uD83E\uDDCA Xanh B\u0103ng Gi\u00E1 (Glacier Cyan)", Color(0xFF64DFDF), Color(0xFF80FFDB)),
+    GlassTintOption("amethyst_purple", "\uD83D\uDD2E T\u00EDm Th\u1EA1ch Anh (Amethyst Glass)", Color(0xFFB388FF), Color(0xFFEA80FC)),
+    GlassTintOption("rose_gold", "\uD83E\uDD42 V\u00E0ng H\u1ED3ng (Rose Champagne)", Color(0xFFFFAB91), Color(0xFFFFCCBC)),
+    GlassTintOption("emerald_jade", "\uD83D\uDC9A Ng\u1ECDc L\u1EE5c B\u1EA3o (Emerald Jade)", Color(0xFF69F0AE), Color(0xFFB9F6CA)),
+    GlassTintOption("ruby_crimson", "\uD83C\uDF77 \u0110\u1ECF H\u1ED3ng Ng\u1ECDc (Ruby Wine)", Color(0xFFFF5252), Color(0xFFFF8A80)),
+    GlassTintOption("obsidian_smoke", "\uD83D\uDDA4 K\u00EDnh Kh\u00F3i \u0110en (Smoky Obsidian)", Color(0xFF263238), Color(0xFF90A4AE))
 )
 
-// 2. Danh sách tông màu ánh sáng nền (Dành cho bộ Apple Liquid Glass)
 val GlassThemePresets = listOf(
     GlassPalette(
         id = "apple_ice",
-        name = "🧊 Apple Ice Crystal (visionOS Chuẩn)",
+        name = "\uD83E\uDDCA Apple Ice Crystal (visionOS Chu\u1EA9n)",
         primaryGlow = Color(0xFF00F0FF),
         secondaryGlow = Color(0xFF7B2CBF),
         tertiaryGlow = Color(0xFFFF2A85),
@@ -90,7 +117,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "aurora_emerald",
-        name = "🌌 Cực Quang Ngọc Lục Bảo",
+        name = "\uD83C\uDF0C C\u1EF1c Quang Ng\u1ECDc L\u1EE5c B\u1EA3o",
         primaryGlow = Color(0xFF00F5D4),
         secondaryGlow = Color(0xFF00BBF9),
         tertiaryGlow = Color(0xFF9B5DE5),
@@ -100,7 +127,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "sunset_magenta",
-        name = "🌇 Hoàng Hôn Hồng Ngọc",
+        name = "\uD83C\uDF07 Ho\u00E0ng H\u00F4n H\u1ED3ng Ng\u1ECDc",
         primaryGlow = Color(0xFFFF4D6D),
         secondaryGlow = Color(0xFFFF9E00),
         tertiaryGlow = Color(0xFF7209B7),
@@ -110,7 +137,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "gold_champagne",
-        name = "✨ Vàng Champagne Hoàng Gia",
+        name = "\u2728 V\u00E0ng Champagne Ho\u00E0ng Gia",
         primaryGlow = Color(0xFFFFD166),
         secondaryGlow = Color(0xFFEF476F),
         tertiaryGlow = Color(0xFF118AB2),
@@ -120,7 +147,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "deep_ocean",
-        name = "🌊 Đại Dương Sâu Thẳm",
+        name = "\uD83C\uDF0A \u0110\u1EA1i D\u01B0\u01A1ng S\u00E2u Th\u1EB3m",
         primaryGlow = Color(0xFF4CC9F0),
         secondaryGlow = Color(0xFF4361EE),
         tertiaryGlow = Color(0xFF3A0CA3),
@@ -130,33 +157,27 @@ val GlassThemePresets = listOf(
     )
 )
 
-// 3. Danh sách các biến thể con cho 5 Bộ Theme Mới
 val ThemeSubVariants = listOf(
-    // Brushed Metal Pro
-    ThemeSubVariant("gold_signature", "brushed_metal", "🏆 Vàng Đồng Signature (WM1ZM2 Gold)", Color(0xFFD4AF37), Color(0xFFFFDF73), Color(0xFF141416), Color(0xFF1E1F23), Color(0xFF0C0C0E), Color(0xFF222328)),
-    ThemeSubVariant("titanium_silver", "brushed_metal", "⚙️ Xám Titan Phay Xước (Titanium Pro)", Color(0xFF90CAF9), Color(0xFFCFD8DC), Color(0xFF121519), Color(0xFF1B2026), Color(0xFF0B0D10), Color(0xFF20252C)),
-    ThemeSubVariant("carbon_copper", "brushed_metal", "🔥 Đen Carbon & Đồng Đỏ (Copper Edition)", Color(0xFFFF8A65), Color(0xFFD84315), Color(0xFF14100E), Color(0xFF1F1815), Color(0xFF0A0807), Color(0xFF241C19)),
+    ThemeSubVariant("gold_signature", "brushed_metal", "\uD83C\uDFC6 V\u00E0ng \u0110\u1ED3ng Signature (WM1ZM2 Gold)", Color(0xFFD4AF37), Color(0xFFFFDF73), Color(0xFF141416), Color(0xFF1E1F23), Color(0xFF0C0C0E), Color(0xFF222328)),
+    ThemeSubVariant("titanium_silver", "brushed_metal", "\u2699\uFE0F X\u00E1m Titan Phay X\u01B0\u1EDBc (Titanium Pro)", Color(0xFF90CAF9), Color(0xFFCFD8DC), Color(0xFF121519), Color(0xFF1B2026), Color(0xFF0B0D10), Color(0xFF20252C)),
+    ThemeSubVariant("carbon_copper", "brushed_metal", "\uD83D\uDD25 \u0110en Carbon & \u0110\u1ED3ng \u0110\u1ECF (Copper Edition)", Color(0xFFFF8A65), Color(0xFFD84315), Color(0xFF14100E), Color(0xFF1F1815), Color(0xFF0A0807), Color(0xFF241C19)),
 
-    // Pitch Black AMOLED
-    ThemeSubVariant("amoled_emerald", "amoled_black", "💚 Đen Tuyệt Đối & Viền Ngọc Lục Bảo", Color(0xFF00E676), Color(0xFF69F0AE), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
-    ThemeSubVariant("amoled_white", "amoled_black", "🤍 Đen Tuyệt Đối & Viền Trắng Tinh Khiết", Color(0xFFFFFFFF), Color(0xFFB0BEC5), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
-    ThemeSubVariant("amoled_crimson", "amoled_black", "❤️ Đen Tuyệt Đối & Viền Đỏ Cinema", Color(0xFFFF5252), Color(0xFFFF8A80), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
-    ThemeSubVariant("amoled_amber", "amoled_black", "🧡 Đen Tuyệt Đối & Viền Cam Hổ Phách", Color(0xFFFFAB00), Color(0xFFFFD740), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
+    ThemeSubVariant("amoled_emerald", "amoled_black", "\uD83D\uDC9A \u0110en Tuy\u1EC7t \u0110\u1ED1i & Vi\u1EC1n Ng\u1ECDc L\u1EE5c B\u1EA3o", Color(0xFF00E676), Color(0xFF69F0AE), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
+    ThemeSubVariant("amoled_white", "amoled_black", "\uD83E\uDD0D \u0110en Tuy\u1EC7t \u0110\u1ED1i & Vi\u1EC1n Tr\u1EAFng Tinh Khi\u1EBFt", Color(0xFFFFFFFF), Color(0xFFB0BEC5), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
+    ThemeSubVariant("amoled_crimson", "amoled_black", "\u2764\uFE0F \u0110en Tuy\u1EC7t \u0110\u1ED1i & Vi\u1EC1n \u0110\u1ECF Cinema", Color(0xFFFF5252), Color(0xFFFF8A80), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
+    ThemeSubVariant("amoled_amber", "amoled_black", "\uD83E\uDDE1 \u0110en Tuy\u1EC7t \u0110\u1ED1i & Vi\u1EC1n Cam H\u1ED5 Ph\u00E1ch", Color(0xFFFFAB00), Color(0xFFFFD740), Color(0xFF000000), Color(0xFF080808), Color(0xFF000000), Color(0xFF0A0A0A)),
 
-    // Cyberpunk Neon
-    ThemeSubVariant("cyber_yellow", "cyberpunk_neon", "⚡ Vàng Cyber & Xanh Điện Tử (Night City)", Color(0xFFFCEE0A), Color(0xFF00F0FF), Color(0xFF090414), Color(0xFF120826), Color(0xFF05020A), Color(0xFF160B2E)),
-    ThemeSubVariant("cyber_synthwave", "cyberpunk_neon", "🔮 Hồng Laser & Tím Neon (Synthwave)", Color(0xFFFF007F), Color(0xFF00F5D4), Color(0xFF14031A), Color(0xFF21072B), Color(0xFF09010D), Color(0xFF280936)),
-    ThemeSubVariant("cyber_matrix", "cyberpunk_neon", "💻 Xanh Ma Trận Kỹ Thuật Số (Matrix)", Color(0xFF00FF66), Color(0xFF00B8D4), Color(0xFF020F06), Color(0xFF051C0C), Color(0xFF010803), Color(0xFF072410)),
+    ThemeSubVariant("cyber_yellow", "cyberpunk_neon", "\u26A1 V\u00E0ng Cyber & Xanh \u0110i\u1EC7n T\u1EED (Night City)", Color(0xFFFCEE0A), Color(0xFF00F0FF), Color(0xFF090414), Color(0xFF120826), Color(0xFF05020A), Color(0xFF160B2E)),
+    ThemeSubVariant("cyber_synthwave", "cyberpunk_neon", "\uD83D\uDD2E H\u1ED3ng Laser & T\u00EDm Neon (Synthwave)", Color(0xFFFF007F), Color(0xFF00F5D4), Color(0xFF14031A), Color(0xFF21072B), Color(0xFF09010D), Color(0xFF280936)),
+    ThemeSubVariant("cyber_matrix", "cyberpunk_neon", "\uD83D\uDCBB Xanh Ma Tr\u1EADn K\u1EF9 Thu\u1EADt S\u1ED1 (Matrix)", Color(0xFF00FF66), Color(0xFF00B8D4), Color(0xFF020F06), Color(0xFF051C0C), Color(0xFF010803), Color(0xFF072410)),
 
-    // Velvet Cinema
-    ThemeSubVariant("cinema_burgundy", "velvet_cinema", "🍷 Đỏ Nhung Rạp Hát Cổ Điển (Royal Theatre)", Color(0xFFFFD54F), Color(0xFFFF8A65), Color(0xFF1C070B), Color(0xFF2B0B11), Color(0xFF110406), Color(0xFF330E15)),
-    ThemeSubVariant("cinema_imax", "velvet_cinema", "🎬 Xanh Đêm Phòng Chiếu IMAX (Midnight IMAX)", Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFF07101E), Color(0xFF0D1B30), Color(0xFF040912), Color(0xFF13243E)),
-    ThemeSubVariant("cinema_vip", "velvet_cinema", "👑 Tím Nhung Phòng VIP (Velvet Lounge)", Color(0xFFE1BEE7), Color(0xFFFFD54F), Color(0xFF14081C), Color(0xFF210E2E), Color(0xFF0B0410), Color(0xFF2A133B)),
+    ThemeSubVariant("cinema_burgundy", "velvet_cinema", "\uD83C\uDF77 \u0110\u1ECF Nhung R\u1EA1p H\u00E1t C\u1ED5 \u0110i\u1EC3n (Royal Theatre)", Color(0xFFFFD54F), Color(0xFFFF8A65), Color(0xFF1C070B), Color(0xFF2B0B11), Color(0xFF110406), Color(0xFF330E15)),
+    ThemeSubVariant("cinema_imax", "velvet_cinema", "\uD83C\uDFAC Xanh \u0110\u00EAm Ph\u00F2ng Chi\u1EBFu IMAX (Midnight IMAX)", Color(0xFF64B5F6), Color(0xFFFFD54F), Color(0xFF07101E), Color(0xFF0D1B30), Color(0xFF040912), Color(0xFF13243E)),
+    ThemeSubVariant("cinema_vip", "velvet_cinema", "\uD83D\uDC51 T\u00EDm Nhung Ph\u00F2ng VIP (Velvet Lounge)", Color(0xFFE1BEE7), Color(0xFFFFD54F), Color(0xFF14081C), Color(0xFF210E2E), Color(0xFF0B0410), Color(0xFF2A133B)),
 
-    // Soft Nordic Matte
-    ThemeSubVariant("nordic_slate", "nordic_matte", "🌫️ Xám Đá Phiến Bắc Âu (Nordic Slate)", Color(0xFF80CBC4), Color(0xFF90CAF9), Color(0xFF181C20), Color(0xFF22272E), Color(0xFF121518), Color(0xFF282E37)),
-    ThemeSubVariant("nordic_sage", "nordic_matte", "🌿 Xanh Rêu Mờ Tự Nhiên (Sage Matte)", Color(0xFFA5D6A7), Color(0xFFFFE082), Color(0xFF151C18), Color(0xFF1E2822), Color(0xFF0F1411), Color(0xFF25322A)),
-    ThemeSubVariant("nordic_espresso", "nordic_matte", "☕ Nâu Cà Phê Ấm (Warm Espresso)", Color(0xFFFFCC80), Color(0xFFBCAAA4), Color(0xFF1C1614), Color(0xFF28201D), Color(0xFF120E0C), Color(0xFF322824))
+    ThemeSubVariant("nordic_slate", "nordic_matte", "\uD83C\uDF2B\uFE0F X\u00E1m \u0110\u00E1 Phi\u1EBFn B\u1EAFc \u00C2u (Nordic Slate)", Color(0xFF80CBC4), Color(0xFF90CAF9), Color(0xFF181C20), Color(0xFF22272E), Color(0xFF121518), Color(0xFF282E37)),
+    ThemeSubVariant("nordic_sage", "nordic_matte", "\uD83C\uDF3F Xanh R\u00EAu M\u1EDD T\u1EF1 Nhi\u00EAn (Sage Matte)", Color(0xFFA5D6A7), Color(0xFFFFE082), Color(0xFF151C18), Color(0xFF1E2822), Color(0xFF0F1411), Color(0xFF25322A)),
+    ThemeSubVariant("nordic_espresso", "nordic_matte", "\u2615 N\u00E2u C\u00E0 Ph\u00EA \u1EA4m (Warm Espresso)", Color(0xFFFFCC80), Color(0xFFBCAAA4), Color(0xFF1C1614), Color(0xFF28201D), Color(0xFF120E0C), Color(0xFF322824))
 )
 
 fun getGlassPaletteById(id: String): GlassPalette {
@@ -172,10 +193,6 @@ fun getSubVariantById(engineId: String, variantId: String): ThemeSubVariant {
     return forEngine.find { it.id == variantId } ?: forEngine.firstOrNull() ?: ThemeSubVariants.first()
 }
 
-/**
- * Tạo GlassStyleConfig tổng hợp: Nếu đang chọn 1 trong 5 bộ Theme mới,
- * tự động ánh xạ bảng màu của biến thể đó sang GlassPalette để toàn bộ ứng dụng đổi màu đồng bộ!
- */
 fun buildEffectiveStyleConfig(
     engineId: String,
     subVariantId: String,
@@ -222,15 +239,6 @@ fun buildEffectiveStyleConfig(
 val LocalGlassStyle = staticCompositionLocalOf { GlassStyleConfig() }
 val LocalGlassPalette = staticCompositionLocalOf { GlassThemePresets.first() }
 
-/**
- * Nền không gian tự động biến đổi theo từng Bộ Theme:
- * - Liquid Glass: Quầng sáng khúc xạ đa tâm
- * - Pitch Black AMOLED: Đen tuyền #000000 tuyệt đối (tắt điểm ảnh OLED)
- * - Brushed Metal Pro: Nền kim loại phay xước ngang tinh tế
- * - Cyberpunk Neon: Lưới tọa độ kỹ thuật số Sci-Fi + Quầng sáng Neon
- * - Velvet Cinema: Ánh sáng màn chiếu rạp hát ấm áp từ đỉnh màn hình
- * - Soft Nordic Matte: Nền nhám phẳng dịu mắt
- */
 @Composable
 fun LiquidAmbientBackground(
     modifier: Modifier = Modifier,
@@ -256,7 +264,6 @@ fun LiquidAmbientBackground(
                                     colors = listOf(palette.deepBgTop, palette.deepBgMid, palette.deepBgBottom)
                                 )
                             )
-                            // Vẽ các đường vân kim loại phay xước ngang siêu mảnh
                             val stepPx = 4.dp.toPx().coerceAtLeast(2f)
                             var y = 0f
                             while (y < h) {
@@ -284,7 +291,6 @@ fun LiquidAmbientBackground(
                                     colors = listOf(palette.deepBgTop, palette.deepBgMid, palette.deepBgBottom)
                                 )
                             )
-                            // Lưới tọa độ kỹ thuật số Cyber
                             val gridStep = 36.dp.toPx().coerceAtLeast(20f)
                             var gx = 0f
                             while (gx < w) {
@@ -331,7 +337,6 @@ fun LiquidAmbientBackground(
                                     colors = listOf(palette.deepBgTop, palette.deepBgMid, palette.deepBgBottom)
                                 )
                             )
-                            // Ánh đèn hắt nhẹ từ màn chiếu rạp phim phía trên
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(palette.primaryGlow.copy(alpha = 0.14f), Color.Transparent),
@@ -350,7 +355,6 @@ fun LiquidAmbientBackground(
                             )
                         }
                         else -> {
-                            // Mặc định: Apple Liquid Glass
                             val bgBrush = Brush.verticalGradient(
                                 colors = listOf(palette.deepBgTop, palette.deepBgMid, palette.deepBgBottom)
                             )
@@ -392,9 +396,6 @@ fun LiquidAmbientBackground(
     )
 }
 
-/**
- * Thẻ Card tự động thay đổi hình dáng, độ bo góc và chất liệu bề mặt theo từng Bộ Theme!
- */
 @Composable
 fun LiquidGlassCard(
     modifier: Modifier = Modifier,
@@ -408,7 +409,6 @@ fun LiquidGlassCard(
     val style = LocalGlassStyle.current
     val palette = style.palette
 
-    // Điều chỉnh độ bo góc đặc trưng theo từng bộ Theme
     val effectiveCorner = when (style.engineId) {
         ThemeEngineId.BRUSHED_METAL.id -> 12.dp
         ThemeEngineId.CYBERPUNK_NEON.id -> 10.dp
@@ -431,7 +431,6 @@ fun LiquidGlassCard(
                 onDrawBehind {
                     when (style.engineId) {
                         ThemeEngineId.AMOLED_BLACK.id -> {
-                            // Nền đen OLED #050505 + Viền mảnh sắc nét
                             drawRoundRect(
                                 color = if (highlighted) palette.primaryGlow.copy(alpha = 0.12f) else Color(0xFF050505),
                                 cornerRadius = cr
@@ -443,7 +442,6 @@ fun LiquidGlassCard(
                             )
                         }
                         ThemeEngineId.BRUSHED_METAL.id -> {
-                            // Nền kim loại phay xước + Viền vát kim cương Vàng Đồng / Titan
                             val metalBrush = Brush.linearGradient(
                                 colors = listOf(
                                     style.tint.surfaceColor,
@@ -465,23 +463,22 @@ fun LiquidGlassCard(
                                 )
                                 ly += step
                             }
-                           val chamferRim = Brush.linearGradient(
-    colors = listOf(
-        palette.primaryGlow.copy(alpha = if (highlighted) 1f else 0.78f),
-        Color.White.copy(alpha = 0.25f),
-        palette.primaryGlow.copy(alpha = if (highlighted) 0.85f else 0.35f)
-    ),
-    start = Offset(0f, 0f),
-    end = Offset(size.width, size.height)
-)
-drawRoundRect(
-    brush = chamferRim,
-    cornerRadius = cr,
-    style = Stroke(width = if (highlighted) 1.8.dp.toPx() else 1.1.dp.toPx())
-)
+                            val chamferRim = Brush.linearGradient(
+                                colors = listOf(
+                                    palette.primaryGlow.copy(alpha = if (highlighted) 1f else 0.78f),
+                                    Color.White.copy(alpha = 0.25f),
+                                    palette.primaryGlow.copy(alpha = if (highlighted) 0.85f else 0.35f)
+                                ),
+                                start = Offset(0f, 0f),
+                                end = Offset(size.width, size.height)
+                            )
+                            drawRoundRect(
+                                brush = chamferRim,
+                                cornerRadius = cr,
+                                style = Stroke(width = if (highlighted) 1.8.dp.toPx() else 1.1.dp.toPx())
+                            )
                         }
                         ThemeEngineId.CYBERPUNK_NEON.id -> {
-                            // Nền Cyber tối + Viền kép phát sáng Neon
                             drawRoundRect(
                                 color = style.tint.surfaceColor.copy(alpha = 0.92f),
                                 cornerRadius = cr
@@ -496,7 +493,6 @@ drawRoundRect(
                             )
                         }
                         ThemeEngineId.VELVET_CINEMA.id -> {
-                            // Bề mặt nhung mờ ấm áp
                             val velvetBrush = Brush.verticalGradient(
                                 colors = listOf(
                                     style.tint.surfaceColor,
@@ -511,7 +507,6 @@ drawRoundRect(
                             )
                         }
                         ThemeEngineId.NORDIC_MATTE.id -> {
-                            // Bề mặt phẳng Matte hoàn toàn, không viền chói
                             drawRoundRect(
                                 color = if (highlighted) style.tint.surfaceColor.copy(alpha = 1f) else style.tint.surfaceColor.copy(alpha = 0.88f),
                                 cornerRadius = cr
@@ -525,7 +520,6 @@ drawRoundRect(
                             }
                         }
                         else -> {
-                            // Mặc định: Apple Liquid Glass
                             val baseTint = if (tintColor != Color.Unspecified) tintColor else style.tint.surfaceColor
                             val rimColor = style.tint.rimTint
                             val alpha = if (surfaceAlpha >= 0f) surfaceAlpha else style.frostAlpha
@@ -570,9 +564,6 @@ drawRoundRect(
     )
 }
 
-/**
- * Nút Viên Thuốc (Pill) tự động biến đổi theo Bộ Theme đang chọn
- */
 @Composable
 fun LiquidGlassPill(
     modifier: Modifier = Modifier,
@@ -668,7 +659,7 @@ fun LiquidGlassPill(
                     }
                 }
             }
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
         content = content
