@@ -17,16 +17,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-fun formatTimeMs(ms: Long): String {
-    val totalSec = (ms / 1000).coerceAtLeast(0L)
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
-}
-
+/**
+ * Thanh tua thời gian vẽ trực tiếp trên Canvas (Direct-Touch 120Hz SeekBar)
+ * Cô lập hoàn toàn Recomposition trong phạm vi thanh trượt khi người dùng kéo chấm tròn.
+ */
 @Composable
-fun PlayerSeekBar(
+fun DirectCanvasSeekBar(
     currentPosMs: Long,
     durationMs: Long,
     sleepRemainingSec: Int,

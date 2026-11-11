@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -46,10 +47,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.fragment.app.FragmentActivity
 import com.videoplayer.app.BuildConfig
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
@@ -64,7 +64,6 @@ import com.videoplayer.app.update.VersionMetadata
 import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.PermissionHelper
 import com.videoplayer.app.util.PinSecurityManager
-import com.videoplayer.app.util.PinVerifyResult
 import com.videoplayer.app.util.VaultManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -76,18 +75,6 @@ class MainActivity : FragmentActivity() {
     private val requestStoragePermission = registerForActivityResult(RequestMultiplePermissions()) { }
     private var isCurrentlyInPlayerScreen = false
     private var externalViewIntentUri by mutableStateOf<Uri?>(null)
-    private var backgroundTimestampMs = 0L
-    // Compatibility helpers backed by the existing VaultManager API.
-    private suspend fun moveVideoToVault(
-        video: VideoItem,
-        isDecoy: Boolean = false
-    ) = VaultManager.hideVideoToVaultFast(this, video, isDecoy)
-
-    private suspend fun moveVideoToVault(
-        context: android.content.Context,
-        video: VideoItem,
-        isDecoy: Boolean = false
-    ) = VaultManager.hideVideoToVaultFast(context, video, isDecoy)
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -124,11 +111,6 @@ class MainActivity : FragmentActivity() {
         return uri.lastPathSegment ?: "External_Video"
     }
 
-    override fun onPause() {
-        super.onPause()
-        backgroundTimestampMs = System.currentTimeMillis()
-    }
-
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (isCurrentlyInPlayerScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -157,7 +139,9 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val context = LocalContext.current
+            val lifecycleOwner = LocalLifecycleOwner.current
             val scope = rememberCoroutineScope()
+
             val engineId by context.observeThemeEngineMode().collectAsState(initial = "liquid_glass")
             val subVariantId by context.observeThemeSubVariant().collectAsState(initial = "gold_signature")
             val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
@@ -179,11 +163,11 @@ class MainActivity : FragmentActivity() {
             VideoPlayerTheme(styleConfig = styleConfig) {
                 var isInPlayer by remember { mutableStateOf(false) }
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
-                var isVaultUnlocked by remember { mutableStateOf(false) }
-                var isDecoyVaultMode by remember { mutableStateOf(false) }
-                var showSetDecoyPinDialog by remember { mutableStateOf(false) }
 
-                // CÃ¡c cá»­a sá»• Modal tÃ¡ch biá»‡t hoÃ n toÃ n (Ná»n Ä‘áº·c 100%, khÃ´ng xuyÃªn tháº¥u!)
+                // Trạng thái Kho Ẩn hỗ trợ cả Kho thật (REAL_VAULT) và Kho giả (DECOY_VAULT)
+                var vaultAccessMode by remember { mutableStateOf(VaultAccessMode.LOCKED) }
+                val isVaultUnlocked = (vaultAccessMode != VaultAccessMode.LOCKED)
+
                 var showTopOverflowMenu by remember { mutableStateOf(false) }
                 var showGeneralSettingsModal by remember { mutableStateOf(false) }
                 var showVaultOnlySettingsModal by remember { mutableStateOf(false) }
@@ -191,6 +175,7 @@ class MainActivity : FragmentActivity() {
 
                 var showVaultPinDialog by remember { mutableStateOf(false) }
                 var showVaultChangePinDialog by remember { mutableStateOf(false) }
+                var showConfigureDecoyPinDialog by remember { mutableStateOf(false) }
                 var showMigrationDialog by remember { mutableStateOf(false) }
                 var isMigratingVault by remember { mutableStateOf(false) }
                 var pendingHttpIntentUrl by remember { mutableStateOf<String?>(null) }
@@ -200,16 +185,64 @@ class MainActivity : FragmentActivity() {
                 var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
                 var streamUrl by remember { mutableStateOf<String?>(null) }
 
+                // Biến ghi nhận thời điểm app xuống nền phục vụ Auto-Lock Vault
+                var backgroundEnteredAtMs by remember { mutableLongStateOf(0L) }
+
                 val folderListState = remember { LazyListState() }
                 val videoListStates = remember { mutableStateMapOf<String, LazyListState>() }
-                val activeVideoListState = remember(selectedFolder, isVaultUnlocked) {
-                    val key = if (isVaultUnlocked) "__VAULT__" else (selectedFolder ?: "__ROOT__")
+                val activeVideoListState = remember(selectedFolder, vaultAccessMode) {
+                    val key = when (vaultAccessMode) {
+                        VaultAccessMode.REAL_VAULT -> "__VAULT_REAL__"
+                        VaultAccessMode.DECOY_VAULT -> "__VAULT_DECOY__"
+                        VaultAccessMode.LOCKED -> selectedFolder ?: "__ROOT__"
+                    }
                     videoListStates.getOrPut(key) { LazyListState() }
+                }
+
+                // ================= AUTO-LOCK VAULT KHI APP VÀO BACKGROUND =================
+                DisposableEffect(lifecycleOwner, vaultAccessMode, vaultSecState.autoLockTimeoutSec) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_STOP -> {
+                                if (vaultAccessMode != VaultAccessMode.LOCKED) {
+                                    if (vaultSecState.autoLockTimeoutSec == 0) {
+                                        // Khóa ngay lập tức khi xuống nền
+                                        vaultAccessMode = VaultAccessMode.LOCKED
+                                        showVaultOnlySettingsModal = false
+                                        if (isInPlayer && selectedVideo?.id?.startsWith("vault_") == true) {
+                                            isInPlayer = false
+                                            selectedVideo = null
+                                        }
+                                    } else {
+                                        backgroundEnteredAtMs = System.currentTimeMillis()
+                                    }
+                                }
+                            }
+                            Lifecycle.Event.ON_START -> {
+                                if (vaultAccessMode != VaultAccessMode.LOCKED && backgroundEnteredAtMs > 0L) {
+                                    val elapsedSec = (System.currentTimeMillis() - backgroundEnteredAtMs) / 1000L
+                                    backgroundEnteredAtMs = 0L
+                                    if (elapsedSec >= vaultSecState.autoLockTimeoutSec) {
+                                        vaultAccessMode = VaultAccessMode.LOCKED
+                                        showVaultOnlySettingsModal = false
+                                        if (isInPlayer && selectedVideo?.id?.startsWith("vault_") == true) {
+                                            isInPlayer = false
+                                            selectedVideo = null
+                                        }
+                                        Toast.makeText(context, "🔒 Đã tự động khóa Lưu trữ nội bộ", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            else -> {}
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
                 fun triggerStealthVaultAccess() {
                     if (isVaultUnlocked) {
-                        isVaultUnlocked = false
+                        vaultAccessMode = VaultAccessMode.LOCKED
                     } else if (vaultSecState.needsMigration) {
                         showMigrationDialog = true
                     } else if (vaultSecState.isConfigured && vaultSecState.biometricEnabled && PinSecurityManager.canUseBiometric(this@MainActivity)) {
@@ -221,7 +254,7 @@ class MainActivity : FragmentActivity() {
                                 activity = this@MainActivity,
                                 onSuccess = {
                                     scope.launch { context.recordVaultPinAttempt(true) }
-                                    isVaultUnlocked = true
+                                    vaultAccessMode = VaultAccessMode.REAL_VAULT
                                 },
                                 onUsePinFallback = {
                                     showVaultPinDialog = true
@@ -233,27 +266,6 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                val lifecycleOwner = LocalLifecycleOwner.current
-                DisposableEffect(lifecycleOwner, isVaultUnlocked, vaultSecState.autoLockSeconds) {
-                    val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) {
-                            if (isVaultUnlocked && backgroundTimestampMs > 0L) {
-                                val lockSec = vaultSecState.autoLockSeconds
-                                if (lockSec >= 0) {
-                                    val elapsed = (System.currentTimeMillis() - backgroundTimestampMs) / 1000L
-                                    if (elapsed >= lockSec) {
-                                        isVaultUnlocked = false
-                                        isDecoyVaultMode = false
-                                        Toast.makeText(this@MainActivity, "ðŸ”’ LÆ°u trá»¯ báº£o máº­t Ä‘Ã£ tá»± Ä‘á»™ng khÃ³a", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                            backgroundTimestampMs = 0L
-                        }
-                    }
-                    lifecycleOwner.lifecycle.addObserver(observer)
-                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                }
                 LaunchedEffect(vaultSecState.needsMigration) {
                     if (vaultSecState.needsMigration) {
                         showMigrationDialog = true
@@ -322,7 +334,6 @@ class MainActivity : FragmentActivity() {
                 } else {
                     LiquidAmbientBackground {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            // Thanh Ä‘iá»u hÆ°á»›ng Floating Liquid Glass Header
                             LiquidGlassCard(
                                 cornerRadius = 24.dp,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
@@ -333,29 +344,29 @@ class MainActivity : FragmentActivity() {
                                 ) {
                                     if (selectedFolder != null || isVaultUnlocked) {
                                         IconButton(onClick = {
-                                            if (isVaultUnlocked) isVaultUnlocked = false
+                                            if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
                                             else selectedFolder = null
                                         }) {
-                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay láº¡i", tint = Color.White)
+                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
                                         }
                                     } else {
                                         Spacer(Modifier.width(8.dp))
                                     }
 
+                                    // Khi ở DECOY_VAULT hay REAL_VAULT đều hiển thị cùng một tiêu đề để không thể phân biệt!
                                     val titleText = when {
-                                        isVaultUnlocked -> "ðŸ“ LÆ°u trá»¯ ná»™i bá»™"
+                                        isVaultUnlocked -> "📁 Lưu trữ nội bộ"
                                         selectedFolder != null -> selectedFolder!!
                                         else -> "Video Player Pro"
                                     }
 
-                                    // Nháº¥n giá»¯ (Long Press) vÃ o TiÃªu Ä‘á» Ä‘á»ƒ má»Ÿ Kho áº¨n bÃ­ máº­t
                                     Column(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(RoundedCornerShape(10.dp))
                                             .combinedClickable(
                                                 onClick = {
-                                                    if (isVaultUnlocked) isVaultUnlocked = false
+                                                    if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
                                                 },
                                                 onLongClick = {
                                                     triggerStealthVaultAccess()
@@ -372,13 +383,12 @@ class MainActivity : FragmentActivity() {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = if (isVaultUnlocked) "Cháº¿ Ä‘á»™ báº£o máº­t riÃªng tÆ°" else "${ThemeEngineId.values().find { it.id == engineId }?.title ?: "Liquid Glass"} â€¢ v${BuildConfig.VERSION_NAME}",
+                                            text = if (isVaultUnlocked) "Chế độ bảo mật riêng tư" else "${ThemeEngineId.values().find { it.id == engineId }?.title ?: "Liquid Glass"} • v${BuildConfig.VERSION_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = styleConfig.palette.primaryGlow
                                         )
                                     }
 
-                                    // NÃºt Trang chá»§ (Cháº¡m: vá» thÆ° má»¥c gá»‘c, Nháº¥n giá»¯: má»Ÿ Kho áº¨n)
                                     Box(
                                         modifier = Modifier
                                             .size(40.dp)
@@ -386,7 +396,7 @@ class MainActivity : FragmentActivity() {
                                             .combinedClickable(
                                                 onClick = {
                                                     selectedFolder = null
-                                                    isVaultUnlocked = false
+                                                    vaultAccessMode = VaultAccessMode.LOCKED
                                                 },
                                                 onLongClick = {
                                                     triggerStealthVaultAccess()
@@ -396,14 +406,11 @@ class MainActivity : FragmentActivity() {
                                     ) {
                                         Icon(
                                             Icons.Default.Home,
-                                            contentDescription = "Trang chá»§",
+                                            contentDescription = "Trang chủ",
                                             tint = if (selectedFolder == null && !isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
                                         )
                                     }
 
-                                    // NÃšT MENU TÃ™Y CHá»ŒN á»ž GÃ“C PHáº¢I:
-                                    // - Náº¿u Ä‘ang á»Ÿ trong Kho áº¨n (isVaultUnlocked == true): Báº¥m vÃ o má»Ÿ tháº³ng CÃ i Ä‘áº·t riÃªng cá»§a Kho áº¨n!
-                                    // - Náº¿u Ä‘ang á»Ÿ ngoÃ i (isVaultUnlocked == false): Má»Ÿ menu tÃ¹y chá»n ngoÃ i (Giao diá»‡n, Stream, OTA).
                                     Box {
                                         IconButton(
                                             onClick = {
@@ -416,7 +423,7 @@ class MainActivity : FragmentActivity() {
                                         ) {
                                             Icon(
                                                 imageVector = if (isVaultUnlocked) AppIcons.Shield else Icons.Default.MoreVert,
-                                                contentDescription = "TÃ¹y chá»n",
+                                                contentDescription = "Tùy chọn",
                                                 tint = if (isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
                                             )
                                         }
@@ -428,7 +435,7 @@ class MainActivity : FragmentActivity() {
                                         ) {
                                             DropdownMenuItem(
                                                 leadingIcon = { Icon(AppIcons.Palette, null, tint = styleConfig.palette.primaryGlow) },
-                                                text = { Text("TÃ¹y chá»‰nh Giao diá»‡n & OTA", color = Color.White, fontWeight = FontWeight.SemiBold) },
+                                                text = { Text("Tùy chỉnh Giao diện & OTA", color = Color.White, fontWeight = FontWeight.SemiBold) },
                                                 onClick = {
                                                     showTopOverflowMenu = false
                                                     showGeneralSettingsModal = true
@@ -436,7 +443,7 @@ class MainActivity : FragmentActivity() {
                                             )
                                             DropdownMenuItem(
                                                 leadingIcon = { Icon(AppIcons.Stream, null, tint = styleConfig.palette.primaryGlow) },
-                                                text = { Text("PhÃ¡t luá»“ng Stream Máº¡ng", color = Color.White) },
+                                                text = { Text("Phát luồng Stream Mạng", color = Color.White) },
                                                 onClick = {
                                                     showTopOverflowMenu = false
                                                     showStreamModal = true
@@ -445,7 +452,7 @@ class MainActivity : FragmentActivity() {
                                             if (!FileOperationHelper.hasAllFilesAccess()) {
                                                 DropdownMenuItem(
                                                     leadingIcon = { Icon(AppIcons.DriveFileMove, null, tint = Color(0xFFFFD54F)) },
-                                                    text = { Text("Cáº¥p quyá»n Di chuyá»ƒn tá»‡p nhanh", color = Color(0xFFFFD54F)) },
+                                                    text = { Text("Cấp quyền Di chuyển tệp nhanh", color = Color(0xFFFFD54F)) },
                                                     onClick = {
                                                         showTopOverflowMenu = false
                                                         FileOperationHelper.requestAllFilesAccess(context)
@@ -457,17 +464,15 @@ class MainActivity : FragmentActivity() {
                                 }
                             }
 
-                            // Danh sÃ¡ch Video chÃ­nh
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                 HomeScreen(
                                     selectedFolder = selectedFolder,
-                                    isVaultMode = isVaultUnlocked,
-                                    isDecoyMode = isDecoyVaultMode,
+                                    vaultAccessMode = vaultAccessMode,
                                     folderListState = folderListState,
                                     videoListState = activeVideoListState,
                                     lastViewedVideoId = lastViewedVideoId,
                                     onSelectFolder = { folder -> selectedFolder = folder },
-                                    onExitVault = { isVaultUnlocked = false },
+                                    onExitVault = { vaultAccessMode = VaultAccessMode.LOCKED },
                                     onOpenVaultPinSettings = {
                                         if (isVaultUnlocked) showVaultOnlySettingsModal = true
                                     },
@@ -483,7 +488,7 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
-                        // ================= MODAL 1: CÃ€I Äáº¶T CHUNG NGOÃ€I (Ná»€N Äáº¶C 100% KHÃ”NG XUYÃŠN THáº¤U + NÃšT X Gá»ŒN) =================
+                        // Modal 1: Cài đặt Giao diện & OTA bên ngoài
                         if (showGeneralSettingsModal && !isVaultUnlocked) {
                             Dialog(
                                 onDismissRequest = { showGeneralSettingsModal = false },
@@ -514,7 +519,6 @@ class MainActivity : FragmentActivity() {
                                             )
                                     ) {
                                         Column(modifier = Modifier.fillMaxWidth()) {
-                                            // Header cá»‘ Ä‘á»‹nh cÃ³ Modifier.weight(1f) vÃ  nÃºt trÃ²n X (KhÃ´ng bao giá» vá»¡ chá»¯ Ä-Ã³-n-g-X!)
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -530,7 +534,7 @@ class MainActivity : FragmentActivity() {
                                                 )
                                                 Spacer(Modifier.width(10.dp))
                                                 Text(
-                                                    text = "CÃ i Ä‘áº·t Giao diá»‡n & OTA",
+                                                    text = "Cài đặt Giao diện & OTA",
                                                     style = MaterialTheme.typography.titleMedium,
                                                     color = Color.White,
                                                     fontWeight = FontWeight.ExtraBold,
@@ -545,12 +549,7 @@ class MainActivity : FragmentActivity() {
                                                         .clip(CircleShape)
                                                         .background(Color.White.copy(alpha = 0.12f))
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Close,
-                                                        contentDescription = "ÄÃ³ng",
-                                                        tint = Color.White,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
+                                                    Icon(Icons.Default.Close, contentDescription = "Đóng", tint = Color.White, modifier = Modifier.size(18.dp))
                                                 }
                                             }
                                             Divider(color = Color.White.copy(alpha = 0.12f))
@@ -561,233 +560,24 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
-                        // ================= MODAL 2: CÃ€I Äáº¶T RIÃŠNG Cá»¦A KHO áº¨N (CHá»ˆ HIá»†N CÃ€I Äáº¶T KHO áº¨N, Ná»€N Äáº¶C 100%) =================
+                        // Modal 2: Cài đặt riêng của Kho Ẩn (Tự động ẩn tùy chọn Decoy khi đang ở DECOY_VAULT)
                         if (showVaultOnlySettingsModal && isVaultUnlocked) {
-                            Dialog(
-                                onDismissRequest = { showVaultOnlySettingsModal = false },
-                                properties = DialogProperties(usePlatformDefaultWidth = false)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.88f))
-                                        .padding(horizontal = 18.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgMid,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .border(
-                                                width = 1.4.dp,
-                                                brush = Brush.linearGradient(
-                                                    listOf(
-                                                        styleConfig.palette.primaryGlow,
-                                                        Color.White.copy(alpha = 0.4f)
-                                                    )
-                                                ),
-                                                shape = RoundedCornerShape(28.dp)
-                                            )
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth().padding(20.dp),
-                                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(
-                                                    imageVector = AppIcons.Shield,
-                                                    contentDescription = null,
-                                                    tint = styleConfig.palette.primaryGlow,
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                                Spacer(Modifier.width(10.dp))
-                                                Text(
-                                                    text = "CÃ i Ä‘áº·t LÆ°u trá»¯ báº£o máº­t",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                IconButton(
-                                                    onClick = { showVaultOnlySettingsModal = false },
-                                                    modifier = Modifier
-                                                        .size(34.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color.White.copy(alpha = 0.12f))
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Close,
-                                                        contentDescription = "ÄÃ³ng",
-                                                        tint = Color.White,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
-                                            }
-
-                                            Divider(color = Color.White.copy(alpha = 0.12f))
-
-                                            // 1. NÃºt Äá»•i MÃ£ PIN Kho áº¨n
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
-                                                    .clickable {
-                                                        showVaultOnlySettingsModal = false
-                                                        showVaultChangePinDialog = true
-                                                    }
-                                                    .padding(14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(AppIcons.Key, contentDescription = null, tint = styleConfig.palette.primaryGlow)
-                                                Spacer(Modifier.width(12.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text("Thay Ä‘á»•i MÃ£ PIN báº£o máº­t", color = Color.White, fontWeight = FontWeight.Bold)
-                                                    Text("Äáº·t láº¡i máº­t kháº©u PIN (tá»‘i thiá»ƒu 6 kÃ½ tá»±)", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
-                                                }
-                                            }
-
-                                            // TÃ¹y chá»n 1.1: Cáº¥u hÃ¬nh MÃ£ PIN Giáº£ (Decoy PIN) ngá»¥y trang
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
-                                                    .clickable {
-                                                        showVaultOnlySettingsModal = false
-                                                        showSetDecoyPinDialog = true
-                                                    }
-                                                    .padding(14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(AppIcons.Key, contentDescription = null, tint = Color(0xFFFFD54F))
-                                                Spacer(Modifier.width(12.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(if (vaultSecState.hasDecoyPin) "MÃ£ PIN Giáº£ (Decoy): ÄÃ£ cÃ i Ä‘áº·t" else "CÃ i Ä‘áº·t MÃ£ PIN Giáº£ (Decoy PIN)", color = Color.White, fontWeight = FontWeight.Bold)
-                                                    Text("Khi bá»‹ Ã©p má»Ÿ kho, nháº­p PIN giáº£ sáº½ hiá»‡n kho ngá»¥y trang", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
-                                                }
-                                                if (vaultSecState.hasDecoyPin) {
-                                                    Text("âœ“ Báº¬T", color = Color(0xFFFFD54F), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                                                }
-                                            }
-
-                                            // TÃ¹y chá»n 1.2: Cáº¥u hÃ¬nh Tá»± Ä‘á»™ng khÃ³a Kho khi cháº¡y ngáº§m (Auto-Lock Timeout)
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
-                                                    .padding(14.dp),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text("â³ Tá»± Ä‘á»™ng khÃ³a kho khi áº©n á»©ng dá»¥ng:", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    val options = listOf(0 to "Ngay láº­p tá»©c", 30 to "30 giÃ¢y", 60 to "1 phÃºt", -1 to "Táº¯t")
-                                                    options.forEach { (sec, label) ->
-                                                        LiquidGlassPill(
-                                                            active = vaultSecState.autoLockSeconds == sec,
-                                                            onClick = { scope.launch { context.saveVaultAutoLockSeconds(sec) } },
-                                                            modifier = Modifier.weight(1f)
-                                                        ) {
-                                                            Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // 2. CÃ´ng táº¯c Báº­t / Táº¯t má»Ÿ khÃ³a báº±ng Sinh tráº¯c há»c (VÃ¢n tay)
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
-                                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(Icons.Default.Lock, contentDescription = null, tint = styleConfig.palette.primaryGlow)
-                                                Spacer(Modifier.width(12.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text("Má»Ÿ khÃ³a nhanh báº±ng VÃ¢n tay", color = Color.White, fontWeight = FontWeight.Bold)
-                                                    Text("Sá»­ dá»¥ng sinh tráº¯c há»c thay vÃ¬ gÃµ PIN", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
-                                                }
-                                                Switch(
-                                                    checked = vaultSecState.biometricEnabled,
-                                                    onCheckedChange = { enabled ->
-                                                        scope.launch { context.saveVaultBiometricEnabled(enabled) }
-                                                    }
-                                                )
-                                            }
-
-                                            // 3. KhÃ´i phá»¥c toÃ n bá»™ video trong Kho vá» thÆ° má»¥c gá»‘c
-                                            val vaultCount = remember(showVaultOnlySettingsModal) {
-                                                VaultManager.loadVaultEntries(context).size
-                                            }
-                                            if (vaultCount > 0) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(16.dp))
-                                                        .background(styleConfig.palette.deepBgMid)
-                                                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
-                                                        .clickable {
-                                                            scope.launch {
-                                                                val allEntries = VaultManager.loadVaultEntries(context)
-                                                                var restored = 0
-                                                                allEntries.forEach { entry ->
-                                                                    if (VaultManager.restoreVideoFromVault(context, entry.vaultId).isSuccess) {
-                                                                        restored++
-                                                                    }
-                                                                }
-                                                                showVaultOnlySettingsModal = false
-                                                                Toast.makeText(context, "ðŸ”“ ÄÃ£ khÃ´i phá»¥c toÃ n bá»™ $restored video vá» thÆ° má»¥c gá»‘c!", Toast.LENGTH_LONG).show()
-                                                            }
-                                                        }
-                                                        .padding(14.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(AppIcons.LockOpen, contentDescription = null, tint = Color(0xFF80FFDB))
-                                                    Spacer(Modifier.width(12.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text("KhÃ´i phá»¥c táº¥t cáº£ ($vaultCount video)", color = Color.White, fontWeight = FontWeight.Bold)
-                                                        Text("Tráº£ toÃ n bá»™ video trong kho vá» láº¡i thÆ° má»¥c gá»‘c", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
-                                                    }
-                                                }
-                                            }
-
-                                            // 4. NÃºt KhÃ³a & ThoÃ¡t Kho áº¨n ngay láº­p tá»©c
-                                            Button(
-                                                onClick = {
-                                                    showVaultOnlySettingsModal = false
-                                                    isVaultUnlocked = false
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = styleConfig.palette.primaryGlow),
-                                                shape = RoundedCornerShape(16.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF001F29), modifier = Modifier.size(18.dp))
-                                                Spacer(Modifier.width(8.dp))
-                                                Text("KhÃ³a & ThoÃ¡t LÆ°u trá»¯ ná»™i bá»™", color = Color(0xFF001F29), fontWeight = FontWeight.ExtraBold)
-                                            }
-                                        }
-                                    }
+                            VaultOnlySettingsModal(
+                                accessMode = vaultAccessMode,
+                                vaultSecState = vaultSecState,
+                                scope = scope,
+                                context = context,
+                                onDismiss = { showVaultOnlySettingsModal = false },
+                                onOpenChangeRealPin = { showVaultChangePinDialog = true },
+                                onOpenConfigureDecoyPin = { showConfigureDecoyPinDialog = true },
+                                onLockAndExit = {
+                                    showVaultOnlySettingsModal = false
+                                    vaultAccessMode = VaultAccessMode.LOCKED
                                 }
-                            }
+                            )
                         }
 
-                        // ================= MODAL 3: PHÃT LUá»’NG STREAM Máº NG (Ná»€N Äáº¶C KHÃ”NG XUYÃŠN THáº¤U) =================
+                        // Modal 3: Phát luồng Stream Mạng
                         if (showStreamModal) {
                             Dialog(
                                 onDismissRequest = { showStreamModal = false },
@@ -818,7 +608,7 @@ class MainActivity : FragmentActivity() {
                                                 Icon(AppIcons.Stream, null, tint = styleConfig.palette.primaryGlow)
                                                 Spacer(Modifier.width(8.dp))
                                                 Text(
-                                                    "PhÃ¡t Luá»“ng Stream Máº¡ng",
+                                                    "Phát Luồng Stream Mạng",
                                                     style = MaterialTheme.typography.titleMedium,
                                                     color = Color.White,
                                                     fontWeight = FontWeight.ExtraBold,
@@ -831,7 +621,7 @@ class MainActivity : FragmentActivity() {
                                                         .clip(CircleShape)
                                                         .background(Color.White.copy(alpha = 0.12f))
                                                 ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "ÄÃ³ng", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                    Icon(Icons.Default.Close, contentDescription = "Đóng", tint = Color.White, modifier = Modifier.size(18.dp))
                                                 }
                                             }
                                             NetworkStreamScreen(
@@ -849,8 +639,18 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
-                        // ================= Há»˜P THOáº I Äá»”I MÃƒ PIN KHO áº¨N =================
-                        if (showVaultChangePinDialog && isVaultUnlocked) {
+                        // Hộp thoại Thiết lập PIN Giả (Decoy PIN) - Chỉ mở được khi đang ở REAL_VAULT
+                        if (showConfigureDecoyPinDialog && vaultAccessMode == VaultAccessMode.REAL_VAULT) {
+                            ConfigureDecoyPinDialog(
+                                vaultSecState = vaultSecState,
+                                scope = scope,
+                                context = context,
+                                onDismiss = { showConfigureDecoyPinDialog = false }
+                            )
+                        }
+
+                        // Hộp thoại Đổi Mã PIN Thật
+                        if (showVaultChangePinDialog && vaultAccessMode == VaultAccessMode.REAL_VAULT) {
                             var currentPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
                             var confirmNewPinInput by remember { mutableStateOf("") }
@@ -862,7 +662,7 @@ class MainActivity : FragmentActivity() {
                                 containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text(
-                                        if (hasExistingPin) "ðŸ”‘ Thay Ä‘á»•i MÃ£ PIN LÆ°u trá»¯" else "ðŸ” Thiáº¿t láº­p MÃ£ PIN LÆ°u trá»¯",
+                                        if (hasExistingPin) "🔑 Thay đổi Mã PIN Lưu trữ" else "🔐 Thiết lập Mã PIN Lưu trữ",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -873,13 +673,13 @@ class MainActivity : FragmentActivity() {
                                             OutlinedTextField(
                                                 value = currentPinInput,
                                                 onValueChange = { currentPinInput = it },
-                                                label = { Text("MÃ£ PIN hiá»‡n táº¡i") },
+                                                label = { Text("Mã PIN hiện tại") },
                                                 visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                                 trailingIcon = {
                                                     IconButton(onClick = { showChars = !showChars }) {
                                                         Icon(
                                                             imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                            contentDescription = "Hiá»‡n/áº¨n",
+                                                            contentDescription = "Hiện/Ẩn",
                                                             tint = Color.White
                                                         )
                                                     }
@@ -891,13 +691,13 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = newPinInput,
                                             onValueChange = { newPinInput = it },
-                                            label = { Text("MÃ£ PIN má»›i (>= 6 kÃ½ tá»±)") },
+                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
                                             visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             trailingIcon = {
                                                 IconButton(onClick = { showChars = !showChars }) {
                                                     Icon(
                                                         imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                        contentDescription = "Hiá»‡n/áº¨n",
+                                                        contentDescription = "Hiện/Ẩn",
                                                         tint = Color.White
                                                     )
                                                 }
@@ -908,7 +708,7 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = confirmNewPinInput,
                                             onValueChange = { confirmNewPinInput = it },
-                                            label = { Text("Nháº­p láº¡i MÃ£ PIN má»›i") },
+                                            label = { Text("Nhập lại Mã PIN mới") },
                                             visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             singleLine = true,
                                             modifier = Modifier.fillMaxWidth()
@@ -924,16 +724,16 @@ class MainActivity : FragmentActivity() {
                                                 storedSaltBase64 = vaultSecState.pinSalt ?: ""
                                             )
                                             if (!validOld) {
-                                                Toast.makeText(context, "MÃ£ PIN hiá»‡n táº¡i khÃ´ng Ä‘Ãºng!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "Mã PIN hiện tại không đúng!", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                         }
                                         if (!PinSecurityManager.isValidNewPin(newPinInput)) {
-                                            Toast.makeText(context, "MÃ£ PIN má»›i pháº£i tá»« 6 kÃ½ tá»± trá»Ÿ lÃªn!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
                                         if (newPinInput.trim() != confirmNewPinInput.trim()) {
-                                            Toast.makeText(context, "Hai Ã´ MÃ£ PIN má»›i khÃ´ng khá»›p nhau!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Hai ô Mã PIN mới không khớp nhau!", Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
                                         scope.launch {
@@ -941,19 +741,19 @@ class MainActivity : FragmentActivity() {
                                             val newHash = PinSecurityManager.hashPinPbkdf2(newPinInput, newSalt)
                                             context.saveHashedVaultPin(newHash, newSalt)
                                             showVaultChangePinDialog = false
-                                            Toast.makeText(context, "âœ… ÄÃ£ cáº­p nháº­t MÃ£ PIN má»›i thÃ nh cÃ´ng!", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "✅ Đã cập nhật Mã PIN mới thành công!", Toast.LENGTH_LONG).show()
                                         }
                                     }) {
-                                        Text("LÆ°u MÃ£ PIN")
+                                        Text("Lưu Mã PIN")
                                     }
                                 },
                                 dismissButton = {
-                                    TextButton(onClick = { showVaultChangePinDialog = false }) { Text("Há»§y") }
+                                    TextButton(onClick = { showVaultChangePinDialog = false }) { Text("Hủy") }
                                 }
                             )
                         }
 
-                        // Há»™p thoáº¡i Migration
+                        // Hộp thoại Migration
                         if (showMigrationDialog) {
                             var oldPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
@@ -964,12 +764,12 @@ class MainActivity : FragmentActivity() {
                                 onDismissRequest = { if (!isMigratingVault) showMigrationDialog = false },
                                 containerColor = styleConfig.palette.deepBgMid,
                                 title = {
-                                    Text("ðŸ›¡ï¸ NÃ¢ng cáº¥p LÆ°u trá»¯ Báº£o máº­t", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("🛡️ Nâng cấp Lưu trữ Bảo mật", color = Color.White, fontWeight = FontWeight.Bold)
                                 },
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            "XÃ¡c nháº­n mÃ£ PIN cÅ© vÃ  Ä‘áº·t mÃ£ PIN má»›i (tá»‘i thiá»ƒu 6 kÃ½ tá»±):",
+                                            "Xác nhận mã PIN cũ và đặt mã PIN mới (tối thiểu 6 ký tự):",
                                             color = Color.White,
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -977,7 +777,7 @@ class MainActivity : FragmentActivity() {
                                             OutlinedTextField(
                                                 value = oldPinInput,
                                                 onValueChange = { oldPinInput = it },
-                                                label = { Text("MÃ£ PIN cÅ©") },
+                                                label = { Text("Mã PIN cũ") },
                                                 visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
                                                 singleLine = true,
                                                 modifier = Modifier.fillMaxWidth()
@@ -986,13 +786,13 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = newPinInput,
                                             onValueChange = { newPinInput = it },
-                                            label = { Text("MÃ£ PIN má»›i (>= 6 kÃ½ tá»±)") },
+                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
                                             visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             trailingIcon = {
                                                 IconButton(onClick = { showPinChars = !showPinChars }) {
                                                     Icon(
                                                         imageVector = if (showPinChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                        contentDescription = "Hiá»‡n/áº¨n",
+                                                        contentDescription = "Hiện/Ẩn",
                                                         tint = Color.White
                                                     )
                                                 }
@@ -1007,11 +807,11 @@ class MainActivity : FragmentActivity() {
                                         enabled = !isMigratingVault,
                                         onClick = {
                                             if (hasLegacyPin && oldPinInput.trim() != vaultSecState.legacyPlainPin?.trim()) {
-                                                Toast.makeText(context, "MÃ£ PIN cÅ© khÃ´ng Ä‘Ãºng!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "Mã PIN cũ không đúng!", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                             if (!PinSecurityManager.isValidNewPin(newPinInput)) {
-                                                Toast.makeText(context, "MÃ£ PIN má»›i pháº£i tá»« 6 kÃ½ tá»± trá»Ÿ lÃªn!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                             scope.launch {
@@ -1031,230 +831,30 @@ class MainActivity : FragmentActivity() {
                                                 context.clearLegacyVaultDataAfterMigration()
                                                 isMigratingVault = false
                                                 showMigrationDialog = false
-                                                isVaultUnlocked = true
+                                                vaultAccessMode = VaultAccessMode.REAL_VAULT
                                             }
                                         }
-                                    ) { Text("LÆ°u & HoÃ n táº¥t") }
+                                    ) { Text("Lưu & Hoàn tất") }
                                 },
                                 dismissButton = {
                                     if (!isMigratingVault) {
-                                        TextButton(onClick = { showMigrationDialog = false }) { Text("Äá»ƒ sau") }
+                                        TextButton(onClick = { showMigrationDialog = false }) { Text("Để sau") }
                                     }
                                 }
                             )
                         }
 
-                        // Há»™p thoáº¡i nháº­p MÃ£ PIN má»Ÿ Kho áº¨n
+                        // Hộp thoại nhập Mã PIN mở Kho (Hỗ trợ cả PIN Thật và Decoy PIN)
                         if (showVaultPinDialog) {
-                            var pinInput by remember { mutableStateOf("") }
-                            var pinVisible by remember { mutableStateOf(false) }
-                            val isSettingNewPin = !vaultSecState.isConfigured
-                            var remainingLockSec by remember { mutableLongStateOf(0L) }
-
-                            LaunchedEffect(vaultSecState.lockoutUntilMs) {
-                                while (true) {
-                                    val rem = ((vaultSecState.lockoutUntilMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
-                                    remainingLockSec = rem
-                                    if (rem <= 0L) break
-                                    delay(1000L)
-                                }
-                            }
-
-                            AlertDialog(
-                                onDismissRequest = { showVaultPinDialog = false },
-                                containerColor = styleConfig.palette.deepBgMid,
-                                title = {
-                                    Text(
-                                        if (isSettingNewPin) "ðŸ” Thiáº¿t láº­p MÃ£ PIN Báº£o Máº­t" else "ðŸ”’ XÃ¡c thá»±c LÆ°u trá»¯ ná»™i bá»™",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                },
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (remainingLockSec > 0L) {
-                                            Text(
-                                                "â³ Báº¡n Ä‘Ã£ nháº­p sai quÃ¡ ${vaultSecState.failedAttempts} láº§n. Vui lÃ²ng thá»­ láº¡i sau ${remainingLockSec} giÃ¢y.",
-                                                color = Color(0xFFFF5C8A),
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        } else {
-                                            Text(
-                                                if (isSettingNewPin) "Nháº­p mÃ£ PIN má»›i (tá»‘i thiá»ƒu 6 kÃ½ tá»±):"
-                                                else "Nháº­p mÃ£ PIN cá»§a báº¡n:",
-                                                color = Color.White
-                                            )
-                                        }
-                                        OutlinedTextField(
-                                            value = pinInput,
-                                            onValueChange = { pinInput = it },
-                                            label = { Text("MÃ£ PIN (>= 6 kÃ½ tá»±)") },
-                                            enabled = remainingLockSec <= 0L,
-                                            visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                            trailingIcon = {
-                                                IconButton(onClick = { pinVisible = !pinVisible }) {
-                                                    Icon(
-                                                        imageVector = if (pinVisible) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                        contentDescription = "Hiá»‡n/áº¨n kÃ½ tá»±",
-                                                        tint = Color.White
-                                                    )
-                                                }
-                                            },
-                                            singleLine = true,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        if (!isSettingNewPin && vaultSecState.biometricEnabled && PinSecurityManager.canUseBiometric(this@MainActivity) && remainingLockSec <= 0L) {
-                                            TextButton(onClick = {
-                                                showVaultPinDialog = false
-                                                PinSecurityManager.showBiometricPrompt(
-                                                    activity = this@MainActivity,
-                                                    onSuccess = {
-                                                        scope.launch { context.recordVaultPinAttempt(true) }
-                                                        isVaultUnlocked = true
-                                                    },
-                                                    onUsePinFallback = { showVaultPinDialog = true }
-                                                )
-                                            }) {
-                                                Text("ðŸ‘† DÃ¹ng VÃ¢n tay / KhuÃ´n máº·t", color = styleConfig.palette.primaryGlow)
-                                            }
-                                        }
-                                    }
-                                },
-                                confirmButton = {
-                                    Button(
-                                        enabled = remainingLockSec <= 0L,
-                                        onClick = {
-                                            if (isSettingNewPin) {
-                                                if (PinSecurityManager.isValidNewPin(pinInput)) {
-                                                    scope.launch {
-                                                        val salt = PinSecurityManager.generateSaltBase64()
-                                                        val hash = PinSecurityManager.hashPinPbkdf2(pinInput, salt)
-                                                        context.saveHashedVaultPin(hash, salt)
-                                                        isVaultUnlocked = true
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "MÃ£ PIN báº¯t buá»™c tá»‘i thiá»ƒu 6 kÃ½ tá»±!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                val verifyRes = PinSecurityManager.verifyPinWithDecoy(
-                                                    inputPin = pinInput,
-                                                    realHash = vaultSecState.pinHash,
-                                                    realSalt = vaultSecState.pinSalt,
-                                                    decoyHash = vaultSecState.decoyPinHash,
-                                                    decoySalt = vaultSecState.decoyPinSalt
-                                                )
-                                                if (verifyRes == PinVerifyResult.SUCCESS_REAL) {
-                                                    scope.launch {
-                                                        context.recordVaultPinAttempt(true)
-                                                        isDecoyVaultMode = false
-                                                        isVaultUnlocked = true
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else if (verifyRes == PinVerifyResult.SUCCESS_DECOY) {
-                                                    scope.launch {
-                                                        context.recordVaultPinAttempt(true)
-                                                        isDecoyVaultMode = true
-                                                        isVaultUnlocked = true
-                                                        showVaultPinDialog = false
-                                                    }
-                                                } else {
-                                                    val nextFail = vaultSecState.failedAttempts + 1
-                                                    val lockMs = PinSecurityManager.computeLockoutDurationMs(nextFail)
-                                                    scope.launch {
-                                                        context.recordVaultPinAttempt(false, lockMs)
-                                                    }
-                                                    val msg = if (lockMs > 0L) {
-                                                        "Sai mÃ£ PIN ($nextFail láº§n)! Táº¡m khÃ³a ${lockMs / 1000} giÃ¢y."
-                                                    } else {
-                                                        "Sai mÃ£ PIN! (Láº§n $nextFail/5)"
-                                                    }
-                                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        }
-                                    ) {
-                                        Text(if (isSettingNewPin) "LÆ°u & Má»Ÿ" else "Má»Ÿ")
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { showVaultPinDialog = false }) { Text("Há»§y") }
-                                }
-                            )
-                        }
-
-                                                // Há»˜P THOáº I CÃ€I Äáº¶T DECOY PIN (MÃƒ PIN GIáº¢)
-                        if (showSetDecoyPinDialog && isVaultUnlocked) {
-                            var decoyPinInput by remember { mutableStateOf("") }
-                            var confirmDecoyPinInput by remember { mutableStateOf("") }
-                            var showDecoyChars by remember { mutableStateOf(false) }
-
-                            AlertDialog(
-                                onDismissRequest = { showSetDecoyPinDialog = false },
-                                containerColor = styleConfig.palette.deepBgMid,
-                                title = { Text("ðŸŽ­ CÃ i Ä‘áº·t MÃ£ PIN Giáº£ (Decoy PIN)", color = Color.White, fontWeight = FontWeight.Bold) },
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text(
-                                            "MÃ£ PIN nÃ y dÃ¹ng khi bá»‹ ngÆ°á»i khÃ¡c Ã©p má»Ÿ kho. Khi nháº­p PIN giáº£, á»©ng dá»¥ng sáº½ má»Ÿ ra má»™t kho hoÃ n toÃ n trá»‘ng rá»—ng mÃ  khÃ´ng Ä‘á»ƒ lá»™ kho tháº­t:",
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                        OutlinedTextField(
-                                            value = decoyPinInput,
-                                            onValueChange = { decoyPinInput = it },
-                                            label = { Text("MÃ£ PIN giáº£ má»›i (>= 6 kÃ½ tá»±)") },
-                                            visualTransformation = if (showDecoyChars) VisualTransformation.None else PasswordVisualTransformation(),
-                                            trailingIcon = {
-                                                IconButton(onClick = { showDecoyChars = !showDecoyChars }) {
-                                                    Icon(imageVector = if (showDecoyChars) AppIcons.VisibilityOff else AppIcons.Visibility, contentDescription = null, tint = Color.White)
-                                                }
-                                            },
-                                            singleLine = true,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        OutlinedTextField(
-                                            value = confirmDecoyPinInput,
-                                            onValueChange = { confirmDecoyPinInput = it },
-                                            label = { Text("Nháº­p láº¡i MÃ£ PIN giáº£") },
-                                            visualTransformation = if (showDecoyChars) VisualTransformation.None else PasswordVisualTransformation(),
-                                            singleLine = true,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                },
-                                confirmButton = {
-                                    Button(onClick = {
-                                        if (!PinSecurityManager.isValidNewPin(decoyPinInput)) {
-                                            Toast.makeText(context, "MÃ£ PIN giáº£ pháº£i tá»« 6 kÃ½ tá»± trá»Ÿ lÃªn!", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-                                        if (decoyPinInput.trim() != confirmDecoyPinInput.trim()) {
-                                            Toast.makeText(context, "Hai Ã´ MÃ£ PIN giáº£ khÃ´ng khá»›p nhau!", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-                                        scope.launch {
-                                            val salt = PinSecurityManager.generateSaltBase64()
-                                            val hash = PinSecurityManager.hashPinPbkdf2(decoyPinInput, salt)
-                                            context.saveDecoyVaultPin(hash, salt)
-                                            showSetDecoyPinDialog = false
-                                            Toast.makeText(context, "âœ… ÄÃ£ cÃ i Ä‘áº·t MÃ£ PIN Giáº£ thÃ nh cÃ´ng!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }) { Text("LÆ°u PIN Giáº£") }
-                                },
-                                dismissButton = {
-                                    Row {
-                                        if (vaultSecState.hasDecoyPin) {
-                                            TextButton(onClick = {
-                                                scope.launch {
-                                                    context.removeDecoyVaultPin()
-                                                    showSetDecoyPinDialog = false
-                                                    Toast.makeText(context, "ÄÃ£ xÃ³a MÃ£ PIN Giáº£!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }) { Text("XÃ³a PIN Giáº£", color = MaterialTheme.colorScheme.error) }
-                                        }
-                                        TextButton(onClick = { showSetDecoyPinDialog = false }) { Text("Há»§y") }
-                                    }
+                            VaultUnlockPinDialog(
+                                activity = this@MainActivity,
+                                vaultSecState = vaultSecState,
+                                scope = scope,
+                                context = context,
+                                onDismiss = { showVaultPinDialog = false },
+                                onUnlocked = { mode ->
+                                    vaultAccessMode = mode
+                                    showVaultPinDialog = false
                                 }
                             )
                         }
@@ -1263,9 +863,9 @@ class MainActivity : FragmentActivity() {
                             AlertDialog(
                                 onDismissRequest = { pendingHttpIntentUrl = null },
                                 containerColor = styleConfig.palette.deepBgMid,
-                                title = { Text("âš ï¸ Cáº£nh bÃ¡o luá»“ng HTTP khÃ´ng mÃ£ hÃ³a", color = Color.White, fontWeight = FontWeight.Bold) },
+                                title = { Text("⚠️ Cảnh báo luồng HTTP không mã hóa", color = Color.White, fontWeight = FontWeight.Bold) },
                                 text = {
-                                    Text("LiÃªn káº¿t bÃªn ngoÃ i ($httpUrl) sá»­ dá»¥ng giao thá»©c HTTP khÃ´ng mÃ£ hÃ³a. Báº¡n cÃ³ muá»‘n tiáº¿p tá»¥c phÃ¡t khÃ´ng?", color = Color.White)
+                                    Text("Liên kết bên ngoài ($httpUrl) sử dụng giao thức HTTP không mã hóa. Bạn có muốn tiếp tục phát không?", color = Color.White)
                                 },
                                 confirmButton = {
                                     Button(onClick = {
@@ -1278,10 +878,10 @@ class MainActivity : FragmentActivity() {
                                             streamUrl = target
                                             isInPlayer = true
                                         }
-                                    }) { Text("Tiáº¿p tá»¥c phÃ¡t") }
+                                    }) { Text("Tiếp tục phát") }
                                 },
                                 dismissButton = {
-                                    TextButton(onClick = { pendingHttpIntentUrl = null }) { Text("Há»§y") }
+                                    TextButton(onClick = { pendingHttpIntentUrl = null }) { Text("Hủy") }
                                 }
                             )
                         }
@@ -1291,10 +891,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 }
-
-/**
- * MÃ n hÃ¬nh CÃ i Ä‘áº·t Chung & OTA (Ná»n tháº» Ä‘áº·c biá»‡t rÃµ nÃ©t, khÃ´ng xuyÃªn tháº¥u chá»¯ phÃ­a dÆ°á»›i)
- */
 @Composable
 fun OtaSettingsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current

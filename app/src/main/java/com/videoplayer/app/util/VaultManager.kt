@@ -61,22 +61,9 @@ object VaultManager {
 
     private val gson = Gson()
 
-    // 1. Kho Thật (Real Vault)
     fun getDirectVaultDir(): File {
         val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
         val dir = File(moviesDir, ".ProPlayVault")
-        if (!dir.exists()) dir.mkdirs()
-        val noMedia = File(dir, ".nomedia")
-        if (!noMedia.exists()) {
-            try { noMedia.createNewFile() } catch (_: Exception) {}
-        }
-        return dir
-    }
-
-    // 2. Kho Giả (Decoy Vault - Mở khi nhập Decoy PIN)
-    fun getDecoyVaultDir(): File {
-        val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-        val dir = File(moviesDir, ".ProPlayVaultDecoy")
         if (!dir.exists()) dir.mkdirs()
         val noMedia = File(dir, ".nomedia")
         if (!noMedia.exists()) {
@@ -89,10 +76,6 @@ object VaultManager {
         val extDir = context.getExternalFilesDir(null) ?: context.filesDir
         val dir = File(extDir, ".vault")
         if (!dir.exists()) dir.mkdirs()
-        val noMedia = File(dir, ".nomedia")
-        if (!noMedia.exists()) {
-            try { noMedia.createNewFile() } catch (_: Exception) {}
-        }
         return dir
     }
 
@@ -102,8 +85,14 @@ object VaultManager {
         return dir
     }
 
-    private fun getIndexFile(context: Context): File = File(getLegacyInternalVaultDir(context), "vault_index.json")
-    private fun getDecoyIndexFile(context: Context): File = File(getLegacyInternalVaultDir(context), "vault_decoy_index.json")
+    /**
+     * Tách biệt hoàn toàn file chỉ mục của Kho Thật (vault_index.json)
+     * và Kho Giả Ngụy Trang (vault_decoy_index.json).
+     */
+    private fun getIndexFile(context: Context, isDecoy: Boolean): File {
+        val fileName = if (isDecoy) "vault_decoy_index.json" else "vault_index.json"
+        return File(getLegacyInternalVaultDir(context), fileName)
+    }
 
     fun getOrCreateSecretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
@@ -126,7 +115,7 @@ object VaultManager {
 
     @Synchronized
     fun loadVaultEntries(context: Context, isDecoy: Boolean = false): List<VaultEntryMeta> {
-        val idxFile = if (isDecoy) getDecoyIndexFile(context) else getIndexFile(context)
+        val idxFile = getIndexFile(context, isDecoy)
         if (!idxFile.exists()) return emptyList()
         return try {
             val json = idxFile.readText(Charsets.UTF_8)
@@ -138,31 +127,34 @@ object VaultManager {
 
     @Synchronized
     private fun saveVaultEntries(context: Context, entries: List<VaultEntryMeta>, isDecoy: Boolean = false) {
-        val idxFile = if (isDecoy) getDecoyIndexFile(context) else getIndexFile(context)
+        val idxFile = getIndexFile(context, isDecoy)
         val json = gson.toJson(VaultIndexData(entries.toMutableList()))
         idxFile.writeText(json, Charsets.UTF_8)
     }
 
-    fun getVaultVideosAsVideoItems(context: Context, isDecoy: Boolean = false): List<VaultEntryMeta> =
-        loadVaultEntries(context, isDecoy)
+    fun getVaultVideosAsVideoItems(context: Context, isDecoy: Boolean = false): List<VaultEntryMeta> {
+        return loadVaultEntries(context, isDecoy)
+    }
 
+    /**
+     * Lấy tổng hợp tất cả đường dẫn gốc đã bị ẩn (cả Kho thật lẫn Kho giả) để lọc khỏi danh sách ngoài
+     */
     fun getHiddenOriginalPaths(context: Context): Set<String> {
         val realPaths = loadVaultEntries(context, isDecoy = false).map { it.originalPath }
         val decoyPaths = loadVaultEntries(context, isDecoy = true).map { it.originalPath }
         return (realPaths + decoyPaths).toSet()
     }
 
-    fun resolveVaultFile(context: Context, meta: VaultEntryMeta, isDecoy: Boolean = false): File {
-        val vaultDir = if (isDecoy) getDecoyVaultDir() else getDirectVaultDir()
-        val directFile = File(vaultDir, meta.encryptedFileName)
+    fun resolveVaultFile(context: Context, meta: VaultEntryMeta): File {
+        val directFile = File(getDirectVaultDir(), meta.encryptedFileName)
         if (directFile.exists()) return directFile
         val sandboxFile = File(getSandboxVaultDir(context), meta.encryptedFileName)
         if (sandboxFile.exists()) return sandboxFile
         return File(getLegacyInternalVaultDir(context), meta.encryptedFileName)
     }
 
-    fun toVideoItem(context: Context, meta: VaultEntryMeta, isDecoy: Boolean = false): VideoItem {
-        val targetFile = resolveVaultFile(context, meta, isDecoy)
+    fun toVideoItem(context: Context, meta: VaultEntryMeta): VideoItem {
+        val targetFile = resolveVaultFile(context, meta)
         val playPath = if (meta.storageType == "AES_GCM") {
             "vault://${targetFile.absolutePath}"
         } else {
@@ -181,7 +173,11 @@ object VaultManager {
         )
     }
 
-    suspend fun hideVideoToVaultFast(context: Context, video: VideoItem, isDecoy: Boolean = false): VaultHideOutcome = withContext(Dispatchers.IO) {
+    suspend fun hideVideoToVaultFast(
+        context: Context,
+        video: VideoItem,
+        isDecoy: Boolean = false
+    ): VaultHideOutcome = withContext(Dispatchers.IO) {
         try {
             if (!FileOperationHelper.hasAllFilesAccess()) {
                 return@withContext VaultHideOutcome.NeedsAllFilesPermission
@@ -193,9 +189,9 @@ object VaultManager {
             }
 
             val vaultId = "${System.currentTimeMillis()}_${video.id}"
-            val hiddenFileName = ".vault_$vaultId.vpv"
-            val vaultDir = if (isDecoy) getDecoyVaultDir() else getDirectVaultDir()
-            val destFile = File(vaultDir, hiddenFileName)
+            val prefix = if (isDecoy) ".decoy_" else ".vault_"
+            val hiddenFileName = "$prefix$vaultId.vpv"
+            val destFile = File(getDirectVaultDir(), hiddenFileName)
 
             val renamed = srcFile.renameTo(destFile)
             if (!renamed || !destFile.exists()) {
@@ -242,7 +238,7 @@ object VaultManager {
             val meta = entries.find { it.vaultId == cleanId }
                 ?: return@withContext Result.failure(Exception("Không tìm thấy video trong Kho"))
 
-            val vaultFile = resolveVaultFile(context, meta, isDecoy)
+            val vaultFile = resolveVaultFile(context, meta)
             if (vaultFile.exists()) vaultFile.delete()
 
             entries.removeAll { it.vaultId == cleanId }
@@ -260,7 +256,7 @@ object VaultManager {
             val meta = entries.find { it.vaultId == cleanId }
                 ?: return@withContext Result.failure(Exception("Không tìm thấy video trong Kho"))
 
-            val vaultFile = resolveVaultFile(context, meta, isDecoy)
+            val vaultFile = resolveVaultFile(context, meta)
             if (!vaultFile.exists()) return@withContext Result.failure(Exception("Tệp trong Kho không tồn tại"))
 
             if (meta.storageType != "AES_GCM") {

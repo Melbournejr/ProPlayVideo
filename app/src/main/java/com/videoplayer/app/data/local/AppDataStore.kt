@@ -25,30 +25,39 @@ private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
 private val themeEngineModeKey = stringPreferencesKey("theme_engine_mode")
 private val themeSubVariantKey = stringPreferencesKey("theme_sub_variant")
 
-// Legacy Vault keys
+// Key cũ phục vụ Migration tự động
 private val legacyVaultPinKey = stringPreferencesKey("private_vault_pin")
 private val legacyVaultVideoIdsKey = stringSetPreferencesKey("private_vault_video_ids")
 
-// Real Vault PIN (PBKDF2 Hash + Salt)
+// Key bảo mật Kho thật (Real Vault)
 private val vaultPinHashKey = stringPreferencesKey("vault_pin_pbkdf2_hash")
 private val vaultPinSaltKey = stringPreferencesKey("vault_pin_pbkdf2_salt")
-
-// Decoy Vault PIN (Mã PIN giả mở Vault ngụy trang)
-private val vaultDecoyPinHashKey = stringPreferencesKey("vault_decoy_pin_pbkdf2_hash")
-private val vaultDecoyPinSaltKey = stringPreferencesKey("vault_decoy_pin_pbkdf2_salt")
-
 private val vaultFailedAttemptsKey = intPreferencesKey("vault_failed_attempts")
 private val vaultLockoutUntilMsKey = longPreferencesKey("vault_lockout_until_ms")
 private val vaultBiometricEnabledKey = booleanPreferencesKey("vault_biometric_enabled")
-private val vaultAutoLockSecondsKey = intPreferencesKey("vault_auto_lock_seconds") // 0 = ngay lập tức, 30, 60, -1 = tắt
-private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
 
+// Key bảo mật Kho giả (Decoy Vault) & Auto-Lock Timeout
+private val decoyPinHashKey = stringPreferencesKey("vault_decoy_pin_pbkdf2_hash")
+private val decoyPinSaltKey = stringPreferencesKey("vault_decoy_pin_pbkdf2_salt")
+private val vaultAutoLockTimeoutSecKey = intPreferencesKey("vault_auto_lock_timeout_sec")
+
+private val httpCleartextWarnAckKey = booleanPreferencesKey("http_cleartext_warning_ack")
 private val savedBrightnessKey = floatPreferencesKey("saved_player_brightness")
 private val subtitleSizeSpKey = floatPreferencesKey("saved_subtitle_size_sp")
 private val subtitleColorArgbKey = intPreferencesKey("saved_subtitle_color_argb")
 
 typealias PositionMap = Map<String, Long>
 typealias VaultIdSet = Set<String>
+
+/**
+ * Chế độ truy cập Kho Ẩn hiện tại:
+ * - LOCKED: Đang khóa (chế độ bình thường)
+ * - REAL_VAULT: Đang mở Kho thật
+ * - DECOY_VAULT: Đang mở Kho giả ngụy trang (khi nhập Decoy PIN)
+ */
+enum class VaultAccessMode {
+    LOCKED, REAL_VAULT, DECOY_VAULT
+}
 
 data class VaultSecurityState(
     val pinHash: String? = null,
@@ -60,7 +69,7 @@ data class VaultSecurityState(
     val legacyPlainPin: String? = null,
     val legacyVaultIds: Set<String> = emptySet(),
     val biometricEnabled: Boolean = true,
-    val autoLockSeconds: Int = 30
+    val autoLockTimeoutSec: Int = 30 // Mặc định tự khóa sau 30 giây dưới nền (0 = Khóa ngay lập tức)
 ) {
     val isConfigured: Boolean get() = !pinHash.isNullOrBlank() && !pinSalt.isNullOrBlank()
     val hasDecoyPin: Boolean get() = !decoyPinHash.isNullOrBlank() && !decoyPinSalt.isNullOrBlank()
@@ -72,16 +81,24 @@ fun Context.observeVaultSecurityState(): Flow<VaultSecurityState> {
         VaultSecurityState(
             pinHash = prefs[vaultPinHashKey],
             pinSalt = prefs[vaultPinSaltKey],
-            decoyPinHash = prefs[vaultDecoyPinHashKey],
-            decoyPinSalt = prefs[vaultDecoyPinSaltKey],
+            decoyPinHash = prefs[decoyPinHashKey],
+            decoyPinSalt = prefs[decoyPinSaltKey],
             failedAttempts = prefs[vaultFailedAttemptsKey] ?: 0,
             lockoutUntilMs = prefs[vaultLockoutUntilMsKey] ?: 0L,
             legacyPlainPin = prefs[legacyVaultPinKey],
             legacyVaultIds = prefs[legacyVaultVideoIdsKey] ?: emptySet(),
             biometricEnabled = prefs[vaultBiometricEnabledKey] ?: true,
-            autoLockSeconds = prefs[vaultAutoLockSecondsKey] ?: 30
+            autoLockTimeoutSec = prefs[vaultAutoLockTimeoutSecKey] ?: 30
         )
     }
+}
+
+suspend fun Context.saveVaultBiometricEnabled(enabled: Boolean) {
+    this.datastore.edit { prefs -> prefs[vaultBiometricEnabledKey] = enabled }
+}
+
+suspend fun Context.saveVaultAutoLockTimeoutSec(seconds: Int) {
+    this.datastore.edit { prefs -> prefs[vaultAutoLockTimeoutSecKey] = seconds.coerceAtLeast(0) }
 }
 
 suspend fun Context.saveHashedVaultPin(hashBase64: String, saltBase64: String) {
@@ -94,29 +111,17 @@ suspend fun Context.saveHashedVaultPin(hashBase64: String, saltBase64: String) {
     }
 }
 
-suspend fun Context.saveDecoyVaultPin(hashBase64: String, saltBase64: String) {
+suspend fun Context.saveHashedDecoyPin(hashBase64: String, saltBase64: String) {
     this.datastore.edit { prefs ->
-        prefs[vaultDecoyPinHashKey] = hashBase64
-        prefs[vaultDecoyPinSaltKey] = saltBase64
+        prefs[decoyPinHashKey] = hashBase64
+        prefs[decoyPinSaltKey] = saltBase64
     }
 }
 
-suspend fun Context.removeDecoyVaultPin() {
+suspend fun Context.clearDecoyPin() {
     this.datastore.edit { prefs ->
-        prefs.remove(vaultDecoyPinHashKey)
-        prefs.remove(vaultDecoyPinSaltKey)
-    }
-}
-
-suspend fun Context.saveVaultAutoLockSeconds(seconds: Int) {
-    this.datastore.edit { prefs ->
-        prefs[vaultAutoLockSecondsKey] = seconds
-    }
-}
-
-suspend fun Context.saveVaultBiometricEnabled(enabled: Boolean) {
-    this.datastore.edit { prefs ->
-        prefs[vaultBiometricEnabledKey] = enabled
+        prefs.remove(decoyPinHashKey)
+        prefs.remove(decoyPinSaltKey)
     }
 }
 
@@ -140,22 +145,6 @@ suspend fun Context.recordVaultPinAttempt(success: Boolean, lockoutDurationMs: L
             }
         }
     }
-}
-
-suspend fun Context.saveThemeEngineMode(modeId: String) {
-    this.datastore.edit { prefs -> prefs[themeEngineModeKey] = modeId }
-}
-
-fun Context.observeThemeEngineMode(): Flow<String> {
-    return this.datastore.data.map { prefs -> prefs[themeEngineModeKey] ?: "liquid_glass" }
-}
-
-suspend fun Context.saveThemeSubVariant(variantId: String) {
-    this.datastore.edit { prefs -> prefs[themeSubVariantKey] = variantId }
-}
-
-fun Context.observeThemeSubVariant(): Flow<String> {
-    return this.datastore.data.map { prefs -> prefs[themeSubVariantKey] ?: "gold_signature" }
 }
 
 fun Context.observeHttpWarnAcknowledged(): Flow<Boolean> {
@@ -298,4 +287,20 @@ suspend fun Context.saveGlassFrostAlpha(alpha: Float) {
 
 fun Context.observeGlassFrostAlpha(): Flow<Float> {
     return this.datastore.data.map { prefs -> prefs[glassFrostAlphaKey] ?: 0.16f }
+}
+
+suspend fun Context.saveThemeEngineMode(modeId: String) {
+    this.datastore.edit { prefs -> prefs[themeEngineModeKey] = modeId }
+}
+
+fun Context.observeThemeEngineMode(): Flow<String> {
+    return this.datastore.data.map { prefs -> prefs[themeEngineModeKey] ?: "liquid_glass" }
+}
+
+suspend fun Context.saveThemeSubVariant(variantId: String) {
+    this.datastore.edit { prefs -> prefs[themeSubVariantKey] = variantId }
+}
+
+fun Context.observeThemeSubVariant(): Flow<String> {
+    return this.datastore.data.map { prefs -> prefs[themeSubVariantKey] ?: "gold_signature" }
 }
