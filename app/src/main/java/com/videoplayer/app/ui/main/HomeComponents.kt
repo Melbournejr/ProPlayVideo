@@ -138,11 +138,12 @@ fun MultiSelectActionBar(
 fun BoxScope.FolderListSection(
     folders: List<FolderSummary>,
     folderListState: LazyListState,
-    lastPlayedVideo: VideoItem?,
-    savedPositions: PositionMap,
+    continueWatchingItems: List<ContinueWatchingItem>,
+    watchLaterIds: Set<String>,
     visibleVideos: List<VideoItem>,
     onSelectFolder: (String) -> Unit,
-    onPlayRecent: (VideoItem, List<VideoItem>) -> Unit
+    onPlayRecent: (VideoItem, List<VideoItem>) -> Unit,
+    onRemoveContinueWatching: (VideoItem) -> Unit
 ) {
     val palette = LocalGlassPalette.current
 
@@ -152,59 +153,17 @@ fun BoxScope.FolderListSection(
         contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        lastPlayedVideo?.let { recent ->
-            val pos = savedPositions[recent.id] ?: 0L
-            if (pos > 2000L) {
-                item(key = "recent_banner_${recent.id}") {
-                    val recentPlaylist = remember(visibleVideos, recent.folder) {
-                        visibleVideos.filter { it.folder == recent.folder }
-                    }
-                    LiquidGlassCard(
-                        tintColor = palette.primaryGlow,
-                        surfaceAlpha = 0.16f,
-                        highlighted = true,
-                        cornerRadius = 24.dp,
-                        onClick = { onPlayRecent(recent, recentPlaylist) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            VideoThumbnailView(
-                                video = recent,
-                                modifier = Modifier.size(width = 108.dp, height = 64.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
-                                LiquidGlassPill(active = true) {
-                                    Text(
-                                        text = "▶ TIẾP TỤC XEM",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = recent.displayName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                val progress = (pos.toFloat() / recent.duration.coerceAtLeast(1L)).coerceIn(0f, 1f)
-                                LinearProgressIndicator(
-                                    progress = progress,
-                                    color = palette.primaryGlow,
-                                    trackColor = Color.White.copy(alpha = 0.15f),
-                                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp))
-                                )
-                            }
-                        }
-                    }
-                }
+                if (continueWatchingItems.isNotEmpty()) {
+            item(key = "continue_watching_carousel") {
+                ContinueWatchingCarousel(
+                    items = continueWatchingItems,
+                    watchLaterIds = watchLaterIds,
+                    onPlayItem = { vid ->
+                        val folderPlaylist = visibleVideos.filter { it.folder == vid.folder }
+                        onPlayRecent(vid, folderPlaylist.ifEmpty { listOf(vid) })
+                    },
+                    onRemoveFromContinue = onRemoveContinueWatching
+                )
             }
         }
 
@@ -306,6 +265,7 @@ fun VideoCollectionSection(
     isMultiSelectMode: Boolean,
     selectedVideoIds: List<String>,
     savedPositions: PositionMap,
+    watchLaterIds: Set<String> = emptySet(),
     lastViewedVideoId: String?,
     onItemClick: (VideoItem) -> Unit,
     onItemLongClick: (VideoItem) -> Unit,
@@ -346,6 +306,8 @@ fun VideoCollectionSection(
                             Box {
                                 VideoThumbnailView(
                                     video = video,
+                                    progressFraction = progress,
+                                    isWatchLater = video.id in watchLaterIds,
                                     modifier = Modifier.fillMaxWidth().height(104.dp)
                                 )
                                 if (isMultiSelectMode) {
@@ -439,6 +401,8 @@ fun VideoCollectionSection(
                             }
                             VideoThumbnailView(
                                 video = video,
+                                progressFraction = progress,
+                                isWatchLater = video.id in watchLaterIds,
                                 modifier = Modifier.size(width = 112.dp, height = 64.dp)
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {

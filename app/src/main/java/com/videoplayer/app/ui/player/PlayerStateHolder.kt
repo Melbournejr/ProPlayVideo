@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.videoplayer.app.data.local.getSystemScreenBrightness
 import com.videoplayer.app.data.local.readLastPosition
+import com.videoplayer.app.data.local.VideoBookmark
+import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.ExternalSubtitleItem
@@ -34,7 +36,7 @@ enum class GestureMode {
 }
 
 enum class ActiveModal {
-    NONE, STUDIO, TOOLS
+    NONE, STUDIO, TOOLS, BOOKMARKS
 }
 
 fun formatTimeMs(ms: Long): String {
@@ -150,6 +152,7 @@ class PlayerStateHolder(
     var currentScreenBrightness by mutableFloatStateOf(context.getSystemScreenBrightness())
     var subtitleSizeSp by mutableFloatStateOf(20f)
     var subtitleTextColor by mutableStateOf(Color.White)
+    var bookmarks by mutableStateOf<List<VideoBookmark>>(emptyList())
     var showNerdStats by mutableStateOf(false)
     var nerdStats by mutableStateOf<VideoNerdStats?>(null)
 
@@ -185,11 +188,17 @@ class PlayerStateHolder(
         loopPointB = null
     }
 
+    fun refreshBookmarksForCurrentVideo() {
+        val vid = currentVideo ?: return
+        bookmarks = WatchExperienceManager.getBookmarksForVideo(context, vid.id)
+    }
+
     fun persistCurrentPosition() {
         val vid = currentVideo ?: return
         val pos = playerManager.getCurrentPosition()
         val dur = playerManager.getDuration()
         val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
+        WatchExperienceManager.recordPlaybackProgress(context, vid, posToSave, dur)
         CoroutineScope(Dispatchers.IO).launch {
             context.saveLastPosition(vid.id, posToSave)
         }
@@ -225,6 +234,7 @@ class PlayerStateHolder(
                 val savedPos = context.readLastPosition(nextVid.id)
                 val (_, subs) = playerManager.playVideoAtIndex(nextIdx, savedPos)
                 currentVideo = nextVid
+                refreshBookmarksForCurrentVideo()
                 loadedSubtitles = subs
                 onVideoChangedCallback(nextVid)
                 showTemporaryHint("⏭️ ${nextVid.displayName}")
@@ -242,6 +252,7 @@ class PlayerStateHolder(
                 val savedPos = context.readLastPosition(prevVid.id)
                 val (_, subs) = playerManager.playVideoAtIndex(prevIdx, savedPos)
                 currentVideo = prevVid
+                refreshBookmarksForCurrentVideo()
                 loadedSubtitles = subs
                 onVideoChangedCallback(prevVid)
                 showTemporaryHint("⏮️ ${prevVid.displayName}")

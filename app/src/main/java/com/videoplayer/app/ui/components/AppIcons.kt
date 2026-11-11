@@ -285,5 +285,51 @@ object AppIcons {
         }
     }
 
+    val Bookmark: ImageVector = createIcon("Bookmark") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(17f, 3f); lineTo(7f, 3f); curveTo(5.9f, 3f, 5f, 3.9f, 5f, 5f)
+            lineTo(5f, 21f); lineTo(12f, 18f); lineTo(19f, 21f); lineTo(19f, 5f)
+            curveTo(19f, 3.9f, 18.1f, 3f, 17f, 3f); close()
+        }
+    }
+
+    val History: ImageVector = createIcon("History") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(13f, 3f); curveTo(8.03f, 3f, 4f, 7.03f, 4f, 12f); lineTo(1f, 12f)
+            lineTo(4.89f, 15.89f); lineTo(4.96f, 16.03f); lineTo(9f, 12f); lineTo(6f, 12f)
+            curveTo(6f, 8.13f, 9.13f, 5f, 13f, 5f); curveTo(16.87f, 5f, 20f, 8.13f, 20f, 12f)
+            curveTo(20f, 15.87f, 16.87f, 19f, 13f, 19f); curveTo(11.07f, 19f, 9.32f, 18.21f, 8.06f, 16.94f)
+            lineTo(6.64f, 18.36f); curveTo(8.27f, 19.99f, 10.51f, 21f, 13f, 21f)
+            curveTo(17.97f, 21f, 22f, 16.97f, 22f, 12f); curveTo(22f, 7.03f, 17.97f, 3f, 13f, 3f); close()
+            moveTo(12f, 8f); lineTo(12f, 13f); lineTo(16.28f, 15.54f); lineTo(17f, 14.33f)
+            lineTo(13.5f, 12.25f); lineTo(13.5f, 8f); lineTo(12f, 8f); close()
+        }
+    }
+
+    val WatchLater: ImageVector = createIcon("WatchLater") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(12f, 2f); curveTo(6.5f, 2f, 2f, 6.5f, 2f, 12f); curveTo(2f, 17.5f, 6.5f, 22f, 12f, 22f)
+            curveTo(17.5f, 22f, 22f, 17.5f, 22f, 12f); curveTo(22f, 6.5f, 17.5f, 2f, 12f, 2f); close()
+            moveTo(16.2f, 16.2f); lineTo(11f, 13f); lineTo(11f, 7f); lineTo(12.5f, 7f)
+            lineTo(12.5f, 12.2f); lineTo(17f, 14.9f); lineTo(16.2f, 16.2f); close()
+        }
+    }
+
+    val WifiTethering: ImageVector = createIcon("WifiTethering") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(12f, 11f); curveTo(10.9f, 11f, 10f, 11.9f, 10f, 13f); curveTo(10f, 14.1f, 10.9f, 15f, 12f, 15f)
+            curveTo(13.1f, 15f, 14f, 14.1f, 14f, 13f); curveTo(14f, 11.9f, 13.1f, 11f, 12f, 11f); close()
+            moveTo(16f, 13f); curveTo(16f, 10.79f, 14.21f, 9f, 12f, 9f); curveTo(9.79f, 9f, 8f, 10.79f, 8f, 13f)
+            curveTo(8f, 14.48f, 8.81f, 15.77f, 10f, 16.46f); lineTo(11f, 14.73f)
+            curveTo(10.4f, 14.38f, 10f, 13.74f, 10f, 13f); curveTo(10f, 11.9f, 10.9f, 11f, 12f, 11f)
+            curveTo(13.1f, 11f, 14f, 11.9f, 14f, 13f); curveTo(14f, 13.74f, 13.6f, 14.38f, 13f, 14.73f)
+            lineTo(14f, 16.46f); curveTo(15.19f, 15.77f, 16f, 14.48f, 16f, 13f); close()
+            moveTo(12f, 5f); curveTo(7.58f, 5f, 4f, 8.58f, 4f, 13f); curveTo(4f, 15.96f, 5.61f, 18.54f, 8f, 19.92f)
+            lineTo(9f, 18.19f); curveTo(7.21f, 17.15f, 6f, 15.22f, 6f, 13f); curveTo(6f, 9.69f, 8.69f, 7f, 12f, 7f)
+            curveTo(15.31f, 7f, 18f, 9.69f, 18f, 13f); curveTo(18f, 15.22f, 16.79f, 17.15f, 15f, 18.19f)
+            lineTo(16f, 19.92f); curveTo(18.39f, 18.54f, 20f, 15.96f, 20f, 13f); curveTo(20f, 8.58f, 16.42f, 5f, 12f, 5f); close()
+        }
+    }
+
     val Public: ImageVector = Stream
 }

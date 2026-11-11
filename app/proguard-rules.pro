@@ -47,3 +47,6 @@
 -keepclassmembers class kotlinx.coroutines.** {
     volatile <fields>;
 }
+-keep class com.videoplayer.app.data.local.VideoBookmark { *; }
+-keep class com.videoplayer.app.data.local.WatchHistoryEntry { *; }
+-keep class com.videoplayer.app.data.local.WatchExperienceStoreData { *; }

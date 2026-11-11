@@ -16,16 +16,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.videoplayer.app.data.local.VideoBookmark
 
 /**
  * Thanh tua thời gian vẽ trực tiếp trên Canvas (Direct-Touch 120Hz SeekBar)
- * Cô lập hoàn toàn Recomposition trong phạm vi thanh trượt khi người dùng kéo chấm tròn.
+ * Hỗ trợ hiển thị trực quan các điểm đánh dấu (Bookmark Markers) màu vàng sáng trên rãnh tua.
  */
 @Composable
 fun DirectCanvasSeekBar(
     currentPosMs: Long,
     durationMs: Long,
     sleepRemainingSec: Int,
+    bookmarks: List<VideoBookmark> = emptyList(),
     activeColor: Color,
     onDragStart: () -> Unit,
     onDragEnd: (Long) -> Unit
@@ -81,18 +83,32 @@ fun DirectCanvasSeekBar(
                 val centerY = size.height / 2f
                 val thumbX = (fraction * size.width).coerceIn(0f, size.width)
 
+                // Rãnh nền
                 drawRoundRect(
                     color = Color.White.copy(alpha = 0.24f),
                     topLeft = Offset(0f, centerY - trackHeight / 2f),
                     size = Size(size.width, trackHeight),
                     cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
                 )
+                // Phần đã phát
                 drawRoundRect(
                     color = activeColor,
                     topLeft = Offset(0f, centerY - trackHeight / 2f),
                     size = Size(thumbX, trackHeight),
                     cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
                 )
+
+                // Vẽ các vạch đánh dấu Bookmark màu vàng trên thanh tua
+                bookmarks.forEach { bm ->
+                    val bmFrac = (bm.timestampMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+                    val bmX = bmFrac * size.width
+                    drawCircle(
+                        color = Color(0xFFFFEA00),
+                        radius = 4.dp.toPx(),
+                        center = Offset(bmX, centerY)
+                    )
+                }
+
                 if (isDragging) {
                     drawCircle(
                         color = activeColor.copy(alpha = 0.35f),

@@ -150,6 +150,7 @@ fun BoxScope.PlayerOverlaysAndControls(
                     currentPosMs = state.currentPos,
                     durationMs = state.duration,
                     sleepRemainingSec = state.sleepRemainingSec,
+                    bookmarks = state.bookmarks,
                     activeColor = palette.primaryGlow,
                     onDragStart = { state.isDraggingSlider = true },
                     onDragEnd = { targetMs ->
@@ -252,6 +253,27 @@ fun BoxScope.PlayerOverlaysAndControls(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
+                        IconButton(
+                            onClick = {
+                                state.refreshBookmarksForCurrentVideo()
+                                state.activeModal = ActiveModal.BOOKMARKS
+                            },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (state.bookmarks.isNotEmpty()) palette.primaryGlow.copy(alpha = 0.28f)
+                                    else Color.White.copy(alpha = 0.14f)
+                                )
+                        ) {
+                            Icon(
+                                AppIcons.Bookmark,
+                                contentDescription = "Đánh dấu Bookmark",
+                                tint = if (state.bookmarks.isNotEmpty()) palette.primaryGlow else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
                         IconButton(
                             onClick = { state.toggleScreenOrientation(activity) },
                             modifier = Modifier

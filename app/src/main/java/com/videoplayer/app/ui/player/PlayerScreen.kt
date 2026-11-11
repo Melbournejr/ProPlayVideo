@@ -130,6 +130,7 @@ fun PlayerScreen(
             val startIdx = state.effectivePlaylist.indexOfFirst { it.id == initialVideo.id }.coerceAtLeast(0)
             val startVid = state.effectivePlaylist[startIdx]
             state.currentVideo = startVid
+            state.refreshBookmarksForCurrentVideo()
             onVideoChanged(startVid)
             val savedPos = context.readLastPosition(startVid.id)
             val subs = playerManager.playPlaylist(state.effectivePlaylist, startIdx, savedPos)
@@ -244,6 +245,7 @@ fun PlayerScreen(
             val activeVid = state.currentVideo
             if (activeVid != null && state.isPlaying && !state.isDraggingSlider && tick % 4 == 0) {
                 context.saveLastPosition(activeVid.id, pos)
+                WatchExperienceManager.recordPlaybackProgress(context, activeVid, pos, state.duration)
             }
             delay(300)
         }

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.VaultSecurityState
+import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.data.local.recordVaultPinAttempt
 import com.videoplayer.app.data.local.saveHashedVaultPin
 import com.videoplayer.app.data.model.VideoItem
@@ -56,6 +57,28 @@ fun VideoItemActionMenuDialog(
         title = { Text(targetVideo.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
+                if (!isVaultItem) {
+                    val inWatchLater = WatchExperienceManager.isInWatchLater(targetVideo.id)
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                if (inWatchLater) "Bỏ khỏi danh sách Xem sau" else "Thêm vào danh sách Xem sau",
+                                fontWeight = FontWeight.Bold,
+                                color = palette.primaryGlow
+                            )
+                        },
+                        leadingContent = { Icon(AppIcons.WatchLater, null, tint = palette.primaryGlow) },
+                        modifier = Modifier.clickable {
+                            val added = WatchExperienceManager.toggleWatchLater(context, targetVideo.id)
+                            Toast.makeText(
+                                context,
+                                if (added) "🔖 Đã thêm vào danh sách Xem sau!" else "Đã gỡ khỏi Xem sau",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            onDismiss()
+                        }
+                    )
+                }
                 ListItem(
                     headlineContent = { Text("Chia sẻ video...", fontWeight = FontWeight.SemiBold) },
                     leadingContent = { Icon(Icons.Default.Share, null, tint = palette.primaryGlow) },

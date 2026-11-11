@@ -43,6 +43,7 @@ fun BoxScope.PlayerActiveModals(
             activity = activity,
             onLaunchSubtitlePicker = onLaunchSubtitlePicker
         )
+        ActiveModal.BOOKMARKS -> PlayerBookmarkModal(state = state)
         ActiveModal.NONE -> {}
     }
 }

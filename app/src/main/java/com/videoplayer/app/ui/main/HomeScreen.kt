@@ -64,6 +64,9 @@ fun HomeScreen(
     val rawVideos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
+    LaunchedEffect(Unit) { WatchExperienceManager.ensureInitialized(context) }
+    val watchExpData by WatchExperienceManager.state.collectAsState()
+    var activeFeedFilter by remember { mutableStateOf(HomeFeedFilter.FOLDERS) }
 
     val isVaultMode = (vaultAccessMode != VaultAccessMode.LOCKED)
     val isDecoyVault = (vaultAccessMode == VaultAccessMode.DECOY_VAULT)
@@ -149,7 +152,7 @@ fun HomeScreen(
         exitMultiSelect()
     }
 
-    BackHandler(enabled = isMultiSelectMode || selectedFolder != null || isVaultMode || isSearchExpanded) {
+    BackHandler(enabled = isMultiSelectMode || selectedFolder != null || isVaultMode || isSearchExpanded || activeFeedFilter != HomeFeedFilter.FOLDERS) {
         when {
             isMultiSelectMode -> exitMultiSelect()
             isSearchExpanded -> {
@@ -158,6 +161,7 @@ fun HomeScreen(
             }
             isVaultMode -> onExitVault()
             selectedFolder != null -> onSelectFolder(null)
+            activeFeedFilter != HomeFeedFilter.FOLDERS -> activeFeedFilter = HomeFeedFilter.FOLDERS
         }
     }
 
@@ -197,14 +201,43 @@ fun HomeScreen(
         }.sortedBy { it.name.lowercase() }
     }
 
-    val lastPlayedVideo = remember(visibleVideos, lastPlayedId) {
-        visibleVideos.find { it.id == lastPlayedId }
+    val watchLaterIdSet = remember(watchExpData.watchLaterIds) {
+        watchExpData.watchLaterIds.toSet()
     }
 
-    val displayedVideos = remember(visibleVideos, selectedFolder, isVaultMode, searchQuery, sortOption) {
+    val continueWatchingItems = remember(visibleVideos, watchExpData.history, savedPositions) {
+        val videoMap = visibleVideos.associateBy { it.id }
+        val fromHistory = watchExpData.history.mapNotNull { h ->
+            val vid = videoMap[h.videoId] ?: return@mapNotNull null
+            val pos = savedPositions[vid.id] ?: h.lastPositionMs
+            val dur = vid.duration.coerceAtLeast(h.durationMs).coerceAtLeast(1L)
+            if (pos in 2000L..(dur - 2000L)) {
+                ContinueWatchingItem(vid, pos, dur)
+            } else null
+        }
+        if (fromHistory.isNotEmpty()) {
+            fromHistory.take(15)
+        } else {
+            visibleVideos.mapNotNull { vid ->
+                val pos = savedPositions[vid.id] ?: 0L
+                if (pos > 2000L && vid.duration > 4000L && pos < vid.duration - 2000L) {
+                    ContinueWatchingItem(vid, pos, vid.duration)
+                } else null
+            }.take(10)
+        }
+    }
+
+    val displayedVideos = remember(visibleVideos, selectedFolder, isVaultMode, activeFeedFilter, watchExpData, searchQuery, sortOption) {
+        val videoMap = visibleVideos.associateBy { it.id }
         val base = when {
             isVaultMode -> visibleVideos
             selectedFolder != null -> visibleVideos.filter { it.folder == selectedFolder }
+            activeFeedFilter == HomeFeedFilter.WATCH_LATER -> {
+                watchExpData.watchLaterIds.mapNotNull { videoMap[it] }
+            }
+            activeFeedFilter == HomeFeedFilter.HISTORY -> {
+                watchExpData.history.mapNotNull { videoMap[it.videoId] }
+            }
             else -> visibleVideos
         }
         val filtered = if (searchQuery.isBlank()) base else {
@@ -213,7 +246,11 @@ fun HomeScreen(
                     it.folder.contains(searchQuery, ignoreCase = true)
             }
         }
-        applySorting(filtered, sortOption)
+        if (activeFeedFilter == HomeFeedFilter.HISTORY && selectedFolder == null && !isVaultMode) {
+            filtered // Giữ đúng thứ tự thời gian xem gần nhất cho tab Lịch sử
+        } else {
+            applySorting(filtered, sortOption)
+        }
     }
 
     val currentScrollKey = remember(selectedFolder, vaultAccessMode) {
@@ -410,6 +447,19 @@ fun HomeScreen(
             }
         }
 
+        if (!isVaultMode && selectedFolder == null && !isMultiSelectMode) {
+            HomeFeedFilterTabs(
+                activeFilter = activeFeedFilter,
+                watchLaterCount = watchExpData.watchLaterIds.size,
+                historyCount = watchExpData.history.size,
+                onSelectFilter = { activeFeedFilter = it },
+                onClearHistory = {
+                    WatchExperienceManager.clearAllHistory(context)
+                    Toast.makeText(context, "🧹 Đã xóa toàn bộ lịch sử xem!", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val isSearchingAll = searchQuery.isNotBlank() && selectedFolder == null && !isVaultMode
 
@@ -436,16 +486,46 @@ fun HomeScreen(
                         }
                     }
                 }
-            } else if (selectedFolder == null && !isVaultMode && !isSearchingAll) {
+            } else if (selectedFolder == null && !isVaultMode && !isSearchingAll && activeFeedFilter == HomeFeedFilter.FOLDERS) {
                 FolderListSection(
                     folders = folders,
                     folderListState = folderListState,
-                    lastPlayedVideo = lastPlayedVideo,
-                    savedPositions = savedPositions,
+                    continueWatchingItems = continueWatchingItems,
+                    watchLaterIds = watchLaterIdSet,
                     visibleVideos = visibleVideos,
                     onSelectFolder = { onSelectFolder(it) },
-                    onPlayRecent = { recent, list -> onVideoClick(recent, applySorting(list, sortOption)) }
+                    onPlayRecent = { recent, list -> onVideoClick(recent, applySorting(list, sortOption)) },
+                    onRemoveContinueWatching = { vid ->
+                        WatchExperienceManager.removeFromHistory(context, vid.id)
+                        scope.launch { context.saveLastPosition(vid.id, 0L) }
+                    }
                 )
+            } else if (displayedVideos.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth().padding(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (activeFeedFilter == HomeFeedFilter.WATCH_LATER) AppIcons.WatchLater else AppIcons.History,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = palette.primaryGlow
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (activeFeedFilter == HomeFeedFilter.WATCH_LATER) {
+                                    "Danh sách 'Xem sau' đang trống.\nBấm nút 3 chấm (⋮) ở bất kỳ video nào và chọn 'Thêm vào danh sách Xem sau'."
+                                } else {
+                                    "Chưa có lịch sử phát video gần đây."
+                                },
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
             } else {
                 VideoCollectionSection(
                     displayedVideos = displayedVideos,
@@ -455,6 +535,7 @@ fun HomeScreen(
                     isMultiSelectMode = isMultiSelectMode,
                     selectedVideoIds = selectedVideoIds,
                     savedPositions = savedPositions,
+                    watchLaterIds = watchLaterIdSet,
                     lastViewedVideoId = lastViewedVideoId,
                     onItemClick = { video ->
                         if (isMultiSelectMode) {

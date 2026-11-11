@@ -59,6 +59,7 @@ import com.videoplayer.app.ui.player.PlayerScreen
 import com.videoplayer.app.ui.stream.NetworkStreamScreen
 import com.videoplayer.app.ui.theme.VideoPlayerTheme
 import com.videoplayer.app.update.GitHubRelease
+import com.videoplayer.app.network.LanVideoHttpServer
 import com.videoplayer.app.update.UpdateManager
 import com.videoplayer.app.update.VersionMetadata
 import com.videoplayer.app.util.FileOperationHelper
