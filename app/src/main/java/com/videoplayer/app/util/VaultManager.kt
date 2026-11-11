@@ -227,6 +227,14 @@ object VaultManager {
         }
     }
 
+    suspend fun moveVideoToVault(context: Context, video: VideoItem, isDecoy: Boolean = false): Result<VaultEntryMeta> {
+        return when (val out = hideVideoToVaultFast(context, video, isDecoy)) {
+            is VaultHideOutcome.Success -> Result.success(out.meta)
+            is VaultHideOutcome.NeedsAllFilesPermission -> Result.failure(Exception("Cần cấp quyền Quản lý tất cả tệp"))
+            is VaultHideOutcome.Error -> Result.failure(Exception(out.message))
+        }
+    }
+
     suspend fun deleteVideoFromVault(context: Context, vaultVideoId: String, isDecoy: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val cleanId = vaultVideoId.removePrefix("vault_")

@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -104,6 +104,7 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.1")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
 
@@ -111,7 +112,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    // Chỉ giữ material-icons-core, ĐÃ BỎ material-icons-extended để giảm mạnh dung lượng APK Release
+    // Chá»‰ giá»¯ material-icons-core, ÄÃƒ Bá»Ž material-icons-extended Ä‘á»ƒ giáº£m máº¡nh dung lÆ°á»£ng APK Release
     implementation("androidx.compose.material:material-icons-core")
 
     // Media3 (ExoPlayer)
@@ -124,7 +125,7 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
 
-    // Biometric Authentication cho Kho Riêng Tư (Vault)
+    // Biometric Authentication cho Kho RiÃªng TÆ° (Vault)
     implementation("androidx.biometric:biometric:1.1.0")
 
     // DataStore & Network
