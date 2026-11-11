@@ -84,6 +84,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     selectedFolder: String?,
     isVaultMode: Boolean = false,
+    isDecoyMode: Boolean = false,
     folderListState: LazyListState,
     videoListState: LazyListState,
     lastViewedVideoId: String?,
@@ -103,7 +104,7 @@ fun HomeScreen(
     val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
 
     val vaultEntries = remember(refreshTrigger, isVaultMode) {
-        VaultManager.getVaultVideosAsVideoItems(context).map { VaultManager.toVideoItem(context, it) }
+        VaultManager.getVaultVideosAsVideoItems(context, isDecoy = isDecoyMode).map { VaultManager.toVideoItem(context, it, isDecoy = isDecoyMode) }
     }
 
     val fragmentActivity = remember(context) {
@@ -369,7 +370,7 @@ fun HomeScreen(
                                             var okCount = 0
                                             if (isVaultMode) {
                                                 targets.forEach { v ->
-                                                    if (VaultManager.restoreVideoFromVault(context, v.id).isSuccess) okCount++
+                                                    if (VaultManager.restoreVideoFromVault(context, v.id, isDecoy = isDecoyMode).isSuccess) okCount++
                                                 }
                                                 Toast.makeText(context, "🔓 Đã khôi phục tức thì $okCount video về thư mục gốc!", Toast.LENGTH_SHORT).show()
                                             } else {
@@ -926,7 +927,7 @@ fun HomeScreen(
                                 scope.launch {
                                     isProcessingVault = true
                                     if (isVaultItem) {
-                                        VaultManager.restoreVideoFromVault(context, targetVideo.id).onSuccess { path ->
+                                        VaultManager.restoreVideoFromVault(context, targetVideo.id, isDecoy = isDecoyMode).onSuccess { path ->
                                             Toast.makeText(context, "🔓 Đã khôi phục về: $path", Toast.LENGTH_SHORT).show()
                                             refreshTrigger++
                                         }.onFailure { err ->
@@ -1120,7 +1121,7 @@ fun HomeScreen(
                                 var count = 0
                                 if (isVaultMode) {
                                     targets.forEach { v ->
-                                        if (VaultManager.deleteVideoFromVault(context, v.id).isSuccess) count++
+                                        if (VaultManager.deleteVideoFromVault(context, v.id, isDecoy = isDecoyMode).isSuccess) count++
                                     }
                                     Toast.makeText(context, "🗑️ Đã xóa vĩnh viễn $count video!", Toast.LENGTH_SHORT).show()
                                 } else {
@@ -1333,7 +1334,7 @@ fun HomeScreen(
                                     onClick = {
                                         scope.launch {
                                             if (isVaultVid) {
-                                                VaultManager.deleteVideoFromVault(context, video.id).onSuccess {
+                                                VaultManager.deleteVideoFromVault(context, video.id, isDecoy = isDecoyMode).onSuccess {
                                                     Toast.makeText(context, "🗑️ Đã xóa vĩnh viễn!", Toast.LENGTH_SHORT).show()
                                                     dialogType = FileDialogType.NONE
                                                     refreshTrigger++

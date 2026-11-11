@@ -10,6 +10,12 @@ import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
+enum class PinVerifyResult {
+    SUCCESS_REAL,
+    SUCCESS_DECOY,
+    INCORRECT
+}
+
 object PinSecurityManager {
     private const val PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA256"
     private const val ITERATIONS = 120_000
@@ -34,9 +40,6 @@ object PinSecurityManager {
         return Base64.encodeToString(hash, Base64.NO_WRAP)
     }
 
-    /**
-     * So sánh mảng byte bằng Constant-Time chống tấn công đo thời gian (Timing Attack)
-     */
     fun verifyPinConstantTime(inputPin: String, storedHashBase64: String, storedSaltBase64: String): Boolean {
         return try {
             val computedHashB64 = hashPinPbkdf2(inputPin, storedSaltBase64)
@@ -49,9 +52,29 @@ object PinSecurityManager {
     }
 
     /**
-     * Tính thời gian khóa (ms) sau khi nhập sai >= 5 lần:
-     * Lần 5: 30s | Lần 6: 1p | Lần 7: 5p | Lần 8: 15p | Lần >=9: 30p
+     * Xác thực PIN nhập vào với cả Real PIN và Decoy PIN (Constant-time).
+     * Trả về SUCCESS_REAL, SUCCESS_DECOY hoặc INCORRECT.
      */
+    fun verifyPinWithDecoy(
+        inputPin: String,
+        realHash: String?,
+        realSalt: String?,
+        decoyHash: String?,
+        decoySalt: String?
+    ): PinVerifyResult {
+        if (!realHash.isNullOrBlank() && !realSalt.isNullOrBlank()) {
+            if (verifyPinConstantTime(inputPin, realHash, realSalt)) {
+                return PinVerifyResult.SUCCESS_REAL
+            }
+        }
+        if (!decoyHash.isNullOrBlank() && !decoySalt.isNullOrBlank()) {
+            if (verifyPinConstantTime(inputPin, decoyHash, decoySalt)) {
+                return PinVerifyResult.SUCCESS_DECOY
+            }
+        }
+        return PinVerifyResult.INCORRECT
+    }
+
     fun computeLockoutDurationMs(failedAttempts: Int): Long {
         return when {
             failedAttempts < 5 -> 0L
@@ -75,8 +98,8 @@ object PinSecurityManager {
     ) {
         val executor = ContextCompat.getMainExecutor(activity)
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Mở khóa Kho Video Riêng Tư")
-            .setSubtitle("Xác thực sinh trắc học hoặc chọn nhập Mã PIN")
+            .setTitle("Xác thực Lưu trữ bảo mật")
+            .setSubtitle("Sử dụng sinh trắc học hoặc chọn nhập Mã PIN")
             .setNegativeButtonText("Dùng Mã PIN")
             .build()
 

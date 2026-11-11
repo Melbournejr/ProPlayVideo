@@ -72,6 +72,7 @@ class MainActivity : FragmentActivity() {
     private val requestStoragePermission = registerForActivityResult(RequestMultiplePermissions()) { }
     private var isCurrentlyInPlayerScreen = false
     private var externalViewIntentUri by mutableStateOf<Uri?>(null)
+    private var backgroundTimestampMs = 0L
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -106,6 +107,11 @@ class MainActivity : FragmentActivity() {
             } catch (_: Exception) {}
         }
         return uri.lastPathSegment ?: "External_Video"
+    }
+
+    override fun onPause() {
+        super.onPause()
+        backgroundTimestampMs = System.currentTimeMillis()
     }
 
     override fun onUserLeaveHint() {
@@ -210,6 +216,27 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner, isVaultUnlocked, vaultSecState.autoLockSeconds) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            if (isVaultUnlocked && backgroundTimestampMs > 0L) {
+                                val lockSec = vaultSecState.autoLockSeconds
+                                if (lockSec >= 0) {
+                                    val elapsed = (System.currentTimeMillis() - backgroundTimestampMs) / 1000L
+                                    if (elapsed >= lockSec) {
+                                        isVaultUnlocked = false
+                                        isDecoyVaultMode = false
+                                        Toast.makeText(this@MainActivity, "🔒 Lưu trữ bảo mật đã tự động khóa", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            backgroundTimestampMs = 0L
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
                 LaunchedEffect(vaultSecState.needsMigration) {
                     if (vaultSecState.needsMigration) {
                         showMigrationDialog = true
@@ -418,6 +445,7 @@ class MainActivity : FragmentActivity() {
                                 HomeScreen(
                                     selectedFolder = selectedFolder,
                                     isVaultMode = isVaultUnlocked,
+                                    isDecoyMode = isDecoyVaultMode,
                                     folderListState = folderListState,
                                     videoListState = activeVideoListState,
                                     lastViewedVideoId = lastViewedVideoId,
@@ -606,6 +634,59 @@ class MainActivity : FragmentActivity() {
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text("Thay đổi Mã PIN bảo mật", color = Color.White, fontWeight = FontWeight.Bold)
                                                     Text("Đặt lại mật khẩu PIN (tối thiểu 6 ký tự)", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
+
+                                            // Tùy chọn 1.1: Cấu hình Mã PIN Giả (Decoy PIN) ngụy trang
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .background(styleConfig.palette.deepBgMid)
+                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                                                    .clickable {
+                                                        showVaultOnlySettingsModal = false
+                                                        showSetDecoyPinDialog = true
+                                                    }
+                                                    .padding(14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(AppIcons.Key, contentDescription = null, tint = Color(0xFFFFD54F))
+                                                Spacer(Modifier.width(12.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(if (vaultSecState.hasDecoyPin) "Mã PIN Giả (Decoy): Đã cài đặt" else "Cài đặt Mã PIN Giả (Decoy PIN)", color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text("Khi bị ép mở kho, nhập PIN giả sẽ hiện kho ngụy trang", color = Color(0xFFA7B8D8), style = MaterialTheme.typography.labelSmall)
+                                                }
+                                                if (vaultSecState.hasDecoyPin) {
+                                                    Text("✓ BẬT", color = Color(0xFFFFD54F), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
+
+                                            // Tùy chọn 1.2: Cấu hình Tự động khóa Kho khi chạy ngầm (Auto-Lock Timeout)
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .background(styleConfig.palette.deepBgMid)
+                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                                                    .padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text("⏳ Tự động khóa kho khi ẩn ứng dụng:", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    val options = listOf(0 to "Ngay lập tức", 30 to "30 giây", 60 to "1 phút", -1 to "Tắt")
+                                                    options.forEach { (sec, label) ->
+                                                        LiquidGlassPill(
+                                                            active = vaultSecState.autoLockSeconds == sec,
+                                                            onClick = { scope.launch { context.saveVaultAutoLockSeconds(sec) } },
+                                                            modifier = Modifier.weight(1f)
+                                                        ) {
+                                                            Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -1039,14 +1120,24 @@ class MainActivity : FragmentActivity() {
                                                     Toast.makeText(context, "Mã PIN bắt buộc tối thiểu 6 ký tự!", Toast.LENGTH_SHORT).show()
                                                 }
                                             } else {
-                                                val ok = PinSecurityManager.verifyPinConstantTime(
+                                                val verifyRes = PinSecurityManager.verifyPinWithDecoy(
                                                     inputPin = pinInput,
-                                                    storedHashBase64 = vaultSecState.pinHash ?: "",
-                                                    storedSaltBase64 = vaultSecState.pinSalt ?: ""
+                                                    realHash = vaultSecState.pinHash,
+                                                    realSalt = vaultSecState.pinSalt,
+                                                    decoyHash = vaultSecState.decoyPinHash,
+                                                    decoySalt = vaultSecState.decoyPinSalt
                                                 )
-                                                if (ok) {
+                                                if (verifyRes == PinVerifyResult.SUCCESS_REAL) {
                                                     scope.launch {
                                                         context.recordVaultPinAttempt(true)
+                                                        isDecoyVaultMode = false
+                                                        isVaultUnlocked = true
+                                                        showVaultPinDialog = false
+                                                    }
+                                                } else if (verifyRes == PinVerifyResult.SUCCESS_DECOY) {
+                                                    scope.launch {
+                                                        context.recordVaultPinAttempt(true)
+                                                        isDecoyVaultMode = true
                                                         isVaultUnlocked = true
                                                         showVaultPinDialog = false
                                                     }
@@ -1071,6 +1162,82 @@ class MainActivity : FragmentActivity() {
                                 },
                                 dismissButton = {
                                     TextButton(onClick = { showVaultPinDialog = false }) { Text("Hủy") }
+                                }
+                            )
+                        }
+
+                                                // HỘP THOẠI CÀI ĐẶT DECOY PIN (MÃ PIN GIẢ)
+                        if (showSetDecoyPinDialog && isVaultUnlocked) {
+                            var decoyPinInput by remember { mutableStateOf("") }
+                            var confirmDecoyPinInput by remember { mutableStateOf("") }
+                            var showDecoyChars by remember { mutableStateOf(false) }
+
+                            AlertDialog(
+                                onDismissRequest = { showSetDecoyPinDialog = false },
+                                containerColor = styleConfig.palette.deepBgStart,
+                                title = { Text("🎭 Cài đặt Mã PIN Giả (Decoy PIN)", color = Color.White, fontWeight = FontWeight.Bold) },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text(
+                                            "Mã PIN này dùng khi bị người khác ép mở kho. Khi nhập PIN giả, ứng dụng sẽ mở ra một kho hoàn toàn trống rỗng mà không để lộ kho thật:",
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        OutlinedTextField(
+                                            value = decoyPinInput,
+                                            onValueChange = { decoyPinInput = it },
+                                            label = { Text("Mã PIN giả mới (>= 6 ký tự)") },
+                                            visualTransformation = if (showDecoyChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                            trailingIcon = {
+                                                IconButton(onClick = { showDecoyChars = !showDecoyChars }) {
+                                                    Icon(imageVector = if (showDecoyChars) AppIcons.VisibilityOff else AppIcons.Visibility, contentDescription = null, tint = Color.White)
+                                                }
+                                            },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        OutlinedTextField(
+                                            value = confirmDecoyPinInput,
+                                            onValueChange = { confirmDecoyPinInput = it },
+                                            label = { Text("Nhập lại Mã PIN giả") },
+                                            visualTransformation = if (showDecoyChars) VisualTransformation.None else PasswordVisualTransformation(),
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = {
+                                        if (!PinSecurityManager.isValidNewPin(decoyPinInput)) {
+                                            Toast.makeText(context, "Mã PIN giả phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (decoyPinInput.trim() != confirmDecoyPinInput.trim()) {
+                                            Toast.makeText(context, "Hai ô Mã PIN giả không khớp nhau!", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        scope.launch {
+                                            val salt = PinSecurityManager.generateSaltBase64()
+                                            val hash = PinSecurityManager.hashPinPbkdf2(decoyPinInput, salt)
+                                            context.saveDecoyVaultPin(hash, salt)
+                                            showSetDecoyPinDialog = false
+                                            Toast.makeText(context, "✅ Đã cài đặt Mã PIN Giả thành công!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }) { Text("Lưu PIN Giả") }
+                                },
+                                dismissButton = {
+                                    Row {
+                                        if (vaultSecState.hasDecoyPin) {
+                                            TextButton(onClick = {
+                                                scope.launch {
+                                                    context.removeDecoyVaultPin()
+                                                    showSetDecoyPinDialog = false
+                                                    Toast.makeText(context, "Đã xóa Mã PIN Giả!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }) { Text("Xóa PIN Giả", color = MaterialTheme.colorScheme.error) }
+                                        }
+                                        TextButton(onClick = { showSetDecoyPinDialog = false }) { Text("Hủy") }
+                                    }
                                 }
                             )
                         }
