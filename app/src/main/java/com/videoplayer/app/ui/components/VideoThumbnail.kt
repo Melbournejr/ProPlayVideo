@@ -9,7 +9,6 @@ import android.util.LruCache
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -33,10 +32,9 @@ import kotlinx.coroutines.withContext
 private val thumbnailCache = object : LruCache<String, Bitmap>(60) {}
 
 /**
- * Hiển thị Thumbnail của Video kèm:
- * - Nhãn thời lượng ở góc dưới phải
- * - Huy hiệu "🔖 Xem sau" ở góc trên phải (nếu có)
- * - Thanh tiến trình nhỏ (Progress Bar) ở sát đáy thumbnail đối với video đang xem dở
+ * Thumbnail thuoc Content Layer (Apple HIG Rule #1):
+ * - Bo goc Concentric (12.dp ben trong Card 20.dp voi padding 8.dp)
+ * - Khong phu vien kinh sang len anh thumbnail de hinh anh video luon trung thuc nhat.
  */
 @Composable
 fun VideoThumbnailView(
@@ -78,17 +76,8 @@ fun VideoThumbnailView(
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(Color(0xFF142238), Color(0xFF09101D))
-                )
-            )
-            .border(
-                width = 0.8.dp,
-                color = Color.White.copy(alpha = 0.22f),
-                shape = RoundedCornerShape(14.dp)
-            ),
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF0E131D)),
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -102,65 +91,58 @@ fun VideoThumbnailView(
             Icon(
                 imageVector = AppIcons.PlayCircleFilled,
                 contentDescription = null,
-                tint = palette.primaryGlow.copy(alpha = 0.75f),
-                modifier = Modifier.size(32.dp)
+                tint = palette.primaryGlow.copy(alpha = 0.65f),
+                modifier = Modifier.size(30.dp)
             )
         }
 
-        // Huy hiệu nhỏ ở góc trên phải nếu video nằm trong danh sách "Xem sau"
         if (isWatchLater) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .background(palette.primaryGlow.copy(alpha = 0.92f), RoundedCornerShape(6.dp))
+                    .padding(5.dp)
+                    .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
                 Icon(
                     imageVector = AppIcons.WatchLater,
                     contentDescription = "Xem sau",
-                    tint = Color(0xFF001F29),
+                    tint = palette.primaryGlow,
                     modifier = Modifier.size(11.dp)
                 )
             }
         }
 
-        // Nhãn thời lượng góc dưới phải
         if (video.duration > 0L) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(bottom = if (progressFraction > 0.01f) 7.dp else 5.dp, end = 5.dp)
-                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(5.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
                     text = video.durationFormatted,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
 
-        // Thanh tiến trình nhỏ (Progress Bar) sát mép dưới của Thumbnail
         if (progressFraction > 0.01f) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(4.dp)
+                    .height(3.5.dp)
                     .background(Color.Black.copy(alpha = 0.55f))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
                         .fillMaxWidth(progressFraction.coerceIn(0.03f, 1f))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(palette.primaryGlow, palette.secondaryGlow)
-                            )
-                        )
+                        .background(palette.primaryGlow)
                 )
             }
         }

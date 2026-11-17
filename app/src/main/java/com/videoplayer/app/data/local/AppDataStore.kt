@@ -22,6 +22,7 @@ private val lastPlayedVideoIdKey = stringPreferencesKey("last_played_video_id")
 private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
+private val reduceTransparencyKey = booleanPreferencesKey("glass_reduce_transparency")
 private val themeEngineModeKey = stringPreferencesKey("theme_engine_mode")
 private val themeSubVariantKey = stringPreferencesKey("theme_sub_variant")
 
@@ -303,4 +304,11 @@ suspend fun Context.saveThemeSubVariant(variantId: String) {
 
 fun Context.observeThemeSubVariant(): Flow<String> {
     return this.datastore.data.map { prefs -> prefs[themeSubVariantKey] ?: "gold_signature" }
+}
+suspend fun Context.saveReduceTransparency(enabled: Boolean) {
+    this.datastore.edit { prefs -> prefs[reduceTransparencyKey] = enabled }
+}
+
+fun Context.observeReduceTransparency(): Flow<Boolean> {
+    return this.datastore.data.map { prefs -> prefs[reduceTransparencyKey] ?: false }
 }

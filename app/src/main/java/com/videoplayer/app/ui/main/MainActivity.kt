@@ -152,17 +152,19 @@ class MainActivity : FragmentActivity() {
             val subVariantId by context.observeThemeSubVariant().collectAsState(initial = "gold_signature")
             val themeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
             val tintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
-            val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
+            val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.22f)
+            val reduceTransparency by context.observeReduceTransparency().collectAsState(initial = false)
             val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
             val httpWarnAck by context.observeHttpWarnAcknowledged().collectAsState(initial = false)
 
-            val styleConfig = remember(engineId, subVariantId, themeId, tintId, frostAlpha) {
+            val styleConfig = remember(engineId, subVariantId, themeId, tintId, frostAlpha, reduceTransparency) {
                 buildEffectiveStyleConfig(
                     engineId = engineId,
                     subVariantId = subVariantId,
                     glassThemeId = themeId,
                     glassTintId = tintId,
-                    frostAlpha = frostAlpha
+                    frostAlpha = frostAlpha,
+                    reduceTransparency = reduceTransparency
                 )
             }
 
@@ -340,8 +342,9 @@ class MainActivity : FragmentActivity() {
                 } else {
                     LiquidAmbientBackground {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            LiquidGlassCard(
-                                cornerRadius = 24.dp,
+                            LiquidGlassBar(
+                                variant = LiquidGlassVariant.REGULAR,
+                                cornerRadius = 26.dp,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
                             ) {
                                 Row(
@@ -1046,6 +1049,37 @@ fun OtaSettingsScreen(modifier: Modifier = Modifier) {
                             Divider(color = Color.White.copy(alpha = 0.12f))
 
                             if (engine == ThemeEngineId.LIQUID_GLASS) {
+                                val reduceTrans by context.observeReduceTransparency().collectAsState(initial = false)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color.White.copy(alpha = 0.06f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Gi\u1EA3m \u0111\u1ED9 trong su\u1ED1t (Reduce Transparency)",
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "T\u0103ng \u0111\u1ED9 \u0111\u1EB7c & t\u01B0\u01A1ng ph\u1EA3n chu\u1EA9n Apple Accessibility",
+                                            color = Color(0xFFA7B8D8),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = reduceTrans,
+                                        onCheckedChange = { enabled ->
+                                            scope.launch { context.saveReduceTransparency(enabled) }
+                                        }
+                                    )
+                                }
+
                                 val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
                                 Text(
                                     text = "1. \u0110\u1ED9 \u0111\u1EE5c s\u01B0\u01A1ng m\u1EDD c\u1EE7a k\u00EDnh (Frost Opacity): $pct%",
