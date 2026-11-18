@@ -3,17 +3,18 @@ package com.videoplayer.app.ui.components
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -24,11 +25,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/**
- * Hai bien the chinh cua Apple Liquid Glass (HIG 2025-2026):
- * - REGULAR: Do mo cao hon + dieu chinh do sang nen de chu va icon luon de doc (Navigation Bar, Control Bar, Sheet).
- * - CLEAR: Trong suot cao, uu tien de noi dung video phia sau lo ro (Gesture HUD, Floating Overlay).
- */
 enum class LiquidGlassVariant {
     REGULAR,
     CLEAR
@@ -38,7 +34,7 @@ enum class ThemeEngineId(val id: String, val title: String, val subtitle: String
     LIQUID_GLASS(
         "liquid_glass",
         "\u2728 Apple Liquid Glass (HIG)",
-        "L\u1EDBp k\u00EDnh ch\u1EE9c n\u0103ng kh\u00FAc x\u1EA1 \u0111\u1ED9ng Regular & Clear chu\u1EA9n Apple",
+        "K\u00EDnh quang h\u1ECDc 5 l\u1EDBp kh\u00FAc x\u1EA1 \u00E1nh s\u00E1ng & vi\u1EC1n Specular m\u1ECFng",
         "Chu\u1EA9n HIG"
     ),
     BRUSHED_METAL(
@@ -108,26 +104,24 @@ data class GlassStyleConfig(
     val subVariantId: String = "gold_signature",
     val palette: GlassPalette = GlassThemePresets.first(),
     val tint: GlassTintOption = GlassTintPresets.first(),
-    val frostAlpha: Float = 0.22f,
+    val frostAlpha: Float = 0.18f,
     val reduceTransparency: Boolean = false
 )
 
-// Mau phu nhe tren lop kinh chuc nang (Su dung de dat theo dung tinh than Apple HIG)
 val GlassTintPresets = listOf(
-    GlassTintOption("crystal_white", "\uD83D\uDC8E K\u00EDnh Trong Thu\u1EA7n Khi\u1EBFt (Apple Neutral)", Color(0xFF1E2532), Color(0xFFFFFFFF)),
-    GlassTintOption("glacier_cyan", "\uD83E\uDDCA \u00C1nh B\u0103ng Lam Nh\u1EB9 (Subtle Ice)", Color(0xFF182A34), Color(0xFFB2F7EF)),
-    GlassTintOption("amethyst_purple", "\uD83D\uDD2E Kh\u00F3i T\u00EDm Nh\u1EA1t (Subtle Lavender)", Color(0xFF231D33), Color(0xFFE2CFEA)),
-    GlassTintOption("rose_gold", "\uD83E\uDD42 \u00C1nh V\u00E0ng Champagne (Warm Glass)", Color(0xFF2B2220), Color(0xFFFFDAC1)),
-    GlassTintOption("emerald_jade", "\uD83D\uDC9A L\u1EE5c B\u1EA3o M\u1EDD (Mint Glass)", Color(0xFF172924), Color(0xFFC7F9CC)),
-    GlassTintOption("ruby_crimson", "\uD83C\uDF77 H\u1ED3ng Ng\u1ECDc Tr\u1EA7m (Rose Smoke)", Color(0xFF2D1B20), Color(0xFFFFCCD5)),
-    GlassTintOption("obsidian_smoke", "\uD83D\uDDA4 K\u00EDnh Kh\u00F3i T\u1ED1i (Dark Graphite)", Color(0xFF14171D), Color(0xFFCFD8DC))
+    GlassTintOption("crystal_white", "\uD83D\uDC8E Pha l\u00EA Trong Su\u1ED1t (Optical Clear)", Color(0xFF1A2230), Color(0xFFFFFFFF)),
+    GlassTintOption("glacier_cyan", "\uD83E\uDDCA B\u0103ng Lam Kh\u00FAc X\u1EA1 (Glacier Refraction)", Color(0xFF142834), Color(0xFFB8F2E6)),
+    GlassTintOption("amethyst_purple", "\uD83D\uDD2E Th\u1EA1ch Anh T\u00EDm (Amethyst Lens)", Color(0xFF211A30), Color(0xFFE5D4ED)),
+    GlassTintOption("rose_gold", "\uD83E\uDD42 V\u00E0ng H\u1ED3ng Champagne (Warm Crystal)", Color(0xFF281F1E), Color(0xFFFFDFD3)),
+    GlassTintOption("emerald_jade", "\uD83D\uDC9A Ng\u1ECDc L\u1EE5c B\u1EA3o (Emerald Prism)", Color(0xFF142620), Color(0xFFD8F3DC)),
+    GlassTintOption("ruby_crimson", "\uD83C\uDF77 H\u1ED3ng Ng\u1ECDc (Ruby Quartz)", Color(0xFF2B191E), Color(0xFFFFCCD5)),
+    GlassTintOption("obsidian_smoke", "\uD83D\uDDA4 K\u00EDnh Kh\u00F3i Titan (Smoky Titanium)", Color(0xFF12151B), Color(0xFFCFD8DC))
 )
 
-// Tong mau nhan tinh te (Uu tien nen toi sach de noi dung video luon la trung tam)
 val GlassThemePresets = listOf(
     GlassPalette(
         id = "apple_ice",
-        name = "\uD83E\uDDCA Apple System Blue (HIG Default)",
+        name = "\uD83E\uDDCA Apple visionOS Optical",
         primaryGlow = Color(0xFF38BDF8),
         secondaryGlow = Color(0xFF818CF8),
         tertiaryGlow = Color(0xFFC084FC),
@@ -137,7 +131,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "aurora_emerald",
-        name = "\uD83C\uDF0C Apple Mint & Teal",
+        name = "\uD83C\uDF0C Apple Mint & Aqua",
         primaryGlow = Color(0xFF34D399),
         secondaryGlow = Color(0xFF2DD4BF),
         tertiaryGlow = Color(0xFF38BDF8),
@@ -147,7 +141,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "sunset_magenta",
-        name = "\uD83C\uDF07 Apple Indigo & Pink",
+        name = "\uD83C\uDF07 Apple Pink & Violet",
         primaryGlow = Color(0xFFF472B6),
         secondaryGlow = Color(0xFFA78BFA),
         tertiaryGlow = Color(0xFFFB7185),
@@ -157,7 +151,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "gold_champagne",
-        name = "\u2728 Apple Starlight Warm",
+        name = "\u2728 Apple Starlight Gold",
         primaryGlow = Color(0xFFFBBF24),
         secondaryGlow = Color(0xFFF59E0B),
         tertiaryGlow = Color(0xFF38BDF8),
@@ -167,7 +161,7 @@ val GlassThemePresets = listOf(
     ),
     GlassPalette(
         id = "deep_ocean",
-        name = "\uD83C\uDF0A Apple Deep Ocean",
+        name = "\uD83C\uDF0A Apple Deep Sapphire",
         primaryGlow = Color(0xFF60A5FA),
         secondaryGlow = Color(0xFF3B82F6),
         tertiaryGlow = Color(0xFF6366F1),
@@ -262,11 +256,6 @@ fun buildEffectiveStyleConfig(
 val LocalGlassStyle = staticCompositionLocalOf { GlassStyleConfig() }
 val LocalGlassPalette = staticCompositionLocalOf { GlassThemePresets.first() }
 
-/**
- * Nen Chinh (Content Canvas Background):
- * Theo dung nguyen tac 1 & 4 cua Apple HIG: Nen chinh la lop chua noi dung (Content Layer),
- * giu su tinh lang, sau va sach de thumbnail video va cac thanh dieu huong Liquid Glass phia tren noi bat.
- */
 @Composable
 fun LiquidAmbientBackground(
     modifier: Modifier = Modifier,
@@ -287,7 +276,6 @@ fun LiquidAmbientBackground(
                             drawRect(color = Color.Black)
                         }
                         else -> {
-                            // Nen Content Layer toi sau tinh te + Anh sang moi truong cuc nhe (Subtle Ambient Backlight)
                             drawRect(
                                 brush = Brush.verticalGradient(
                                     colors = listOf(palette.deepBgTop, palette.deepBgMid, palette.deepBgBottom)
@@ -296,14 +284,14 @@ fun LiquidAmbientBackground(
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        palette.primaryGlow.copy(alpha = 0.08f),
+                                        palette.primaryGlow.copy(alpha = 0.09f),
                                         Color.Transparent
                                     ),
                                     center = Offset(w * 0.5f, 0f),
-                                    radius = w * 0.9f
+                                    radius = w * 0.95f
                                 ),
                                 center = Offset(w * 0.5f, 0f),
-                                radius = w * 0.9f
+                                radius = w * 0.95f
                             )
                         }
                     }
@@ -314,81 +302,118 @@ fun LiquidAmbientBackground(
 }
 
 /**
- * Ve be mat Apple Liquid Glass that su (chi danh cho Functional Layer: Navigation Bar, Control Bar, Sheet, Floating Overlay):
- * - Co khuc xa vien tren-trai (Top-Left Specular Highlight) va vien duoi-phai (Bottom-Right Refraction Rim)
- * - Co do phong long nhe (Inner Volume Sheen)
- * - Tu dong chuyen sang Opaque neu bat Reduce Transparency
+ * He thong quang hoc 5 lop tao cam giac "Kinh Long That" (Apple Optical Liquid Glass):
+ * 1. Ultra-Clear Translucent Base: Do trong suot hop ly (0.36 - 0.52), khong bi duc hay phang.
+ * 2. Diagonal Caustic Refraction: Luong sang khuc xa cheo goc 35 do mo phong do cong thau kinh.
+ * 3. Top Specular Catchlight: Duong sang phan chieu sac net o dinh kinh + bong chim o day kinh.
+ * 4. Inner Bevel Ring: Vong vien khuc xa ben trong cach mep 1.2.dp tao do day 3D.
+ * 5. Outer Specular Rim: Vien sang phan cuc mong tinh te (0.85.dp).
  */
 fun Modifier.appleLiquidGlassSurface(
     style: GlassStyleConfig,
     variant: LiquidGlassVariant = LiquidGlassVariant.REGULAR,
-    cornerRadius: Dp = 24.dp,
+    cornerRadius: Dp = 26.dp,
     highlighted: Boolean = false
 ): Modifier = this.drawWithCache {
     val rPx = cornerRadius.toPx()
     val cr = CornerRadius(rPx, rPx)
+    val insetPx = 1.3.dp.toPx()
+    val innerCr = CornerRadius((rPx - insetPx).coerceAtLeast(2f), (rPx - insetPx).coerceAtLeast(2f))
     val palette = style.palette
     val tint = style.tint
 
-    // Do duc thich ung theo bien the Regular / Clear va Reduce Transparency
-    val baseOpacity = when {
-        style.reduceTransparency -> 0.95f
-        variant == LiquidGlassVariant.CLEAR -> (style.frostAlpha * 1.45f).coerceIn(0.24f, 0.44f)
-        else -> (0.64f + style.frostAlpha * 0.45f).coerceIn(0.68f, 0.86f)
+    // Do trong suot quang hoc: Trong treo hon, khong bi duc (tru khi bat Reduce Transparency)
+    val topAlpha = when {
+        style.reduceTransparency -> 0.94f
+        variant == LiquidGlassVariant.CLEAR -> (0.20f + style.frostAlpha * 0.45f).coerceIn(0.22f, 0.36f)
+        else -> (0.36f + style.frostAlpha * 0.65f).coerceIn(0.38f, 0.62f)
     }
+    val bottomAlpha = (topAlpha + 0.12f).coerceAtMost(0.96f)
 
     onDrawBehind {
-        // 1. Lop nen kinh khu nhieu (Translucent Backdrop Base)
-        val backdropBrush = Brush.verticalGradient(
+        // LOP 1: Nen kinh ban trong suot pha sac lanh tinh te
+        val baseGlassBrush = Brush.verticalGradient(
             colors = listOf(
-                tint.surfaceColor.copy(alpha = baseOpacity),
-                palette.deepBgMid.copy(alpha = (baseOpacity * 1.05f).coerceAtMost(0.96f))
+                tint.surfaceColor.copy(alpha = topAlpha),
+                palette.deepBgMid.copy(alpha = bottomAlpha)
             )
         )
-        drawRoundRect(brush = backdropBrush, cornerRadius = cr)
+        drawRoundRect(brush = baseGlassBrush, cornerRadius = cr)
 
-        // 2. Lop khuc xa anh sang ben trong (Refraction & Specular Volume)
         if (!style.reduceTransparency) {
-            val sheenAlpha = if (variant == LiquidGlassVariant.CLEAR) 0.14f else 0.10f
-            val topSheen = Brush.verticalGradient(
+            // LOP 2: Khuc xa anh sang cheo qua thau kinh (Diagonal Caustic Sheen)
+            val causticBrush = Brush.linearGradient(
                 colors = listOf(
-                    Color.White.copy(alpha = sheenAlpha),
-                    palette.primaryGlow.copy(alpha = if (highlighted) 0.08f else 0.02f),
+                    Color.White.copy(alpha = if (variant == LiquidGlassVariant.CLEAR) 0.18f else 0.14f),
+                    palette.primaryGlow.copy(alpha = if (highlighted) 0.11f else 0.05f),
+                    Color.Transparent,
+                    palette.secondaryGlow.copy(alpha = if (highlighted) 0.08f else 0.03f)
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(size.width * 0.85f, size.height)
+            )
+            drawRoundRect(brush = causticBrush, cornerRadius = cr)
+
+            // LOP 3: Vung phan quang dinh kinh (Top Specular Catchlight)
+            val topSpecularBrush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = if (highlighted) 0.28f else 0.20f),
+                    Color.White.copy(alpha = 0.04f),
                     Color.Transparent
                 ),
                 startY = 0f,
-                endY = size.height * 0.55f
+                endY = (size.height * 0.38f).coerceAtLeast(12f)
             )
-            drawRoundRect(brush = topSheen, cornerRadius = cr)
+            drawRoundRect(brush = topSpecularBrush, cornerRadius = cr)
+
+            // LOP 4: Vong Bevel khuc xa ben trong tao do day 3D cho tam kinh
+            if (size.width > insetPx * 4 && size.height > insetPx * 4) {
+                val innerBevelBrush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.22f),
+                        Color.Transparent,
+                        Color.Black.copy(alpha = 0.28f)
+                    )
+                )
+                drawRoundRect(
+                    brush = innerBevelBrush,
+                    topLeft = Offset(insetPx, insetPx),
+                    size = Size(size.width - insetPx * 2, size.height - insetPx * 2),
+                    cornerRadius = innerCr,
+                    style = Stroke(width = 0.75.dp.toPx())
+                )
+            }
         }
 
-        // 3. Vien khuc xa kep (Concentric Specular Rim - Sang sac o dinh trai, diu o day phai)
-        val rimBrush = Brush.linearGradient(
+        // LOP 5: Vien Specular phan cuc ben ngoai (Sang sac o goc tren-trai, diu o goc duoi-phai)
+        val outerRimBrush = Brush.linearGradient(
             colors = listOf(
-                Color.White.copy(alpha = if (highlighted) 0.72f else 0.42f),
-                tint.rimTint.copy(alpha = 0.16f),
-                if (highlighted) palette.primaryGlow.copy(alpha = 0.50f) else Color.White.copy(alpha = 0.08f),
-                Color.White.copy(alpha = 0.24f)
+                Color.White.copy(alpha = if (highlighted) 0.88f else 0.62f),
+                tint.rimTint.copy(alpha = 0.28f),
+                if (highlighted) palette.primaryGlow.copy(alpha = 0.58f) else Color.White.copy(alpha = 0.10f),
+                Color.White.copy(alpha = 0.38f)
             ),
             start = Offset(0f, 0f),
             end = Offset(size.width, size.height)
         )
         drawRoundRect(
-            brush = rimBrush,
+            brush = outerRimBrush,
             cornerRadius = cr,
-            style = Stroke(width = if (highlighted) 1.3.dp.toPx() else 0.9.dp.toPx())
+            style = Stroke(width = if (highlighted) 1.15.dp.toPx() else 0.85.dp.toPx())
         )
     }
 }
 
 /**
- * LiquidGlassBar: Dung doc quyen cho Top Navigation Bar, Player Control Bar, Floating Action Bar.
+ * LiquidGlassBar: Khoi kinh noi co do sau (Soft Drop Shadow + 5-Layer Optical Glass)
+ * Dung cho Top Navigation Bar, Player Control Bar, Gesture HUD.
  */
 @Composable
 fun LiquidGlassBar(
     modifier: Modifier = Modifier,
     variant: LiquidGlassVariant = LiquidGlassVariant.REGULAR,
-    cornerRadius: Dp = 26.dp,
+    cornerRadius: Dp = 28.dp,
+    shadowElevation: Dp = 18.dp,
     highlighted: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -397,6 +422,12 @@ fun LiquidGlassBar(
 
     Column(
         modifier = modifier
+            .shadow(
+                elevation = shadowElevation,
+                shape = shape,
+                ambientColor = Color.Black.copy(alpha = 0.65f),
+                spotColor = Color.Black.copy(alpha = 0.75f)
+            )
             .clip(shape)
             .appleLiquidGlassSurface(
                 style = style,
@@ -409,11 +440,120 @@ fun LiquidGlassBar(
 }
 
 /**
- * LiquidGlassCard:
- * - Neu la Content Card trong danh sach (highlighted == false): Dung be mat Content Layer phang sach,
- *   bo goc Concentric, KHONG dung hieu ung kinh chong cheo (Tuan thu Nguyen tac 1 & 4 cua Apple HIG).
- * - Neu la Functional Card / Banner noi bat (highlighted == true): Dung Apple Liquid Glass Regular.
+ * LiquidGlassModalSheet: Cua so Modal / Sheet (Studio, Equalizer, Tools, Bookmarks, Settings)
+ * Bo goc lon 30.dp, do bong sau 26.dp, vien sang Specular kep va hieu ung kinh khuc xa.
  */
+@Composable
+fun LiquidGlassModalSheet(
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 30.dp,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val style = LocalGlassStyle.current
+    val shape = RoundedCornerShape(cornerRadius)
+
+    Column(
+        modifier = modifier
+            .shadow(
+                elevation = 26.dp,
+                shape = shape,
+                ambientColor = Color.Black.copy(alpha = 0.80f),
+                spotColor = style.palette.primaryGlow.copy(alpha = 0.35f)
+            )
+            .clip(shape)
+            .appleLiquidGlassSurface(
+                style = style,
+                variant = LiquidGlassVariant.REGULAR,
+                cornerRadius = cornerRadius,
+                highlighted = true
+            ),
+        content = content
+    )
+}
+
+/**
+ * LiquidGlassIconButton: Nut tron tren thanh dieu khien Player co hieu ung dan hoi Spring Morph
+ * va vien sang Specular nhe, can doi va de bam.
+ */
+@Composable
+fun LiquidGlassIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+    active: Boolean = false,
+    enabled: Boolean = true,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val style = LocalGlassStyle.current
+    val palette = style.palette
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.88f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "icon_btn_morph"
+    )
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = if (enabled) 1f else 0.35f
+            }
+            .clip(CircleShape)
+            .then(
+                if (enabled) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
+                } else Modifier
+            )
+            .drawWithCache {
+                val r = this.size.width / 2f
+                onDrawBehind {
+                    val fillBrush = when {
+                        active -> Brush.linearGradient(
+                            colors = listOf(
+                                palette.primaryGlow.copy(alpha = 0.38f),
+                                palette.secondaryGlow.copy(alpha = 0.24f)
+                            )
+                        )
+                        isPressed -> Brush.linearGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.26f),
+                                Color.White.copy(alpha = 0.14f)
+                            )
+                        )
+                        else -> Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.15f),
+                                Color.White.copy(alpha = 0.05f)
+                            )
+                        )
+                    }
+                    val rimBrush = Brush.linearGradient(
+                        colors = if (active) {
+                            listOf(Color.White.copy(alpha = 0.90f), palette.primaryGlow.copy(alpha = 0.75f))
+                        } else {
+                            listOf(Color.White.copy(alpha = 0.45f), Color.White.copy(alpha = 0.08f))
+                        }
+                    )
+                    drawCircle(brush = fillBrush, radius = r)
+                    drawCircle(brush = rimBrush, radius = r - 0.5.dp.toPx(), style = Stroke(width = 0.85.dp.toPx()))
+                }
+            },
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
 @Composable
 fun LiquidGlassCard(
     modifier: Modifier = Modifier,
@@ -425,7 +565,6 @@ fun LiquidGlassCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val style = LocalGlassStyle.current
-    val palette = style.palette
 
     val effectiveCorner = when (style.engineId) {
         ThemeEngineId.BRUSHED_METAL.id -> 12.dp
@@ -459,11 +598,20 @@ fun LiquidGlassCard(
                 scaleX = morphScale
                 scaleY = morphScale
             }
+            .then(
+                if (highlighted) {
+                    Modifier.shadow(
+                        elevation = 14.dp,
+                        shape = shape,
+                        ambientColor = Color.Black.copy(alpha = 0.55f),
+                        spotColor = Color.Black.copy(alpha = 0.65f)
+                    )
+                } else Modifier
+            )
             .clip(shape)
             .then(clickMod)
             .then(
                 if (highlighted) {
-                    // Functional Layer / Featured Card -> Dung Liquid Glass Regular
                     Modifier.appleLiquidGlassSurface(
                         style = style,
                         variant = LiquidGlassVariant.REGULAR,
@@ -471,7 +619,7 @@ fun LiquidGlassCard(
                         highlighted = true
                     )
                 } else {
-                    // Content Layer (Video Item, Folder Item) -> Be mat phang tinh te, KHONG dung Glass
+                    // Content Layer: Khong phu kinh de tranh Glass-on-Glass
                     Modifier.drawWithCache {
                         val cr = CornerRadius(effectiveCorner.toPx(), effectiveCorner.toPx())
                         val contentBg = when (style.engineId) {
@@ -481,9 +629,9 @@ fun LiquidGlassCard(
                         onDrawBehind {
                             drawRoundRect(color = contentBg, cornerRadius = cr)
                             drawRoundRect(
-                                color = Color.White.copy(alpha = 0.07f),
+                                color = Color.White.copy(alpha = 0.08f),
                                 cornerRadius = cr,
-                                style = Stroke(width = 0.7.dp.toPx())
+                                style = Stroke(width = 0.75.dp.toPx())
                             )
                         }
                     }
@@ -493,10 +641,6 @@ fun LiquidGlassCard(
     )
 }
 
-/**
- * LiquidGlassPill: Nut vien thuoc co chuyen dong Morph dan hoi (Spring Physics).
- * Khong ve chong kinh nang ne khi nam trong Thanh dieu khien (Tranh Glass-on-Glass).
- */
 @Composable
 fun LiquidGlassPill(
     modifier: Modifier = Modifier,
@@ -545,41 +689,43 @@ fun LiquidGlassPill(
                 val cr = CornerRadius(pillRadius.toPx(), pillRadius.toPx())
                 onDrawBehind {
                     val fillBrush = when {
-                        active -> Brush.horizontalGradient(
+                        active -> Brush.linearGradient(
                             colors = listOf(
-                                palette.primaryGlow.copy(alpha = 0.34f),
-                                palette.secondaryGlow.copy(alpha = 0.28f)
+                                palette.primaryGlow.copy(alpha = 0.36f),
+                                palette.secondaryGlow.copy(alpha = 0.24f)
                             )
                         )
-                        isPressed -> Brush.horizontalGradient(
+                        isPressed -> Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.22f),
-                                Color.White.copy(alpha = 0.14f)
+                                Color.White.copy(alpha = 0.24f),
+                                Color.White.copy(alpha = 0.12f)
                             )
                         )
                         variant == LiquidGlassVariant.REGULAR -> Brush.verticalGradient(
                             colors = listOf(
-                                style.tint.surfaceColor.copy(alpha = 0.78f),
-                                palette.deepBgMid.copy(alpha = 0.85f)
+                                style.tint.surfaceColor.copy(alpha = 0.52f),
+                                palette.deepBgMid.copy(alpha = 0.65f)
                             )
                         )
                         else -> Brush.verticalGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.12f),
-                                Color.White.copy(alpha = 0.06f)
+                                Color.White.copy(alpha = 0.14f),
+                                Color.White.copy(alpha = 0.05f)
                             )
                         )
                     }
-                    val rimColor = if (active) {
-                        palette.primaryGlow.copy(alpha = 0.80f)
-                    } else {
-                        Color.White.copy(alpha = 0.22f)
-                    }
+                    val rimBrush = Brush.linearGradient(
+                        colors = if (active) {
+                            listOf(Color.White.copy(alpha = 0.85f), palette.primaryGlow.copy(alpha = 0.70f))
+                        } else {
+                            listOf(Color.White.copy(alpha = 0.42f), Color.White.copy(alpha = 0.10f))
+                        }
+                    )
                     drawRoundRect(brush = fillBrush, cornerRadius = cr)
                     drawRoundRect(
-                        color = rimColor,
+                        brush = rimBrush,
                         cornerRadius = cr,
-                        style = Stroke(width = if (active) 1.1.dp.toPx() else 0.7.dp.toPx())
+                        style = Stroke(width = if (active) 1.05.dp.toPx() else 0.75.dp.toPx())
                     )
                 }
             }

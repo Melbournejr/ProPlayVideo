@@ -17,7 +17,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -26,11 +30,11 @@ import com.videoplayer.app.ui.components.*
 import kotlin.math.roundToInt
 
 /**
- * Player Functional Overlay (Tuan thu Apple Liquid Glass HIG 2025-2026):
- * 1. Gesture HUD (Do sang / Am luong / Tua): Dung LiquidGlassVariant.CLEAR mong nhe, trong suot cao.
- * 2. Bottom Control Bar: Mot khoi LiquidGlassVariant.REGULAR duy nhat, bo goc Concentric 28.dp,
- *    xuat hien muot voi hieu ung Morph (fadeIn + scaleIn + slideInVertically).
- * 3. Khong ve Glass-on-Glass ben trong Control Bar.
+ * Player Control Bar & Functional HUD (Apple Liquid Glass 5-Layer Optical):
+ * - Cân chỉnh lại khoảng cách và kích thước nút bấm:
+ *   + Hàng trên: Back (38dp) | Tiêu đề | Bookmark (38dp) | Xoay màn hình (38dp)
+ *   + Hàng giữa: Thanh tua DirectCanvasSeekBar 120Hz
+ *   + Hàng dưới: Cụm Trái [Tốc độ 1.0x] | Cụm Giữa [Prev (42dp) - Play (54dp) - Next (42dp) cách nhau 18dp] | Cụm Phải [Studio - Menu (40dp)]
  */
 @Composable
 fun BoxScope.PlayerOverlaysAndControls(
@@ -40,7 +44,7 @@ fun BoxScope.PlayerOverlaysAndControls(
 ) {
     val palette = LocalGlassPalette.current
 
-    // 1. Nerd Stats HUD (Bien the Clear Glass o goc tren trai)
+    // 1. Nerd Stats HUD (Clear Glass)
     AnimatedVisibility(
         visible = state.showNerdStats && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.92f),
@@ -50,7 +54,8 @@ fun BoxScope.PlayerOverlaysAndControls(
         state.nerdStats?.let { st ->
             LiquidGlassBar(
                 variant = LiquidGlassVariant.CLEAR,
-                cornerRadius = 18.dp,
+                cornerRadius = 20.dp,
+                shadowElevation = 12.dp,
                 modifier = Modifier.widthIn(max = 260.dp)
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -70,7 +75,7 @@ fun BoxScope.PlayerOverlaysAndControls(
         }
     }
 
-    // 2. Gesture HUD Overlay (Bien the CLEAR Glass mong nhe, khong dac, lo ro video phia sau)
+    // 2. Gesture HUD Overlay (Clear Glass mỏng nhẹ, khúc xạ cao)
     AnimatedVisibility(
         visible = state.gestureHint != null && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.88f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
@@ -81,6 +86,7 @@ fun BoxScope.PlayerOverlaysAndControls(
             LiquidGlassBar(
                 variant = LiquidGlassVariant.CLEAR,
                 cornerRadius = 50.dp,
+                shadowElevation = 16.dp,
                 highlighted = true
             ) {
                 Text(
@@ -88,13 +94,13 @@ fun BoxScope.PlayerOverlaysAndControls(
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                    modifier = Modifier.padding(horizontal = 22.dp, vertical = 11.dp)
                 )
             }
         }
     }
 
-    // 3. Nut Mo khoa cam ung (Liquid Glass Clear Pill)
+    // 3. Nút Mở khóa cảm ứng
     AnimatedVisibility(
         visible = state.isLocked && state.showControls && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.9f),
@@ -112,13 +118,13 @@ fun BoxScope.PlayerOverlaysAndControls(
         }
     }
 
-    // 4. Khoi Thanh Dieu Khien Chinh Duoi Day (Mot khoi LiquidGlassBar REGULAR duy nhat + Hieu ung Morph)
+    // 4. Thanh Điều Khiển Chính Dưới Đáy (5-Layer Optical LiquidGlassBar + Hiệu ứng Morph)
     AnimatedVisibility(
         visible = state.showControls && !state.isLocked && !state.isInPipMode && state.activeModal == ActiveModal.NONE,
         enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-            scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) +
+            scaleIn(initialScale = 0.93f, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) +
             slideInVertically(initialOffsetY = { it / 3 }, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)),
-        exit = fadeOut() + scaleOut(targetScale = 0.95f) + slideOutVertically(targetOffsetY = { it / 3 }),
+        exit = fadeOut() + scaleOut(targetScale = 0.94f) + slideOutVertically(targetOffsetY = { it / 3 }),
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .padding(horizontal = 16.dp, vertical = 14.dp)
@@ -126,7 +132,8 @@ fun BoxScope.PlayerOverlaysAndControls(
     ) {
         LiquidGlassBar(
             variant = LiquidGlassVariant.REGULAR,
-            cornerRadius = 28.dp,
+            cornerRadius = 30.dp,
+            shadowElevation = 22.dp,
             highlighted = true,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -135,18 +142,15 @@ fun BoxScope.PlayerOverlaysAndControls(
                     .fillMaxWidth()
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
-                // ================= TANG 1: BACK + TIEU DE + TRANG THAI + BOOKMARK + XOAY =================
+                // ================= TẦNG 1: BACK + TIÊU ĐỀ + BOOKMARK + XOAY MÀN HÌNH =================
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    IconButton(
+                    LiquidGlassIconButton(
                         onClick = { state.persistCurrentPosition(); onBack() },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.08f))
+                        size = 36.dp
                     ) {
                         Icon(
                             Icons.Default.ArrowBack,
@@ -188,7 +192,7 @@ fun BoxScope.PlayerOverlaysAndControls(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(Color.White.copy(alpha = 0.08f))
+                                .background(Color.White.copy(alpha = 0.12f))
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
@@ -200,18 +204,13 @@ fun BoxScope.PlayerOverlaysAndControls(
                         }
                     }
 
-                    IconButton(
+                    LiquidGlassIconButton(
                         onClick = {
                             state.refreshBookmarksForCurrentVideo()
                             state.activeModal = ActiveModal.BOOKMARKS
                         },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (state.bookmarks.isNotEmpty()) palette.primaryGlow.copy(alpha = 0.22f)
-                                else Color.White.copy(alpha = 0.08f)
-                            )
+                        size = 36.dp,
+                        active = state.bookmarks.isNotEmpty()
                     ) {
                         Icon(
                             AppIcons.Bookmark,
@@ -221,12 +220,9 @@ fun BoxScope.PlayerOverlaysAndControls(
                         )
                     }
 
-                    IconButton(
+                    LiquidGlassIconButton(
                         onClick = { state.toggleScreenOrientation(activity) },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.08f))
+                        size = 36.dp
                     ) {
                         Icon(
                             AppIcons.ScreenRotation,
@@ -239,7 +235,7 @@ fun BoxScope.PlayerOverlaysAndControls(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // ================= TANG 2: THANH SEEK BAR 120HZ =================
+                // ================= TẦNG 2: THANH SEEK BAR 120HZ =================
                 DirectCanvasSeekBar(
                     currentPosMs = state.currentPos,
                     durationMs = state.duration,
@@ -258,18 +254,18 @@ fun BoxScope.PlayerOverlaysAndControls(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // ================= TANG 3: 3 CUM DIEU KHIEN CAN DOI CHUẨN NHIP APPLE HIG =================
+                // ================= TẦNG 3: 3 CỤM NÚT CÂN ĐỐI, KHOẢNG CÁCH RỘNG DỄ BẤM =================
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Cum Trai: Toc do phat
+                    // Cụm Trái: Tốc độ phát
                     Box {
                         LiquidGlassPill(
                             active = state.playbackSpeed != 1.0f,
                             onClick = { state.showSpeedMenu = true },
-                            modifier = Modifier.height(38.dp)
+                            modifier = Modifier.height(40.dp)
                         ) {
                             Text(
                                 text = "${state.playbackSpeed}x",
@@ -298,75 +294,94 @@ fun BoxScope.PlayerOverlaysAndControls(
                         }
                     }
 
-                    // Cum Giua: Prev - Play/Pause (50dp) - Next voi khoang cach 16.dp thoang dang
+                    // Cụm Giữa: Prev (42dp) - Play/Pause (54dp) - Next (42dp) cách nhau 18.dp
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        IconButton(
+                        LiquidGlassIconButton(
                             onClick = { state.triggerPreviousVideo() },
-                            enabled = state.hasPrevious,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = if (state.hasPrevious) 0.08f else 0.02f))
+                            size = 42.dp,
+                            enabled = state.hasPrevious
                         ) {
                             Icon(
                                 AppIcons.SkipPrevious,
                                 contentDescription = "Video tr\u01B0\u1EDBc",
-                                tint = if (state.hasPrevious) Color.White else Color.White.copy(alpha = 0.28f),
+                                tint = Color.White,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
 
-                        // Nut Play/Pause trung tam: Dung Specular Tint sang nhe, khong chong lop kinh thu 2
-                        IconButton(
-                            onClick = { state.togglePlayPause() },
+                        // Nút Play/Pause trung tâm (Kính cầu phản quang Specular Sphere 54dp)
+                        Box(
                             modifier = Modifier
-                                .size(50.dp)
+                                .size(54.dp)
+                                .shadow(10.dp, CircleShape, spotColor = palette.primaryGlow)
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.18f))
+                                .clickable { state.togglePlayPause() }
+                                .drawWithCache {
+                                    val r = size.width / 2f
+                                    val sphereBrush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.38f),
+                                            palette.primaryGlow.copy(alpha = 0.55f),
+                                            palette.secondaryGlow.copy(alpha = 0.45f)
+                                        )
+                                    )
+                                    val rimBrush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.95f),
+                                            Color.White.copy(alpha = 0.25f)
+                                        )
+                                    )
+                                    onDrawBehind {
+                                        drawCircle(brush = sphereBrush, radius = r)
+                                        drawCircle(
+                                            brush = rimBrush,
+                                            radius = r - 0.8.dp.toPx(),
+                                            style = Stroke(width = 1.2.dp.toPx())
+                                        )
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 if (state.isPlaying) AppIcons.Pause else Icons.Default.PlayArrow,
                                 contentDescription = "Ph\u00E1t / T\u1EA1m d\u1EEBng",
                                 tint = Color.White,
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(27.dp)
                             )
                         }
 
-                        IconButton(
+                        LiquidGlassIconButton(
                             onClick = { state.triggerNextVideo() },
-                            enabled = state.hasNext,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = if (state.hasNext) 0.08f else 0.02f))
+                            size = 42.dp,
+                            enabled = state.hasNext
                         ) {
                             Icon(
                                 AppIcons.SkipNext,
                                 contentDescription = "Video ti\u1EBFp",
-                                tint = if (state.hasNext) Color.White else Color.White.copy(alpha = 0.28f),
+                                tint = Color.White,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    // Cum Phai: Studio & Menu Tien ich
+                    // Cụm Phải: Studio & Menu Tiện ích
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         LiquidGlassPill(
                             active = state.isStudioEffectActive,
                             onClick = { state.activeModal = ActiveModal.STUDIO },
-                            modifier = Modifier.height(38.dp)
+                            modifier = Modifier.height(40.dp)
                         ) {
                             Icon(
                                 AppIcons.AutoAwesome,
                                 contentDescription = "Studio",
                                 tint = Color.White,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(Modifier.width(5.dp))
                             Text(
@@ -377,16 +392,10 @@ fun BoxScope.PlayerOverlaysAndControls(
                             )
                         }
 
-                        IconButton(
+                        LiquidGlassIconButton(
                             onClick = { state.activeModal = ActiveModal.TOOLS },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (state.backgroundAudioEnabled || state.sleepTimerMinutes > 0)
-                                        palette.primaryGlow.copy(alpha = 0.25f)
-                                    else Color.White.copy(alpha = 0.09f)
-                                )
+                            size = 40.dp,
+                            active = state.backgroundAudioEnabled || state.sleepTimerMinutes > 0
                         ) {
                             Icon(
                                 AppIcons.Tune,

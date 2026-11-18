@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.ui.components.AppIcons
-import com.videoplayer.app.ui.components.LiquidGlassCard
+import com.videoplayer.app.ui.components.LiquidGlassModalSheet
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 
@@ -38,9 +38,8 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
     val currentVid = state.currentVideo ?: return
     var noteInput by remember { mutableStateOf("") }
 
-    LiquidGlassCard(
-        cornerRadius = 26.dp,
-        highlighted = true,
+    LiquidGlassModalSheet(
+        cornerRadius = 30.dp,
         modifier = Modifier
             .align(Alignment.Center)
             .padding(horizontal = 16.dp, vertical = 12.dp)

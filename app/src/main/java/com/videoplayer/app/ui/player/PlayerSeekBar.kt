@@ -1,5 +1,7 @@
 package com.videoplayer.app.ui.player
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -12,15 +14,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.VideoBookmark
 
 /**
- * Thanh tua thời gian vẽ trực tiếp trên Canvas (Direct-Touch 120Hz SeekBar)
- * Hỗ trợ hiển thị trực quan các điểm đánh dấu (Bookmark Markers) màu vàng sáng trên rãnh tua.
+ * Thanh tua Liquid Glass 120Hz:
+ * - Khi chạm kéo, rãnh kính tự động phồng nhẹ (Morph) từ 5.dp lên 8.dp kèm hào quang khúc xạ.
+ * - Viền sáng mỏng (Specular Rim) bao quanh rãnh trượt.
  */
 @Composable
 fun DirectCanvasSeekBar(
@@ -35,6 +40,12 @@ fun DirectCanvasSeekBar(
     val safeDuration = durationMs.coerceAtLeast(1L)
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    val animatedTrackScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.55f else 1f,
+        animationSpec = spring(),
+        label = "seek_morph"
+    )
 
     val fraction = if (isDragging) {
         dragFraction
@@ -52,7 +63,7 @@ fun DirectCanvasSeekBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp)
+                .height(34.dp)
                 .pointerInput(safeDuration) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -78,73 +89,88 @@ fun DirectCanvasSeekBar(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(28.dp)) {
-                val trackHeight = if (isDragging) 7.dp.toPx() else 5.dp.toPx()
+            Canvas(modifier = Modifier.fillMaxWidth().height(26.dp)) {
+                val trackHeight = 5.dp.toPx() * animatedTrackScale
                 val centerY = size.height / 2f
                 val thumbX = (fraction * size.width).coerceIn(0f, size.width)
+                val cr = CornerRadius(trackHeight / 2f, trackHeight / 2f)
 
-                // Rãnh nền
+                // Rãnh nền kính mờ + viền sáng mỏng
                 drawRoundRect(
-                    color = Color.White.copy(alpha = 0.24f),
+                    color = Color.White.copy(alpha = 0.16f),
                     topLeft = Offset(0f, centerY - trackHeight / 2f),
                     size = Size(size.width, trackHeight),
-                    cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                    cornerRadius = cr
                 )
-                // Phần đã phát
                 drawRoundRect(
-                    color = activeColor,
+                    color = Color.White.copy(alpha = 0.25f),
                     topLeft = Offset(0f, centerY - trackHeight / 2f),
-                    size = Size(thumbX, trackHeight),
-                    cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                    size = Size(size.width, trackHeight),
+                    cornerRadius = cr,
+                    style = Stroke(width = 0.6.dp.toPx())
                 )
 
-                // Vẽ các vạch đánh dấu Bookmark màu vàng trên thanh tua
+                // Dải tiến trình phát sáng (Liquid Glow Fill)
+                if (thumbX > 1f) {
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(activeColor.copy(alpha = 0.85f), Color.White)
+                        ),
+                        topLeft = Offset(0f, centerY - trackHeight / 2f),
+                        size = Size(thumbX, trackHeight),
+                        cornerRadius = cr
+                    )
+                }
+
+                // Các vạch đánh dấu Bookmark
                 bookmarks.forEach { bm ->
                     val bmFrac = (bm.timestampMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
                     val bmX = bmFrac * size.width
                     drawCircle(
                         color = Color(0xFFFFEA00),
-                        radius = 4.dp.toPx(),
+                        radius = 3.8.dp.toPx(),
                         center = Offset(bmX, centerY)
                     )
                 }
 
+                // Quầng khúc xạ quanh nút kéo khi chạm
                 if (isDragging) {
                     drawCircle(
-                        color = activeColor.copy(alpha = 0.35f),
-                        radius = 13.dp.toPx(),
+                        color = activeColor.copy(alpha = 0.32f),
+                        radius = 14.dp.toPx(),
                         center = Offset(thumbX, centerY)
                     )
                 }
+                // Hạt thủy tinh (Glass Bead Thumb)
                 drawCircle(
                     color = Color.White,
-                    radius = if (isDragging) 9.dp.toPx() else 7.dp.toPx(),
+                    radius = if (isDragging) 8.5.dp.toPx() else 6.5.dp.toPx(),
                     center = Offset(thumbX, centerY)
                 )
             }
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isDragging) "⏱️ ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
-                color = if (isDragging) activeColor else Color.White,
+                text = if (isDragging) "\u23F1\uFE0F ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
+                color = if (isDragging) activeColor else Color.White.copy(alpha = 0.92f),
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.SemiBold
             )
             if (sleepRemainingSec > 0) {
                 Text(
-                    text = "💤 ${formatTimeMs(sleepRemainingSec * 1000L)}",
+                    text = "\uD83D\uDCA4 ${formatTimeMs(sleepRemainingSec * 1000L)}",
                     color = Color(0xFFFFD54F),
                     style = MaterialTheme.typography.labelSmall
                 )
             }
             Text(
                 text = formatTimeMs(durationMs),
-                color = Color.White.copy(alpha = 0.78f),
+                color = Color.White.copy(alpha = 0.72f),
                 style = MaterialTheme.typography.labelSmall
             )
         }

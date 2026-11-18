@@ -21,7 +21,7 @@ import androidx.media3.common.C
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.videoplayer.app.data.local.saveSubtitleAppearance
 import com.videoplayer.app.ui.components.AppIcons
-import com.videoplayer.app.ui.components.LiquidGlassCard
+import com.videoplayer.app.ui.components.LiquidGlassModalSheet
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.util.FileOperationHelper
@@ -52,9 +52,8 @@ fun BoxScope.PlayerActiveModals(
 private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
     val palette = LocalGlassPalette.current
 
-    LiquidGlassCard(
-        cornerRadius = 26.dp,
-        highlighted = true,
+    LiquidGlassModalSheet(
+        cornerRadius = 30.dp,
         modifier = Modifier
             .align(Alignment.Center)
             .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -261,9 +260,8 @@ private fun BoxScope.PlayerToolsModal(
 ) {
     val palette = LocalGlassPalette.current
 
-    LiquidGlassCard(
-        cornerRadius = 26.dp,
-        highlighted = true,
+    LiquidGlassModalSheet(
+        cornerRadius = 30.dp,
         modifier = Modifier
             .align(Alignment.Center)
             .padding(horizontal = 16.dp, vertical = 12.dp)
