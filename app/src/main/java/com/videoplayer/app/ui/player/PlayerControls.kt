@@ -5,6 +5,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -17,11 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -30,22 +29,16 @@ import com.videoplayer.app.data.local.StreamHistoryManager
 import com.videoplayer.app.ui.components.*
 import kotlin.math.roundToInt
 
-/**
- * Player Control Bar & Functional HUD (Apple Liquid Glass 5-Layer Optical):
- * - Cân chỉnh lại khoảng cách và kích thước nút bấm:
- *   + Hàng trên: Back (38dp) | Tiêu đề | Bookmark (38dp) | Xoay màn hình (38dp)
- *   + Hàng giữa: Thanh tua DirectCanvasSeekBar 120Hz
- *   + Hàng dưới: Cụm Trái [Tốc độ 1.0x] | Cụm Giữa [Prev (42dp) - Play (54dp) - Next (42dp) cách nhau 18dp] | Cụm Phải [Studio - Menu (40dp)]
- */
 @Composable
 fun BoxScope.PlayerOverlaysAndControls(
     state: PlayerStateHolder,
     activity: Activity?,
     onBack: () -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
 
-    // 1. Nerd Stats HUD (Clear Glass)
+    // 1. Nerd Stats HUD
     AnimatedVisibility(
         visible = state.showNerdStats && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.92f),
@@ -55,28 +48,24 @@ fun BoxScope.PlayerOverlaysAndControls(
         state.nerdStats?.let { st ->
             LiquidGlassBar(
                 variant = LiquidGlassVariant.CLEAR,
-                cornerRadius = 20.dp,
-                shadowElevation = 12.dp,
+                cornerRadius = 16.dp,
+                shadowElevation = 10.dp,
                 modifier = Modifier.widthIn(max = 260.dp)
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("\uD83D\uDCCA NERD STATS", color = palette.primaryGlow, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("NERD STATS", color = palette.primaryGlow, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                         Text("\u2715", color = Color.White, modifier = Modifier.padding(2.dp).clickable { state.showNerdStats = false })
                     }
-                    Text("\u2022 ${st.resolution} (${st.frameRate})", color = Color.White, fontSize = 11.sp)
-                    Text("\u2022 Video: ${st.videoCodec} \u2022 ${st.videoBitrate}", color = Color.White, fontSize = 11.sp)
-                    Text("\u2022 Audio: ${st.audioCodec} \u2022 Drop: ${st.droppedFrames}", color = Color.White, fontSize = 11.sp)
+                    Text("${st.resolution} (${st.frameRate})", color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    Text("Video: ${st.videoCodec} \u2022 ${st.videoBitrate}", color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    Text("Audio: ${st.audioCodec} \u2022 Drop: ${st.droppedFrames}", color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
             }
         }
     }
 
-    // 2. Gesture HUD Overlay (Clear Glass mỏng nhẹ, khúc xạ cao)
+    // 2. Gesture HUD Overlay
     AnimatedVisibility(
         visible = state.gestureHint != null && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.88f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
@@ -84,85 +73,78 @@ fun BoxScope.PlayerOverlaysAndControls(
         modifier = Modifier.align(Alignment.Center)
     ) {
         state.gestureHint?.let { hint ->
-            LiquidGlassBar(
-                variant = LiquidGlassVariant.CLEAR,
-                cornerRadius = 50.dp,
-                shadowElevation = 16.dp,
-                highlighted = true
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(if (style.isProMonitor) 6.dp else 50.dp))
+                    .background(Color.Black.copy(alpha = 0.62f))
+                    .border(0.9.dp, palette.primaryGlow.copy(alpha = 0.65f), RoundedCornerShape(if (style.isProMonitor) 6.dp else 50.dp))
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
                 Text(
                     text = hint,
                     color = Color.White,
+                    fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 22.dp, vertical = 11.dp)
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
     }
 
-    // 3. Nút Mở khóa cảm ứng
+    // 3. Nut Mo khoa cam ung
     AnimatedVisibility(
         visible = state.isLocked && state.showControls && !state.isInPipMode,
         enter = fadeIn() + scaleIn(initialScale = 0.9f),
         exit = fadeOut(),
         modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
     ) {
-        LiquidGlassPill(
-            active = true,
-            variant = LiquidGlassVariant.REGULAR,
-            onClick = { state.isLocked = false }
-        ) {
+        LiquidGlassPill(active = true, variant = LiquidGlassVariant.REGULAR, onClick = { state.isLocked = false }) {
             Icon(AppIcons.LockOpen, contentDescription = "M\u1EDF kh\u00F3a", tint = Color.White)
             Spacer(Modifier.width(6.dp))
             Text("Ch\u1EA1m \u0111\u1EC3 M\u1EDF kh\u00F3a", color = Color.White, fontWeight = FontWeight.Bold)
         }
     }
 
-    // 4. Thanh Điều Khiển Chính Dưới Đáy (5-Layer Optical LiquidGlassBar + Hiệu ứng Morph)
+    // 4. Thanh Dieu Khien Chinh (Tu bien hoa theo 4 Bo Theme!)
     AnimatedVisibility(
         visible = state.showControls && !state.isLocked && !state.isInPipMode && state.activeModal == ActiveModal.NONE,
         enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-            scaleIn(initialScale = 0.93f, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) +
             slideInVertically(initialOffsetY = { it / 3 }, animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy)),
-        exit = fadeOut() + scaleOut(targetScale = 0.94f) + slideOutVertically(targetOffsetY = { it / 3 }),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 3 }),
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
             .fillMaxWidth()
     ) {
-        LiquidGlassBar(
-            variant = LiquidGlassVariant.REGULAR,
-            cornerRadius = 30.dp,
-            shadowElevation = 22.dp,
-            highlighted = true,
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        val controlsContent: @Composable ColumnScope.() -> Unit = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp)
+                    .padding(
+                        horizontal = if (style.isCinema) 20.dp else 16.dp,
+                        vertical = if (style.isCinema) 18.dp else 13.dp
+                    )
             ) {
-                // ================= TẦNG 1: BACK + TIÊU ĐỀ + BOOKMARK + XOAY MÀN HÌNH =================
+                // Tang 1: Back + Tieu de + Bookmark + Xoay man hinh
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    LiquidGlassIconButton(
+                    IconButton(
                         onClick = { state.persistCurrentPosition(); onBack() },
-                        size = 36.dp
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                            .background(if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.12f))
                     ) {
-                        Icon(
-                            Icons.Default.ArrowBack,
-                            contentDescription = "Quay l\u1EA1i",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Quay l\u1EA1i", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
 
                     Text(
-                        text = state.currentVideo?.displayName ?: state.streamTitle?.takeIf { it.isNotBlank() } ?: state.streamUrl?.let { StreamHistoryManager.findTitleForUrl(it) } ?: (state.streamUrl ?: "\u0110ang ph\u00E1t"),
+                        text = state.currentVideo?.displayName
+                            ?: state.streamTitle?.takeIf { it.isNotBlank() }
+                            ?: state.streamUrl?.let { StreamHistoryManager.findTitleForUrl(it) }
+                            ?: (state.streamUrl ?: "\u0110ang ph\u00E1t"),
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
@@ -172,71 +154,56 @@ fun BoxScope.PlayerOverlaysAndControls(
                     )
 
                     if (state.loopPointA != null || state.loopPointB != null) {
-                        LiquidGlassPill(
-                            active = true,
-                            onClick = { state.loopPointA = null; state.loopPointB = null }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(palette.primaryGlow.copy(alpha = 0.25f))
+                                .clickable { state.loopPointA = null; state.loopPointB = null }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("\uD83D\uDD01 A-B \u2715", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text("A-B \u2715", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
 
                     if (state.zoomScale > 1.01f) {
-                        LiquidGlassPill(
-                            active = true,
-                            onClick = { state.resetZoom() }
-                        ) {
-                            Text("\uD83D\uDD0D ${(state.zoomScale * 100).roundToInt()}% \u2715", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-
-                    if (state.effectivePlaylist.size > 1 && state.currentIndex >= 0) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.White.copy(alpha = 0.12f))
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(palette.primaryGlow.copy(alpha = 0.25f))
+                                .clickable { state.resetZoom() }
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text(
-                                "${state.currentIndex + 1}/${state.effectivePlaylist.size}",
-                                color = palette.primaryGlow,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("${(state.zoomScale * 100).roundToInt()}% \u2715", color = Color.White, style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
-                    LiquidGlassIconButton(
+                    IconButton(
                         onClick = {
                             state.refreshBookmarksForCurrentVideo()
                             state.activeModal = ActiveModal.BOOKMARKS
                         },
-                        size = 36.dp,
-                        active = state.bookmarks.isNotEmpty()
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                            .background(if (state.bookmarks.isNotEmpty()) palette.primaryGlow.copy(alpha = 0.25f) else if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.10f))
                     ) {
-                        Icon(
-                            AppIcons.Bookmark,
-                            contentDescription = "\u0110\u00E1nh d\u1EA5u",
-                            tint = if (state.bookmarks.isNotEmpty()) palette.primaryGlow else Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Icon(AppIcons.Bookmark, contentDescription = "\u0110\u00E1nh d\u1EA5u", tint = if (state.bookmarks.isNotEmpty()) palette.primaryGlow else Color.White, modifier = Modifier.size(16.dp))
                     }
 
-                    LiquidGlassIconButton(
+                    IconButton(
                         onClick = { state.toggleScreenOrientation(activity) },
-                        size = 36.dp
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                            .background(if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.10f))
                     ) {
-                        Icon(
-                            AppIcons.ScreenRotation,
-                            contentDescription = "Xoay m\u00E0n h\u00ECnh",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Icon(AppIcons.ScreenRotation, contentDescription = "Xoay m\u00E0n h\u00ECnh", tint = Color.White, modifier = Modifier.size(16.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // ================= TẦNG 2: THANH SEEK BAR 120HZ =================
+                // Tang 2: SeekBar (Tu bien hoa theo Theme)
                 DirectCanvasSeekBar(
                     currentPosMs = state.currentPos,
                     durationMs = state.duration,
@@ -253,32 +220,33 @@ fun BoxScope.PlayerOverlaysAndControls(
                     }
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // ================= TẦNG 3: 3 CỤM NÚT CÂN ĐỐI, KHOẢNG CÁCH RỘNG DỄ BẤM =================
+                // Tang 3: 3 Cum nut can doi
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Cụm Trái: Tốc độ phát
                     Box {
-                        LiquidGlassPill(
-                            active = state.playbackSpeed != 1.0f,
-                            onClick = { state.showSpeedMenu = true },
-                            modifier = Modifier.height(40.dp)
+                        Box(
+                            modifier = Modifier
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(if (style.isProMonitor) 6.dp else 50.dp))
+                                .background(if (state.playbackSpeed != 1.0f) palette.primaryGlow.copy(alpha = 0.30f) else if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.10f))
+                                .clickable { state.showSpeedMenu = true }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "${state.playbackSpeed}x",
+                                fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
-                        DropdownMenu(
-                            expanded = state.showSpeedMenu,
-                            onDismissRequest = { state.showSpeedMenu = false }
-                        ) {
+                        DropdownMenu(expanded = state.showSpeedMenu, onDismissRequest = { state.showSpeedMenu = false }) {
                             listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { spd ->
                                 DropdownMenuItem(
                                     text = {
@@ -295,118 +263,114 @@ fun BoxScope.PlayerOverlaysAndControls(
                         }
                     }
 
-                    // Cụm Giữa: Prev (42dp) - Play/Pause (54dp) - Next (42dp) cách nhau 18.dp
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        LiquidGlassIconButton(
+                        IconButton(
                             onClick = { state.triggerPreviousVideo() },
-                            size = 42.dp,
-                            enabled = state.hasPrevious
+                            enabled = state.hasPrevious,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                                .background(if (style.isCinema || style.isPureAmoled) Color.Transparent else Color.White.copy(alpha = if (state.hasPrevious) 0.10f else 0.03f))
                         ) {
-                            Icon(
-                                AppIcons.SkipPrevious,
-                                contentDescription = "Video tr\u01B0\u1EDBc",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            Icon(AppIcons.SkipPrevious, null, tint = if (state.hasPrevious) Color.White else Color.White.copy(alpha = 0.28f), modifier = Modifier.size(22.dp))
                         }
 
-                        // Nút Play/Pause trung tâm (Kính cầu phản quang Specular Sphere 54dp)
                         Box(
                             modifier = Modifier
-                                .size(54.dp)
-                                .shadow(10.dp, CircleShape, spotColor = palette.primaryGlow)
-                                .clip(CircleShape)
-                                .clickable { state.togglePlayPause() }
-                                .drawWithCache {
-                                    val r = size.width / 2f
-                                    val sphereBrush = Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.38f),
-                                            palette.primaryGlow.copy(alpha = 0.55f),
-                                            palette.secondaryGlow.copy(alpha = 0.45f)
-                                        )
-                                    )
-                                    val rimBrush = Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.95f),
-                                            Color.White.copy(alpha = 0.25f)
-                                        )
-                                    )
-                                    onDrawBehind {
-                                        drawCircle(brush = sphereBrush, radius = r)
-                                        drawCircle(
-                                            brush = rimBrush,
-                                            radius = r - 0.8.dp.toPx(),
-                                            style = Stroke(width = 1.2.dp.toPx())
-                                        )
+                                .size(52.dp)
+                                .clip(if (style.isProMonitor) RoundedCornerShape(8.dp) else CircleShape)
+                                .background(
+                                    when {
+                                        style.isCinema -> Color.White.copy(alpha = 0.20f)
+                                        style.isPureAmoled -> palette.primaryGlow
+                                        else -> palette.primaryGlow.copy(alpha = 0.45f)
                                     }
-                                },
+                                )
+                                .border(1.dp, Color.White.copy(alpha = if (style.isPureAmoled) 0f else 0.65f), if (style.isProMonitor) RoundedCornerShape(8.dp) else CircleShape)
+                                .clickable { state.togglePlayPause() },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 if (state.isPlaying) AppIcons.Pause else Icons.Default.PlayArrow,
                                 contentDescription = "Ph\u00E1t / T\u1EA1m d\u1EEBng",
-                                tint = Color.White,
-                                modifier = Modifier.size(27.dp)
+                                tint = if (style.isPureAmoled && palette.primaryGlow == Color.White) Color.Black else Color.White,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 
-                        LiquidGlassIconButton(
+                        IconButton(
                             onClick = { state.triggerNextVideo() },
-                            size = 42.dp,
-                            enabled = state.hasNext
+                            enabled = state.hasNext,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                                .background(if (style.isCinema || style.isPureAmoled) Color.Transparent else Color.White.copy(alpha = if (state.hasNext) 0.10f else 0.03f))
                         ) {
-                            Icon(
-                                AppIcons.SkipNext,
-                                contentDescription = "Video ti\u1EBFp",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            Icon(AppIcons.SkipNext, null, tint = if (state.hasNext) Color.White else Color.White.copy(alpha = 0.28f), modifier = Modifier.size(22.dp))
                         }
                     }
 
-                    // Cụm Phải: Studio & Menu Tiện ích
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        LiquidGlassPill(
-                            active = state.isStudioEffectActive,
-                            onClick = { state.activeModal = ActiveModal.STUDIO },
-                            modifier = Modifier.height(40.dp)
+                        Box(
+                            modifier = Modifier
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(if (style.isProMonitor) 6.dp else 50.dp))
+                                .background(if (state.isStudioEffectActive) palette.primaryGlow.copy(alpha = 0.30f) else if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.10f))
+                                .clickable { state.activeModal = ActiveModal.STUDIO }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                AppIcons.AutoAwesome,
-                                contentDescription = "Studio",
-                                tint = Color.White,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(Modifier.width(5.dp))
-                            Text(
-                                text = "Studio",
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.labelMedium
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(AppIcons.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("Studio", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            }
                         }
 
-                        LiquidGlassIconButton(
+                        IconButton(
                             onClick = { state.activeModal = ActiveModal.TOOLS },
-                            size = 40.dp,
-                            active = state.backgroundAudioEnabled || state.sleepTimerMinutes > 0
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(if (style.isProMonitor) RoundedCornerShape(6.dp) else CircleShape)
+                                .background(if (state.backgroundAudioEnabled || state.sleepTimerMinutes > 0) palette.primaryGlow.copy(alpha = 0.30f) else if (style.isCinema) Color.Transparent else Color.White.copy(alpha = 0.10f))
                         ) {
-                            Icon(
-                                AppIcons.Tune,
-                                contentDescription = "T\u00F9y ch\u1ECDn & Ph\u1EE5 \u0111\u1EC1",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Icon(AppIcons.Tune, contentDescription = "Ti\u1EC7n \u00EDch", tint = Color.White, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
+            }
+        }
+
+        // Boc container khac nhau hoan toan theo 4 Bo Theme!
+        if (style.isCinema) {
+            // CINEMA SHOWCASE: Khong khung hop, chi dung gradient den mo min o day man hinh
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f), Color.Black.copy(alpha = 0.90f))
+                        )
+                    ),
+                content = controlsContent
+            )
+        } else {
+            // LIQUID GLASS / PRO MONITOR / PURE AMOLED: Khoi noi tu thich ung trong LiquidGlassBar
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                LiquidGlassBar(
+                    variant = LiquidGlassVariant.REGULAR,
+                    cornerRadius = 28.dp,
+                    shadowElevation = 20.dp,
+                    highlighted = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    content = controlsContent
+                )
             }
         }
     }

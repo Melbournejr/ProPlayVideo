@@ -3,6 +3,7 @@ package com.videoplayer.app.ui.main
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,13 +14,17 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +67,8 @@ fun MultiSelectActionBar(
     onVaultActionSelected: () -> Unit,
     onDeleteSelected: () -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
 
     LiquidGlassBar(
         variant = LiquidGlassVariant.REGULAR,
@@ -87,12 +93,12 @@ fun MultiSelectActionBar(
                     LiquidGlassPill(onClick = onToggleSelectAll) {
                         Text(
                             if (selectedCount == totalCount) "B\u1ECF ch\u1ECDn" else "Ch\u1ECDn h\u1EBFt",
-                            color = Color.White,
+                            color = style.textPrimary,
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
                     LiquidGlassPill(onClick = onCancel) {
-                        Text("H\u1EE7y", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("H\u1EE7y", color = style.textPrimary, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -102,29 +108,29 @@ fun MultiSelectActionBar(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 LiquidGlassPill(onClick = onShareSelected) {
-                    Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Share, null, tint = style.textPrimary, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Chia s\u1EBB", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("Chia s\u1EBB", color = style.textPrimary, style = MaterialTheme.typography.labelSmall)
                 }
                 if (!isVaultMode) {
                     LiquidGlassPill(onClick = onCopySelected) {
-                        Icon(AppIcons.ContentCopy, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Icon(AppIcons.ContentCopy, null, tint = style.textPrimary, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Copy", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("Copy", color = style.textPrimary, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(onClick = onMoveSelected) {
-                        Icon(AppIcons.DriveFileMove, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Icon(AppIcons.DriveFileMove, null, tint = style.textPrimary, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Chuy\u1EC3n", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("Chuy\u1EC3n", color = style.textPrimary, style = MaterialTheme.typography.labelSmall)
                     }
                 }
                 LiquidGlassPill(onClick = onVaultActionSelected) {
-                    Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = style.textPrimary, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (isVaultMode) "Kh\u00F4i ph\u1EE5c" else "\u1EA8n", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(if (isVaultMode) "Kh\u00F4i ph\u1EE5c" else "\u1EA8n", color = style.textPrimary, style = MaterialTheme.typography.labelSmall)
                 }
                 LiquidGlassPill(active = true, onClick = onDeleteSelected) {
-                    Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Delete, null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("X\u00F3a", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
@@ -144,15 +150,90 @@ fun BoxScope.FolderListSection(
     onPlayRecent: (VideoItem, List<VideoItem>) -> Unit,
     onRemoveContinueWatching: (VideoItem) -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
 
     LazyColumn(
         state = folderListState,
-        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = if (style.isPureAmoled) 8.dp else 14.dp),
         contentPadding = PaddingValues(top = 6.dp, bottom = 104.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(if (style.isPureAmoled) 0.dp else if (style.isProMonitor) 6.dp else 10.dp)
     ) {
-        if (continueWatchingItems.isNotEmpty()) {
+        // CINEMA SHOWCASE: Hien thi Hero Banner 16:9 lon cho video dang xem do gan nhat!
+        if (style.isCinema && continueWatchingItems.isNotEmpty()) {
+            val hero = continueWatchingItems.first()
+            item(key = "cinema_hero_${hero.video.id}") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(210.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable {
+                            val folderList = visibleVideos.filter { it.folder == hero.video.folder }
+                            onPlayRecent(hero.video, folderList.ifEmpty { listOf(hero.video) })
+                        }
+                ) {
+                    VideoThumbnailView(
+                        video = hero.video,
+                        progressFraction = hero.progressFraction,
+                        showDurationBadge = false,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.90f))
+                                )
+                            )
+                    )
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "TI\u1EBEP T\u1EE4C XEM \u2022 ${(hero.progressFraction * 100).toInt()}%",
+                            color = palette.primaryGlow,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = hero.video.displayName,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50.dp))
+                                    .background(palette.primaryGlow)
+                                    .padding(horizontal = 16.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Ph\u00E1t ti\u1EBFp", color = Color.Black, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            }
+                            Text(
+                                text = hero.video.folder,
+                                color = Color.White.copy(alpha = 0.72f),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            }
+        } else if (continueWatchingItems.isNotEmpty()) {
             item(key = "continue_watching_carousel") {
                 ContinueWatchingCarousel(
                     items = continueWatchingItems,
@@ -168,65 +249,81 @@ fun BoxScope.FolderListSection(
 
         item(key = "folders_header") {
             Text(
-                text = "Th\u01B0 m\u1EE5c (${folders.size})",
-                style = MaterialTheme.typography.titleSmall,
-                color = Color.White,
+                text = if (style.isProMonitor) "DIRECTORIES [${folders.size}]" else "Th\u01B0 m\u1EE5c (${folders.size})",
+                style = if (style.isPureAmoled) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
+                fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
+                color = if (style.isProMonitor) palette.primaryGlow else style.textPrimary,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp, start = 4.dp)
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 6.dp)
             )
         }
 
         items(folders, key = { it.name }) { folder ->
-            LiquidGlassCard(
-                cornerRadius = 20.dp,
-                onClick = { onSelectFolder(folder.name) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Column {
+                LiquidGlassCard(
+                    cornerRadius = style.cardCorner,
+                    onClick = { onSelectFolder(folder.name) },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(contentAlignment = Alignment.BottomEnd) {
-                        VideoThumbnailView(
-                            video = folder.previewVideo,
-                            modifier = Modifier.size(width = 96.dp, height = 58.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .padding(4.dp)
-                                .background(palette.primaryGlow.copy(alpha = 0.9f), CircleShape)
-                                .padding(3.5.dp)
-                        ) {
-                            Icon(
-                                imageVector = AppIcons.Folder,
-                                contentDescription = null,
-                                tint = Color(0xFF001F29),
-                                modifier = Modifier.size(12.dp)
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = if (style.isPureAmoled) 8.dp else 10.dp,
+                            vertical = if (style.isProMonitor) 8.dp else 10.dp
+                        ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(contentAlignment = Alignment.BottomEnd) {
+                            VideoThumbnailView(
+                                video = folder.previewVideo,
+                                showDurationBadge = false,
+                                modifier = Modifier.size(
+                                    width = if (style.isProMonitor) 82.dp else 96.dp,
+                                    height = if (style.isProMonitor) 48.dp else 58.dp
+                                )
+                            )
+                            if (!style.isPureAmoled) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(4.dp)
+                                        .background(palette.primaryGlow.copy(alpha = 0.92f), if (style.isProMonitor) RoundedCornerShape(3.dp) else CircleShape)
+                                        .padding(3.5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = AppIcons.Folder,
+                                        contentDescription = null,
+                                        tint = Color(0xFF001F29),
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(
+                                text = folder.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = style.textPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "${folder.count} video \u2022 ${formatFolderSize(folder.totalSize)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
+                                color = style.textSecondary
                             )
                         }
-                    }
-                    Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(
-                            text = folder.name,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${folder.count} video \u2022 ${formatFolderSize(folder.totalSize)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.62f)
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = style.textSecondary.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier.size(22.dp)
-                    )
+                }
+                if (style.isPureAmoled) {
+                    Divider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
                 }
             }
         }
@@ -255,7 +352,8 @@ fun VideoCollectionSection(
     onItemLongClick: (VideoItem) -> Unit,
     onOpenMenuFor: (VideoItem) -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
 
     if (isGridView) {
         val gridState = rememberLazyGridState()
@@ -270,14 +368,12 @@ fun VideoCollectionSection(
             ) {
                 items(displayedVideos, key = { it.id }) { video ->
                     val savedPos = savedPositions[video.id] ?: 0L
-                    val progress = if (video.duration > 0 && savedPos > 1000L) {
-                        (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
-                    } else 0f
+                    val progress = if (video.duration > 0 && savedPos > 1000L) (savedPos.toFloat() / video.duration).coerceIn(0f, 1f) else 0f
                     val isSelected = video.id in selectedVideoIds
                     val isJustWatched = (video.id == lastViewedVideoId)
 
                     LiquidGlassCard(
-                        cornerRadius = 18.dp,
+                        cornerRadius = style.cardCorner,
                         highlighted = isSelected || isJustWatched,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -295,11 +391,7 @@ fun VideoCollectionSection(
                                     modifier = Modifier.fillMaxWidth().height(102.dp)
                                 )
                                 if (isMultiSelectMode) {
-                                    Checkbox(
-                                        checked = isSelected,
-                                        onCheckedChange = { onItemClick(video) },
-                                        modifier = Modifier.align(Alignment.TopStart)
-                                    )
+                                    Checkbox(checked = isSelected, onCheckedChange = { onItemClick(video) }, modifier = Modifier.align(Alignment.TopStart))
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
@@ -308,7 +400,7 @@ fun VideoCollectionSection(
                                     Text(
                                         text = video.displayName,
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = if (isSelected || isJustWatched) palette.primaryGlow else Color.White,
+                                        color = if (isSelected || isJustWatched) palette.primaryGlow else style.textPrimary,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -316,15 +408,13 @@ fun VideoCollectionSection(
                                     Text(
                                         text = video.sizeFormatted,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.60f)
+                                        fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
+                                        color = style.textSecondary
                                     )
                                 }
                                 if (!isMultiSelectMode) {
-                                    IconButton(
-                                        onClick = { onOpenMenuFor(video) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White.copy(alpha = 0.75f), modifier = Modifier.size(18.dp))
+                                    IconButton(onClick = { onOpenMenuFor(video) }, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Default.MoreVert, null, tint = style.textSecondary, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -332,90 +422,233 @@ fun VideoCollectionSection(
                     }
                 }
             }
-            FastGridScrollbar(
-                gridState = gridState,
-                totalItemsCount = displayedVideos.size,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            FastGridScrollbar(gridState = gridState, totalItemsCount = displayedVideos.size, modifier = Modifier.align(Alignment.CenterEnd))
         }
     } else {
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = videoListState,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = if (style.isPureAmoled) 8.dp else 14.dp),
                 contentPadding = PaddingValues(top = 6.dp, bottom = 104.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
+                verticalArrangement = Arrangement.spacedBy(if (style.isPureAmoled) 0.dp else if (style.isProMonitor) 6.dp else if (style.isCinema) 14.dp else 9.dp)
             ) {
                 items(displayedVideos, key = { it.id }) { video ->
                     val savedPos = savedPositions[video.id] ?: 0L
-                    val progress = if (video.duration > 0 && savedPos > 1000L) {
-                        (savedPos.toFloat() / video.duration).coerceIn(0f, 1f)
-                    } else 0f
+                    val progress = if (video.duration > 0 && savedPos > 1000L) (savedPos.toFloat() / video.duration).coerceIn(0f, 1f) else 0f
                     val isSelected = video.id in selectedVideoIds
                     val isJustWatched = (video.id == lastViewedVideoId)
 
-                    LiquidGlassCard(
-                        cornerRadius = 18.dp,
-                        highlighted = isSelected || isJustWatched,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { onItemClick(video) },
-                                onLongClick = { onItemLongClick(video) }
-                            )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(9.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isMultiSelectMode) {
-                                Checkbox(
-                                    checked = isSelected,
-                                    onCheckedChange = { onItemClick(video) }
+                    when {
+                        // 1. CINEMA SHOWCASE: The anh lon tran vien (Immersive Poster Card) chu de tren lop bong mo day anh!
+                        style.isCinema -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(186.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .border(
+                                        width = if (isSelected || isJustWatched) 1.5.dp else 0.7.dp,
+                                        color = if (isSelected || isJustWatched) palette.primaryGlow else Color.White.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    .combinedClickable(
+                                        onClick = { onItemClick(video) },
+                                        onLongClick = { onItemLongClick(video) }
+                                    )
+                            ) {
+                                VideoThumbnailView(
+                                    video = video,
+                                    progressFraction = progress,
+                                    isWatchLater = video.id in watchLaterIds,
+                                    showDurationBadge = false,
+                                    modifier = Modifier.fillMaxSize()
                                 )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.88f))
+                                            )
+                                        )
+                                )
+                                if (isMultiSelectMode) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = { onItemClick(video) },
+                                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp)
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .fillMaxWidth()
+                                        .padding(start = 14.dp, end = 6.dp, bottom = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = video.displayName,
+                                            color = if (isSelected || isJustWatched) palette.primaryGlow else Color.White,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${video.durationFormatted} \u2022 ${video.sizeFormatted}",
+                                            color = Color.White.copy(alpha = 0.72f),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    if (!isMultiSelectMode) {
+                                        IconButton(onClick = { onOpenMenuFor(video) }) {
+                                            Icon(Icons.Default.MoreVert, null, tint = Color.White)
+                                        }
+                                    }
+                                }
                             }
-                            VideoThumbnailView(
-                                video = video,
-                                progressFraction = progress,
-                                isWatchLater = video.id in watchLaterIds,
-                                modifier = Modifier.size(width = 108.dp, height = 62.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                Text(
-                                    text = video.displayName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = if (isSelected || isJustWatched) palette.primaryGlow else Color.White,
-                                    fontWeight = if (isSelected || isJustWatched) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (isVaultMode) {
-                                        "L\u01B0u tr\u1EEF n\u1ED9i b\u1ED9 \u2022 ${video.sizeFormatted}"
-                                    } else if (savedPos > 2000L) {
-                                        "${video.sizeFormatted} \u2022 \u0110\u00E3 xem ${(progress * 100).toInt()}%"
-                                    } else {
-                                        video.sizeFormatted
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (savedPos > 2000L || isVaultMode) palette.primaryGlow else Color.White.copy(alpha = 0.60f)
-                                )
+                        }
+
+                        // 2. PRO MONITOR HI-RES: Danh sach ky thuat mat do cao, goc vuong 5dp, Font Monospace & Badge dinh dang (MP4/MKV)
+                        style.isProMonitor -> {
+                            val extBadge = video.displayName.substringAfterLast('.', "VID").uppercase().take(4)
+                            LiquidGlassCard(
+                                cornerRadius = 6.dp,
+                                highlighted = isSelected || isJustWatched,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { onItemClick(video) },
+                                        onLongClick = { onItemLongClick(video) }
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isMultiSelectMode) {
+                                        Checkbox(checked = isSelected, onCheckedChange = { onItemClick(video) })
+                                    }
+                                    VideoThumbnailView(
+                                        video = video,
+                                        progressFraction = progress,
+                                        isWatchLater = video.id in watchLaterIds,
+                                        modifier = Modifier.size(width = 92.dp, height = 52.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                                        Text(
+                                            text = video.displayName,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = if (isSelected || isJustWatched) palette.primaryGlow else style.textPrimary,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(3.dp))
+                                                    .background(palette.primaryGlow.copy(alpha = 0.22f))
+                                                    .border(0.7.dp, palette.primaryGlow, RoundedCornerShape(3.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                                            ) {
+                                                Text(
+                                                    text = extBadge,
+                                                    color = palette.primaryGlow,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                            Text(
+                                                text = "${video.sizeFormatted} | ${video.durationFormatted}",
+                                                fontFamily = FontFamily.Monospace,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = style.textSecondary
+                                            )
+                                        }
+                                    }
+                                    if (!isMultiSelectMode) {
+                                        IconButton(onClick = { onOpenMenuFor(video) }, modifier = Modifier.size(32.dp)) {
+                                            Icon(Icons.Default.MoreVert, null, tint = style.textSecondary, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
                             }
-                            if (!isMultiSelectMode) {
-                                IconButton(onClick = { onOpenMenuFor(video) }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "T\u00F9y ch\u1ECDn", tint = Color.White.copy(alpha = 0.72f))
+                        }
+
+                        // 3 & 4. APPLE LIQUID GLASS (Dark/Light) & PURE AMOLED (Borderless Hairline)
+                        else -> {
+                            Column {
+                                LiquidGlassCard(
+                                    cornerRadius = style.cardCorner,
+                                    highlighted = isSelected || isJustWatched,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .combinedClickable(
+                                            onClick = { onItemClick(video) },
+                                            onLongClick = { onItemLongClick(video) }
+                                        )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = if (style.isPureAmoled) 8.dp else 9.dp,
+                                            vertical = if (style.isPureAmoled) 11.dp else 9.dp
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isMultiSelectMode) {
+                                            Checkbox(checked = isSelected, onCheckedChange = { onItemClick(video) })
+                                        }
+                                        VideoThumbnailView(
+                                            video = video,
+                                            progressFraction = progress,
+                                            isWatchLater = video.id in watchLaterIds,
+                                            modifier = Modifier.size(width = 108.dp, height = 62.dp)
+                                        )
+                                        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                                            Text(
+                                                text = video.displayName,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = if (isSelected || isJustWatched) palette.primaryGlow else style.textPrimary,
+                                                fontWeight = if (isSelected || isJustWatched) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = if (isVaultMode) {
+                                                    "L\u01B0u tr\u1EEF n\u1ED9i b\u1ED9 \u2022 ${video.sizeFormatted}"
+                                                } else if (savedPos > 2000L) {
+                                                    "${video.sizeFormatted} \u2022 \u0110\u00E3 xem ${(progress * 100).toInt()}%"
+                                                } else {
+                                                    video.sizeFormatted
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (savedPos > 2000L || isVaultMode) palette.primaryGlow else style.textSecondary
+                                            )
+                                        }
+                                        if (!isMultiSelectMode) {
+                                            IconButton(onClick = { onOpenMenuFor(video) }) {
+                                                Icon(Icons.Default.MoreVert, contentDescription = "T\u00F9y ch\u1ECDn", tint = style.textSecondary)
+                                            }
+                                        }
+                                    }
+                                }
+                                if (style.isPureAmoled) {
+                                    Divider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
                                 }
                             }
                         }
                     }
                 }
             }
-            FastListScrollbar(
-                listState = videoListState,
-                totalItemsCount = displayedVideos.size,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            FastListScrollbar(listState = videoListState, totalItemsCount = displayedVideos.size, modifier = Modifier.align(Alignment.CenterEnd))
         }
     }
 }

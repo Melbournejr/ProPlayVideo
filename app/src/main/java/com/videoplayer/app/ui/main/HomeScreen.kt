@@ -28,6 +28,7 @@ import com.videoplayer.app.ui.components.LiquidGlassCard
 import com.videoplayer.app.ui.components.LiquidGlassIconButton
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
+import com.videoplayer.app.ui.components.LocalGlassStyle
 import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.PinSecurityManager
 import com.videoplayer.app.util.VaultHideOutcome
@@ -55,7 +56,8 @@ fun HomeScreen(
     onVideoClick: (VideoItem, List<VideoItem>) -> Unit
 ) {
     val context = LocalContext.current
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
     val scope = rememberCoroutineScope()
     var refreshTrigger by remember { mutableIntStateOf(0) }
     val repository = remember(context) { VideoRepository(context) }
@@ -362,7 +364,7 @@ fun HomeScreen(
                     Text(
                         text = "${displayedVideos.size} video",
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.65f)
+                        color = style.textSecondary
                     )
 
                     Row(
@@ -383,7 +385,7 @@ fun HomeScreen(
                                 size = 34.dp,
                                 active = sortOption != SortOption.DATE_DESC
                             ) {
-                                Icon(AppIcons.Sort, contentDescription = "S\u1EAFp x\u1EBFp", tint = Color.White, modifier = Modifier.size(16.dp))
+                                Icon(AppIcons.Sort, contentDescription = "S\u1EAFp x\u1EBFp", tint = style.textPrimary, modifier = Modifier.size(16.dp))
                             }
                             DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                                 SortOption.values().forEach { opt ->
@@ -440,7 +442,7 @@ fun HomeScreen(
                             Text(
                                 if (isVaultMode) "Th\u01B0 m\u1EE5c l\u01B0u tr\u1EEF n\u1ED9i b\u1ED9 \u0111ang tr\u1ED1ng."
                                 else "Ch\u01B0a t\u00ECm th\u1EA5y video ho\u1EB7c ch\u01B0a c\u1EA5p quy\u1EC1n b\u1ED9 nh\u1EDB.",
-                                color = Color.White.copy(alpha = 0.85f),
+                                color = style.textPrimary,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -480,7 +482,7 @@ fun HomeScreen(
                                 } else {
                                     "Ch\u01B0a c\u00F3 l\u1ECBch s\u1EED xem g\u1EA7n \u0111\u00E2y."
                                 },
-                                color = Color.White.copy(alpha = 0.80f),
+                                color = style.textPrimary,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }

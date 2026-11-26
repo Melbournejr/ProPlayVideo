@@ -18,15 +18,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.VideoBookmark
+import com.videoplayer.app.ui.components.LocalGlassStyle
 
-/**
- * Thanh tua Liquid Glass 120Hz:
- * - Khi chạm kéo, rãnh kính tự động phồng nhẹ (Morph) từ 5.dp lên 8.dp kèm hào quang khúc xạ.
- * - Viền sáng mỏng (Specular Rim) bao quanh rãnh trượt.
- */
 @Composable
 fun DirectCanvasSeekBar(
     currentPosMs: Long,
@@ -37,27 +34,19 @@ fun DirectCanvasSeekBar(
     onDragStart: () -> Unit,
     onDragEnd: (Long) -> Unit
 ) {
+    val style = LocalGlassStyle.current
     val safeDuration = durationMs.coerceAtLeast(1L)
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
 
     val animatedTrackScale by animateFloatAsState(
-        targetValue = if (isDragging) 1.55f else 1f,
+        targetValue = if (isDragging) 1.5f else 1f,
         animationSpec = spring(),
         label = "seek_morph"
     )
 
-    val fraction = if (isDragging) {
-        dragFraction
-    } else {
-        (currentPosMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
-    }
-
-    val displayedMs = if (isDragging) {
-        (dragFraction * safeDuration).toLong()
-    } else {
-        currentPosMs
-    }
+    val fraction = if (isDragging) dragFraction else (currentPosMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+    val displayedMs = if (isDragging) (dragFraction * safeDuration).toLong() else currentPosMs
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
@@ -90,63 +79,93 @@ fun DirectCanvasSeekBar(
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxWidth().height(26.dp)) {
-                val trackHeight = 5.dp.toPx() * animatedTrackScale
                 val centerY = size.height / 2f
                 val thumbX = (fraction * size.width).coerceIn(0f, size.width)
-                val cr = CornerRadius(trackHeight / 2f, trackHeight / 2f)
 
-                // Rãnh nền kính mờ + viền sáng mỏng
-                drawRoundRect(
-                    color = Color.White.copy(alpha = 0.16f),
-                    topLeft = Offset(0f, centerY - trackHeight / 2f),
-                    size = Size(size.width, trackHeight),
-                    cornerRadius = cr
-                )
-                drawRoundRect(
-                    color = Color.White.copy(alpha = 0.25f),
-                    topLeft = Offset(0f, centerY - trackHeight / 2f),
-                    size = Size(size.width, trackHeight),
-                    cornerRadius = cr,
-                    style = Stroke(width = 0.6.dp.toPx())
-                )
+                when {
+                    // PRO MONITOR: Thanh tua chia vach thuoc (Ruler Ticks) + kim chi doc
+                    style.isProMonitor -> {
+                        val tickCount = 32
+                        val stepX = size.width / tickCount
+                        for (i in 0..tickCount) {
+                            val tx = i * stepX
+                            val isMajor = (i % 4 == 0)
+                            val tickH = if (isMajor) 10.dp.toPx() else 5.dp.toPx()
+                            drawLine(
+                                color = if (tx <= thumbX) activeColor.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.25f),
+                                start = Offset(tx, centerY - tickH / 2f),
+                                end = Offset(tx, centerY + tickH / 2f),
+                                strokeWidth = if (isMajor) 1.5.dp.toPx() else 1.dp.toPx()
+                            )
+                        }
+                        drawLine(
+                            color = activeColor,
+                            start = Offset(0f, centerY),
+                            end = Offset(thumbX, centerY),
+                            strokeWidth = 2.5.dp.toPx()
+                        )
+                        // Kim chi doc vuong vuc
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(thumbX - 2.dp.toPx(), centerY - 9.dp.toPx()),
+                            size = Size(4.dp.toPx(), 18.dp.toPx())
+                        )
+                    }
 
-                // Dải tiến trình phát sáng (Liquid Glow Fill)
-                if (thumbX > 1f) {
-                    drawRoundRect(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(activeColor.copy(alpha = 0.85f), Color.White)
-                        ),
-                        topLeft = Offset(0f, centerY - trackHeight / 2f),
-                        size = Size(thumbX, trackHeight),
-                        cornerRadius = cr
-                    )
+                    // CINEMA SHOWCASE: Thanh tua sieu manh kieu Netflix
+                    style.isCinema -> {
+                        val h = 3.dp.toPx() * animatedTrackScale
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = 0.25f),
+                            topLeft = Offset(0f, centerY - h / 2f),
+                            size = Size(size.width, h),
+                            cornerRadius = CornerRadius(h / 2f, h / 2f)
+                        )
+                        if (thumbX > 1f) {
+                            drawRoundRect(
+                                color = activeColor,
+                                topLeft = Offset(0f, centerY - h / 2f),
+                                size = Size(thumbX, h),
+                                cornerRadius = CornerRadius(h / 2f, h / 2f)
+                            )
+                        }
+                        drawCircle(color = activeColor, radius = if (isDragging) 8.dp.toPx() else 5.5.dp.toPx(), center = Offset(thumbX, centerY))
+                    }
+
+                    // PURE AMOLED: Duong vector manh sac net + nut vuong toi gian
+                    style.isPureAmoled -> {
+                        drawLine(color = Color.White.copy(alpha = 0.25f), start = Offset(0f, centerY), end = Offset(size.width, centerY), strokeWidth = 1.5.dp.toPx())
+                        drawLine(color = activeColor, start = Offset(0f, centerY), end = Offset(thumbX, centerY), strokeWidth = 2.5.dp.toPx())
+                        val boxSz = if (isDragging) 12.dp.toPx() else 8.dp.toPx()
+                        drawRect(color = activeColor, topLeft = Offset(thumbX - boxSz / 2f, centerY - boxSz / 2f), size = Size(boxSz, boxSz))
+                    }
+
+                    // APPLE LIQUID GLASS: Ranh kinh 120Hz phat sang
+                    else -> {
+                        val trackHeight = 5.dp.toPx() * animatedTrackScale
+                        val cr = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                        drawRoundRect(color = Color.White.copy(alpha = 0.16f), topLeft = Offset(0f, centerY - trackHeight / 2f), size = Size(size.width, trackHeight), cornerRadius = cr)
+                        drawRoundRect(color = Color.White.copy(alpha = 0.25f), topLeft = Offset(0f, centerY - trackHeight / 2f), size = Size(size.width, trackHeight), cornerRadius = cr, style = Stroke(width = 0.6.dp.toPx()))
+                        if (thumbX > 1f) {
+                            drawRoundRect(
+                                brush = Brush.horizontalGradient(listOf(activeColor.copy(alpha = 0.85f), Color.White)),
+                                topLeft = Offset(0f, centerY - trackHeight / 2f),
+                                size = Size(thumbX, trackHeight),
+                                cornerRadius = cr
+                            )
+                        }
+                        if (isDragging) {
+                            drawCircle(color = activeColor.copy(alpha = 0.32f), radius = 14.dp.toPx(), center = Offset(thumbX, centerY))
+                        }
+                        drawCircle(color = Color.White, radius = if (isDragging) 8.5.dp.toPx() else 6.5.dp.toPx(), center = Offset(thumbX, centerY))
+                    }
                 }
 
-                // Các vạch đánh dấu Bookmark
+                // Vach danh dau Bookmark mau vang
                 bookmarks.forEach { bm ->
                     val bmFrac = (bm.timestampMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
-                    val bmX = bmFrac * size.width
-                    drawCircle(
-                        color = Color(0xFFFFEA00),
-                        radius = 3.8.dp.toPx(),
-                        center = Offset(bmX, centerY)
-                    )
+                    drawCircle(color = Color(0xFFFFEA00), radius = 3.5.dp.toPx(), center = Offset(bmFrac * size.width, centerY))
                 }
-
-                // Quầng khúc xạ quanh nút kéo khi chạm
-                if (isDragging) {
-                    drawCircle(
-                        color = activeColor.copy(alpha = 0.32f),
-                        radius = 14.dp.toPx(),
-                        center = Offset(thumbX, centerY)
-                    )
-                }
-                // Hạt thủy tinh (Glass Bead Thumb)
-                drawCircle(
-                    color = Color.White,
-                    radius = if (isDragging) 8.5.dp.toPx() else 6.5.dp.toPx(),
-                    center = Offset(thumbX, centerY)
-                )
             }
         }
 
@@ -156,20 +175,23 @@ fun DirectCanvasSeekBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isDragging) "\u23F1\uFE0F ${formatTimeMs(displayedMs)}" else formatTimeMs(displayedMs),
+                text = formatTimeMs(displayedMs),
+                fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                 color = if (isDragging) activeColor else Color.White.copy(alpha = 0.92f),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
             )
             if (sleepRemainingSec > 0) {
                 Text(
-                    text = "\uD83D\uDCA4 ${formatTimeMs(sleepRemainingSec * 1000L)}",
+                    text = "H\u1EB9n gi\u1EDD: ${formatTimeMs(sleepRemainingSec * 1000L)}",
+                    fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                     color = Color(0xFFFFD54F),
                     style = MaterialTheme.typography.labelSmall
                 )
             }
             Text(
                 text = formatTimeMs(durationMs),
+                fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                 color = Color.White.copy(alpha = 0.72f),
                 style = MaterialTheme.typography.labelSmall
             )

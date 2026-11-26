@@ -36,9 +36,6 @@ data class ContinueWatchingItem(
         get() = (positionMs.toFloat() / durationMs.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
 }
 
-/**
- * Thanh Segmented Pill gọn 1 hàng cho Thư mục / Xem sau / Lịch sử
- */
 @Composable
 fun HomeFeedFilterTabs(
     activeFilter: HomeFeedFilter,
@@ -47,7 +44,9 @@ fun HomeFeedFilterTabs(
     onSelectFilter: (HomeFeedFilter) -> Unit,
     onClearHistory: () -> Unit
 ) {
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
+    val pillCorner = if (style.isProMonitor) 6.dp else 50.dp
 
     Row(
         modifier = Modifier
@@ -59,24 +58,16 @@ fun HomeFeedFilterTabs(
         Row(
             modifier = Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(50.dp))
-                .background(Color.White.copy(alpha = 0.06f))
-                .border(0.7.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50.dp))
+                .clip(RoundedCornerShape(pillCorner))
+                .background(if (style.isLightMode) Color(0xFF0F172A).copy(alpha = 0.06f) else Color.White.copy(alpha = 0.06f))
+                .border(0.7.dp, style.cardBorderColor, RoundedCornerShape(pillCorner))
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             val tabs = listOf(
                 Triple(HomeFeedFilter.FOLDERS, "Th\u01B0 m\u1EE5c", AppIcons.Folder),
-                Triple(
-                    HomeFeedFilter.WATCH_LATER,
-                    if (watchLaterCount > 0) "Xem sau ($watchLaterCount)" else "Xem sau",
-                    AppIcons.WatchLater
-                ),
-                Triple(
-                    HomeFeedFilter.HISTORY,
-                    if (historyCount > 0) "L\u1ECBch s\u1EED ($historyCount)" else "L\u1ECBch s\u1EED",
-                    AppIcons.History
-                )
+                Triple(HomeFeedFilter.WATCH_LATER, if (watchLaterCount > 0) "Xem sau ($watchLaterCount)" else "Xem sau", AppIcons.WatchLater),
+                Triple(HomeFeedFilter.HISTORY, if (historyCount > 0) "L\u1ECBch s\u1EED ($historyCount)" else "L\u1ECBch s\u1EED", AppIcons.History)
             )
 
             tabs.forEach { (tab, label, icon) ->
@@ -84,23 +75,29 @@ fun HomeFeedFilterTabs(
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(50.dp))
-                        .background(if (selected) palette.primaryGlow.copy(alpha = 0.24f) else Color.Transparent)
+                        .clip(RoundedCornerShape(pillCorner))
+                        .background(
+                            when {
+                                selected && style.isLightMode -> palette.primaryGlow
+                                selected -> palette.primaryGlow.copy(alpha = 0.24f)
+                                else -> Color.Transparent
+                            }
+                        )
                         .clickable { onSelectFilter(tab) }
                         .padding(vertical = 7.dp, horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = if (selected) palette.primaryGlow else Color.White.copy(alpha = 0.65f),
-                        modifier = Modifier.size(14.dp)
-                    )
+                    val contentColor = when {
+                        selected && style.isLightMode -> Color.White
+                        selected -> palette.primaryGlow
+                        else -> style.textSecondary
+                    }
+                    Icon(imageVector = icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
                         text = label,
-                        color = if (selected) Color.White else Color.White.copy(alpha = 0.68f),
+                        color = if (selected) (if (style.isLightMode) Color.White else style.textPrimary) else style.textSecondary,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
@@ -126,7 +123,8 @@ fun ContinueWatchingCarousel(
     onRemoveFromContinue: (VideoItem) -> Unit
 ) {
     if (items.isEmpty()) return
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -135,9 +133,9 @@ fun ContinueWatchingCarousel(
         Text(
             text = "Ti\u1EBFp t\u1EE5c xem",
             style = MaterialTheme.typography.titleSmall,
-            color = Color.White,
+            color = style.textPrimary,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 4.dp)
+            modifier = Modifier.padding(horizontal = 6.dp)
         )
 
         LazyRow(
@@ -146,7 +144,7 @@ fun ContinueWatchingCarousel(
         ) {
             items(items, key = { "cw_${it.video.id}" }) { cw ->
                 LiquidGlassCard(
-                    cornerRadius = 18.dp,
+                    cornerRadius = style.cardCorner,
                     highlighted = false,
                     onClick = { onPlayItem(cw.video) },
                     modifier = Modifier.width(184.dp)
@@ -169,19 +167,14 @@ fun ContinueWatchingCarousel(
                                     .clickable { onRemoveFromContinue(cw.video) },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "\u1EA8n",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
+                                Icon(Icons.Default.Close, contentDescription = "\u1EA8n", tint = Color.White, modifier = Modifier.size(12.dp))
                             }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
                             text = cw.video.displayName,
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.White,
+                            color = style.textPrimary,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

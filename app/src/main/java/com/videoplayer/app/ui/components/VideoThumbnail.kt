@@ -18,11 +18,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.model.VideoItem
@@ -31,20 +31,17 @@ import kotlinx.coroutines.withContext
 
 private val thumbnailCache = object : LruCache<String, Bitmap>(60) {}
 
-/**
- * Thumbnail thuoc Content Layer (Apple HIG Rule #1):
- * - Bo goc Concentric (12.dp ben trong Card 20.dp voi padding 8.dp)
- * - Khong phu vien kinh sang len anh thumbnail de hinh anh video luon trung thuc nhat.
- */
 @Composable
 fun VideoThumbnailView(
     video: VideoItem,
     modifier: Modifier = Modifier,
     progressFraction: Float = 0f,
-    isWatchLater: Boolean = false
+    isWatchLater: Boolean = false,
+    showDurationBadge: Boolean = true
 ) {
     val context = LocalContext.current
-    val palette = LocalGlassPalette.current
+    val style = LocalGlassStyle.current
+    val palette = style.palette
     var bitmap by remember(video.id) { mutableStateOf(thumbnailCache.get(video.id)) }
 
     LaunchedEffect(video.id) {
@@ -56,7 +53,7 @@ fun VideoThumbnailView(
                             MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                             video.id.toLong()
                         )
-                        context.contentResolver.loadThumbnail(uri, Size(320, 180), null)
+                        context.contentResolver.loadThumbnail(uri, Size(480, 270), null)
                     } else {
                         val retriever = MediaMetadataRetriever()
                         val rawPath = video.path.removePrefix("vault://")
@@ -76,8 +73,8 @@ fun VideoThumbnailView(
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF0E131D)),
+            .clip(RoundedCornerShape(style.thumbCorner))
+            .background(if (style.isLightMode) Color(0xFFCBD5E1) else Color(0xFF0E131D)),
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -101,7 +98,7 @@ fun VideoThumbnailView(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(5.dp)
-                    .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(if (style.isProMonitor) 3.dp else 6.dp))
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
                 Icon(
@@ -113,17 +110,18 @@ fun VideoThumbnailView(
             }
         }
 
-        if (video.duration > 0L) {
+        if (showDurationBadge && video.duration > 0L) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(bottom = if (progressFraction > 0.01f) 7.dp else 5.dp, end = 5.dp)
-                    .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(5.dp))
+                    .background(Color.Black.copy(alpha = 0.74f), RoundedCornerShape(if (style.isProMonitor) 3.dp else 5.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Text(
                     text = video.durationFormatted,
                     style = MaterialTheme.typography.labelSmall,
+                    fontFamily = if (style.useMonoMetrics) FontFamily.Monospace else FontFamily.SansSerif,
                     color = Color.White,
                     fontWeight = FontWeight.Medium
                 )

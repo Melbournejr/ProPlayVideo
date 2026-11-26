@@ -144,17 +144,19 @@ class MainActivity : FragmentActivity() {
             val tintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
             val frostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.22f)
             val reduceTransparency by context.observeReduceTransparency().collectAsState(initial = false)
+            val isGlassLightMode by context.observeGlassLightMode().collectAsState(initial = false)
             val vaultSecState by context.observeVaultSecurityState().collectAsState(initial = VaultSecurityState())
             val httpWarnAck by context.observeHttpWarnAcknowledged().collectAsState(initial = false)
 
-            val styleConfig = remember(engineId, subVariantId, themeId, tintId, frostAlpha, reduceTransparency) {
+            val styleConfig = remember(engineId, subVariantId, themeId, tintId, frostAlpha, reduceTransparency, isGlassLightMode) {
                 buildEffectiveStyleConfig(
                     engineId = engineId,
                     subVariantId = subVariantId,
                     glassThemeId = themeId,
                     glassTintId = tintId,
                     frostAlpha = frostAlpha,
-                    reduceTransparency = reduceTransparency
+                    reduceTransparency = reduceTransparency,
+                    isLightMode = isGlassLightMode
                 )
             }
 
@@ -383,7 +385,7 @@ class MainActivity : FragmentActivity() {
                                                     },
                                                     size = 36.dp
                                                 ) {
-                                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay l\u1EA1i", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay l\u1EA1i", tint = styleConfig.textPrimary, modifier = Modifier.size(18.dp))
                                                 }
                                                 Spacer(Modifier.width(10.dp))
                                             } else {
@@ -402,7 +404,7 @@ class MainActivity : FragmentActivity() {
                                             Text(
                                                 text = headerTitle,
                                                 style = MaterialTheme.typography.titleLarge,
-                                                color = Color.White,
+                                                color = styleConfig.textPrimary,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -423,7 +425,7 @@ class MainActivity : FragmentActivity() {
                                                     onClick = { isSearchExpanded = true },
                                                     size = 36.dp
                                                 ) {
-                                                    Icon(Icons.Default.Search, contentDescription = "T\u00ECm ki\u1EBFm", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                    Icon(Icons.Default.Search, contentDescription = "T\u00ECm ki\u1EBFm", tint = styleConfig.textPrimary, modifier = Modifier.size(18.dp))
                                                 }
                                             }
 
@@ -529,14 +531,14 @@ class MainActivity : FragmentActivity() {
                                                 Icon(
                                                     imageVector = icon,
                                                     contentDescription = label,
-                                                    tint = if (selected) styleConfig.palette.primaryGlow else Color.White.copy(alpha = 0.70f),
+                                                    tint = if (selected) styleConfig.palette.primaryGlow else styleConfig.textSecondary,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                                 if (selected) {
                                                     Spacer(Modifier.width(6.dp))
                                                     Text(
                                                         text = label,
-                                                        color = Color.White,
+                                                        color = styleConfig.textPrimary,
                                                         style = MaterialTheme.typography.labelMedium,
                                                         fontWeight = FontWeight.Bold
                                                     )

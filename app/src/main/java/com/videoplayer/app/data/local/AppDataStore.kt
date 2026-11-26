@@ -23,6 +23,7 @@ private val glassThemeKey = stringPreferencesKey("glass_theme_id")
 private val glassTintKey = stringPreferencesKey("glass_surface_tint_id")
 private val glassFrostAlphaKey = floatPreferencesKey("glass_frost_alpha")
 private val reduceTransparencyKey = booleanPreferencesKey("glass_reduce_transparency")
+private val glassLightModeKey = booleanPreferencesKey("glass_light_mode")
 private val themeEngineModeKey = stringPreferencesKey("theme_engine_mode")
 private val themeSubVariantKey = stringPreferencesKey("theme_sub_variant")
 
@@ -311,4 +312,11 @@ suspend fun Context.saveReduceTransparency(enabled: Boolean) {
 
 fun Context.observeReduceTransparency(): Flow<Boolean> {
     return this.datastore.data.map { prefs -> prefs[reduceTransparencyKey] ?: false }
+}
+suspend fun Context.saveGlassLightMode(enabled: Boolean) {
+    this.datastore.edit { prefs -> prefs[glassLightModeKey] = enabled }
+}
+
+fun Context.observeGlassLightMode(): Flow<Boolean> {
+    return this.datastore.data.map { prefs -> prefs[glassLightModeKey] ?: false }
 }
