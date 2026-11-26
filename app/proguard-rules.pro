@@ -52,3 +52,5 @@
 -keep class com.videoplayer.app.data.local.WatchExperienceStoreData { *; }
 -keep class fi.iki.elonen.** { *; }
 -dontwarn fi.iki.elonen.**
+
+-keep class com.videoplayer.app.data.local.M3uChannelItem { *; }

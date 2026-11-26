@@ -331,5 +331,25 @@ object AppIcons {
         }
     }
 
+    val PushPin: ImageVector = createIcon("PushPin") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(16f, 9f); lineTo(16f, 4f); lineTo(17f, 4f); curveTo(17.55f, 4f, 18f, 3.55f, 18f, 3f)
+            curveTo(18f, 2.45f, 17.55f, 2f, 17f, 2f); lineTo(7f, 2f); curveTo(6.45f, 2f, 6f, 2.45f, 6f, 3f)
+            curveTo(6f, 3.55f, 6.45f, 4f, 7f, 4f); lineTo(8f, 4f); lineTo(8f, 9f)
+            curveTo(8f, 10.66f, 6.66f, 12f, 5f, 12f); lineTo(5f, 14f); lineTo(10.97f, 14f)
+            lineTo(10.97f, 21f); lineTo(11.97f, 22f); lineTo(12.97f, 21f); lineTo(12.97f, 14f)
+            lineTo(19f, 14f); lineTo(19f, 12f); curveTo(17.34f, 12f, 16f, 10.66f, 16f, 9f); close()
+        }
+    }
+
+    val PlaylistPlay: ImageVector = createIcon("PlaylistPlay") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(3f, 10f); lineTo(14f, 10f); lineTo(14f, 12f); lineTo(3f, 12f); close()
+            moveTo(3f, 6f); lineTo(14f, 6f); lineTo(14f, 8f); lineTo(3f, 8f); close()
+            moveTo(3f, 14f); lineTo(10f, 14f); lineTo(10f, 16f); lineTo(3f, 16f); close()
+            moveTo(16f, 13f); lineTo(16f, 21f); lineTo(22f, 17f); close()
+        }
+    }
+
     val Public: ImageVector = Stream
 }

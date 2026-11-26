@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.videoplayer.app.data.local.StreamHistoryManager
 import com.videoplayer.app.ui.components.*
 import kotlin.math.roundToInt
 
@@ -161,7 +162,7 @@ fun BoxScope.PlayerOverlaysAndControls(
                     }
 
                     Text(
-                        text = state.currentVideo?.displayName ?: (state.streamUrl ?: "\u0110ang ph\u00E1t"),
+                        text = state.currentVideo?.displayName ?: state.streamTitle?.takeIf { it.isNotBlank() } ?: state.streamUrl?.let { StreamHistoryManager.findTitleForUrl(it) } ?: (state.streamUrl ?: "\u0110ang ph\u00E1t"),
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,

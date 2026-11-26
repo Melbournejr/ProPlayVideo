@@ -192,6 +192,7 @@ class MainActivity : FragmentActivity() {
                 var lastViewedVideoId by remember { mutableStateOf<String?>(null) }
                 var currentPlaylist by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
                 var streamUrl by remember { mutableStateOf<String?>(null) }
+                var streamTitle by remember { mutableStateOf<String?>(null) }
 
                 // Biến ghi nhận thời điểm app xuống nền phục vụ Auto-Lock Vault
                 var backgroundEnteredAtMs by remember { mutableLongStateOf(0L) }
@@ -330,6 +331,7 @@ class MainActivity : FragmentActivity() {
                         initialVideo = selectedVideo,
                         playlist = currentPlaylist,
                         streamUrl = streamUrl,
+                        streamTitle = streamTitle,
                         onVideoChanged = { updatedVid ->
                             lastViewedVideoId = updatedVid.id
                         },
@@ -634,11 +636,12 @@ class MainActivity : FragmentActivity() {
                                                 }
                                             }
                                             NetworkStreamScreen(
-                                                onPlayClick = { url ->
+                                                onPlayClick = { url, title ->
                                                     showStreamModal = false
                                                     selectedVideo = null
                                                     currentPlaylist = emptyList()
                                                     streamUrl = url
+                                                    streamTitle = title
                                                     isInPlayer = true
                                                 }
                                             )

@@ -50,6 +50,7 @@ fun PlayerScreen(
     initialVideo: VideoItem?,
     playlist: List<VideoItem>,
     streamUrl: String?,
+    streamTitle: String? = null,
     onVideoChanged: (VideoItem) -> Unit,
     onBack: () -> Unit
 ) {
@@ -60,7 +61,7 @@ fun PlayerScreen(
     val playerManager = remember { PlayerManager(context) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    val state = remember(initialVideo, playlist, streamUrl) {
+    val state = remember(initialVideo, playlist, streamUrl, streamTitle) {
         PlayerStateHolder(
             context = context,
             scope = scope,
@@ -68,6 +69,7 @@ fun PlayerScreen(
             initialVideo = initialVideo,
             rawPlaylist = playlist,
             streamUrl = streamUrl,
+            streamTitle = streamTitle,
             onVideoChangedCallback = onVideoChanged
         )
     }

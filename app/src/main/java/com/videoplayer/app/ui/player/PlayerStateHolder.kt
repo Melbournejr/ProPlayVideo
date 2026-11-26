@@ -99,6 +99,7 @@ class PlayerStateHolder(
     initialVideo: VideoItem?,
     rawPlaylist: List<VideoItem>,
     val streamUrl: String?,
+    val streamTitle: String? = null,
     private val onVideoChangedCallback: (VideoItem) -> Unit
 ) {
     val effectivePlaylist: List<VideoItem> = if (rawPlaylist.isNotEmpty()) rawPlaylist else listOfNotNull(initialVideo)
