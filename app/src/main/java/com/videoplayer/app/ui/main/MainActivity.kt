@@ -10,33 +10,31 @@ import android.provider.OpenableColumns
 import android.util.Rational
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -45,31 +43,26 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.videoplayer.app.BuildConfig
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
+import com.videoplayer.app.network.LanVideoHttpServer
 import com.videoplayer.app.ui.components.*
 import com.videoplayer.app.ui.player.PlayerScreen
+import com.videoplayer.app.ui.settings.SettingsScreen
 import com.videoplayer.app.ui.stream.NetworkStreamScreen
 import com.videoplayer.app.ui.theme.VideoPlayerTheme
-import com.videoplayer.app.update.GitHubRelease
-import com.videoplayer.app.network.LanVideoHttpServer
 import com.videoplayer.app.update.UpdateManager
-import com.videoplayer.app.update.VersionMetadata
-import com.videoplayer.app.util.FileOperationHelper
 import com.videoplayer.app.util.PermissionHelper
 import com.videoplayer.app.util.PinSecurityManager
 import com.videoplayer.app.util.VaultManager
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+
+private enum class MainTab { LIBRARY, STREAM, SETTINGS }
 
 class MainActivity : FragmentActivity() {
 
@@ -93,10 +86,7 @@ class MainActivity : FragmentActivity() {
             val uri = intent.data!!
             if (uri.scheme == "content") {
                 try {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (_: Exception) {}
             }
             externalViewIntentUri = uri
@@ -169,18 +159,18 @@ class MainActivity : FragmentActivity() {
             }
 
             VideoPlayerTheme(styleConfig = styleConfig) {
+                var activeTab by remember { mutableStateOf(MainTab.LIBRARY) }
                 var isInPlayer by remember { mutableStateOf(false) }
                 var selectedFolder by remember { mutableStateOf<String?>(null) }
+                var isHomeMultiSelect by remember { mutableStateOf(false) }
 
-                // Trạng thái Kho Ẩn hỗ trợ cả Kho thật (REAL_VAULT) và Kho giả (DECOY_VAULT)
+                var isSearchExpanded by remember { mutableStateOf(false) }
+                var searchQuery by remember { mutableStateOf("") }
+
                 var vaultAccessMode by remember { mutableStateOf(VaultAccessMode.LOCKED) }
                 val isVaultUnlocked = (vaultAccessMode != VaultAccessMode.LOCKED)
 
-                var showTopOverflowMenu by remember { mutableStateOf(false) }
-                var showGeneralSettingsModal by remember { mutableStateOf(false) }
                 var showVaultOnlySettingsModal by remember { mutableStateOf(false) }
-                var showStreamModal by remember { mutableStateOf(false) }
-
                 var showVaultPinDialog by remember { mutableStateOf(false) }
                 var showVaultChangePinDialog by remember { mutableStateOf(false) }
                 var showConfigureDecoyPinDialog by remember { mutableStateOf(false) }
@@ -194,7 +184,6 @@ class MainActivity : FragmentActivity() {
                 var streamUrl by remember { mutableStateOf<String?>(null) }
                 var streamTitle by remember { mutableStateOf<String?>(null) }
 
-                // Biến ghi nhận thời điểm app xuống nền phục vụ Auto-Lock Vault
                 var backgroundEnteredAtMs by remember { mutableLongStateOf(0L) }
 
                 val folderListState = remember { LazyListState() }
@@ -208,14 +197,23 @@ class MainActivity : FragmentActivity() {
                     videoListStates.getOrPut(key) { LazyListState() }
                 }
 
-                // ================= AUTO-LOCK VAULT KHI APP VÀO BACKGROUND =================
+                BackHandler(enabled = !isInPlayer && (isSearchExpanded || activeTab != MainTab.LIBRARY)) {
+                    when {
+                        isSearchExpanded -> {
+                            isSearchExpanded = false
+                            searchQuery = ""
+                        }
+                        activeTab != MainTab.LIBRARY -> activeTab = MainTab.LIBRARY
+                    }
+                }
+
+                // Auto-lock Kho Ẩn khi xuống nền
                 DisposableEffect(lifecycleOwner, vaultAccessMode, vaultSecState.autoLockTimeoutSec) {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
                             Lifecycle.Event.ON_STOP -> {
                                 if (vaultAccessMode != VaultAccessMode.LOCKED) {
                                     if (vaultSecState.autoLockTimeoutSec == 0) {
-                                        // Khóa ngay lập tức khi xuống nền
                                         vaultAccessMode = VaultAccessMode.LOCKED
                                         showVaultOnlySettingsModal = false
                                         if (isInPlayer && selectedVideo?.id?.startsWith("vault_") == true) {
@@ -238,7 +236,7 @@ class MainActivity : FragmentActivity() {
                                             isInPlayer = false
                                             selectedVideo = null
                                         }
-                                        Toast.makeText(context, "🔒 Đã tự động khóa Lưu trữ nội bộ", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "\u0110\u00E3 t\u1EF1 \u0111\u1ED9ng kh\u00F3a L\u01B0u tr\u1EEF n\u1ED9i b\u1ED9", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -263,11 +261,10 @@ class MainActivity : FragmentActivity() {
                                 activity = this@MainActivity,
                                 onSuccess = {
                                     scope.launch { context.recordVaultPinAttempt(true) }
+                                    activeTab = MainTab.LIBRARY
                                     vaultAccessMode = VaultAccessMode.REAL_VAULT
                                 },
-                                onUsePinFallback = {
-                                    showVaultPinDialog = true
-                                }
+                                onUsePinFallback = { showVaultPinDialog = true }
                             )
                         }
                     } else {
@@ -276,9 +273,7 @@ class MainActivity : FragmentActivity() {
                 }
 
                 LaunchedEffect(vaultSecState.needsMigration) {
-                    if (vaultSecState.needsMigration) {
-                        showMigrationDialog = true
-                    }
+                    if (vaultSecState.needsMigration) showMigrationDialog = true
                 }
 
                 val isPlayingVaultVideo = (isInPlayer && (selectedVideo?.id?.startsWith("vault_") == true || selectedVideo?.path?.startsWith("vault://") == true))
@@ -301,6 +296,7 @@ class MainActivity : FragmentActivity() {
                         selectedVideo = null
                         currentPlaylist = emptyList()
                         streamUrl = uri.toString()
+                        streamTitle = null
                         isInPlayer = true
                     } else {
                         val name = resolveUriDisplayName(uri)
@@ -318,6 +314,7 @@ class MainActivity : FragmentActivity() {
                         selectedVideo = extItem
                         currentPlaylist = listOf(extItem)
                         streamUrl = null
+                        streamTitle = null
                         isInPlayer = true
                     }
                 }
@@ -332,246 +329,226 @@ class MainActivity : FragmentActivity() {
                         playlist = currentPlaylist,
                         streamUrl = streamUrl,
                         streamTitle = streamTitle,
-                        onVideoChanged = { updatedVid ->
-                            lastViewedVideoId = updatedVid.id
-                        },
+                        onVideoChanged = { updatedVid -> lastViewedVideoId = updatedVid.id },
                         onBack = {
                             isInPlayer = false
                             selectedVideo = null
                             streamUrl = null
+                            streamTitle = null
                         }
                     )
                 } else {
                     LiquidAmbientBackground {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            LiquidGlassBar(
-                                variant = LiquidGlassVariant.REGULAR,
-                                cornerRadius = 26.dp,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                // ================= TOP BAR 1 DÒNG GỌN SẠCH =================
+                                LiquidGlassBar(
+                                    variant = LiquidGlassVariant.REGULAR,
+                                    cornerRadius = 26.dp,
+                                    shadowElevation = 14.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
                                 ) {
-                                    if (selectedFolder != null || isVaultUnlocked) {
-                                        IconButton(onClick = {
-                                            if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
-                                            else selectedFolder = null
-                                        }) {
-                                            Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
-                                        }
-                                    } else {
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-
-                                    // Khi ở DECOY_VAULT hay REAL_VAULT đều hiển thị cùng một tiêu đề để không thể phân biệt!
-                                    val titleText = when {
-                                        isVaultUnlocked -> "📁 Lưu trữ nội bộ"
-                                        selectedFolder != null -> selectedFolder!!
-                                        else -> "Video Player Pro"
-                                    }
-
-                                    Column(
+                                    Row(
                                         modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .combinedClickable(
-                                                onClick = {
-                                                    if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isSearchExpanded && activeTab == MainTab.LIBRARY) {
+                                            OutlinedTextField(
+                                                value = searchQuery,
+                                                onValueChange = { searchQuery = it },
+                                                placeholder = { Text("T\u00ECm video ho\u1EB7c th\u01B0 m\u1EE5c...") },
+                                                leadingIcon = { Icon(Icons.Default.Search, null, tint = styleConfig.palette.primaryGlow) },
+                                                trailingIcon = {
+                                                    IconButton(onClick = {
+                                                        searchQuery = ""
+                                                        isSearchExpanded = false
+                                                    }) {
+                                                        Icon(Icons.Default.Close, contentDescription = "\u0110\u00F3ng", tint = Color.White)
+                                                    }
                                                 },
-                                                onLongClick = {
-                                                    triggerStealthVaultAccess()
-                                                }
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(18.dp),
+                                                modifier = Modifier.fillMaxWidth()
                                             )
-                                            .padding(vertical = 2.dp, horizontal = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = titleText,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = if (isVaultUnlocked) "Chế độ bảo mật riêng tư" else "${ThemeEngineId.values().find { it.id == engineId }?.title ?: "Liquid Glass"} • v${BuildConfig.VERSION_NAME}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = styleConfig.palette.primaryGlow
-                                        )
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .combinedClickable(
-                                                onClick = {
-                                                    selectedFolder = null
-                                                    vaultAccessMode = VaultAccessMode.LOCKED
-                                                },
-                                                onLongClick = {
-                                                    triggerStealthVaultAccess()
+                                        } else {
+                                            if (activeTab == MainTab.LIBRARY && (selectedFolder != null || isVaultUnlocked)) {
+                                                LiquidGlassIconButton(
+                                                    onClick = {
+                                                        if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
+                                                        else selectedFolder = null
+                                                    },
+                                                    size = 36.dp
+                                                ) {
+                                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay l\u1EA1i", tint = Color.White, modifier = Modifier.size(18.dp))
                                                 }
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Home,
-                                            contentDescription = "Trang chủ",
-                                            tint = if (selectedFolder == null && !isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
-                                        )
-                                    }
+                                                Spacer(Modifier.width(10.dp))
+                                            } else {
+                                                Spacer(Modifier.width(8.dp))
+                                            }
 
-                                    Box {
-                                        IconButton(
-                                            onClick = {
-                                                if (isVaultUnlocked) {
-                                                    showVaultOnlySettingsModal = true
-                                                } else {
-                                                    showTopOverflowMenu = true
+                                            val headerTitle = when {
+                                                isVaultUnlocked -> "L\u01B0u tr\u1EEF n\u1ED9i b\u1ED9"
+                                                activeTab == MainTab.STREAM -> "Stream & IPTV"
+                                                activeTab == MainTab.SETTINGS -> "C\u00E0i \u0111\u1EB7t"
+                                                selectedFolder != null -> selectedFolder!!
+                                                else -> "Video Player Pro"
+                                            }
+
+                                            // Nhấn giữ tiêu đề để mở Kho Ẩn kín đáo
+                                            Text(
+                                                text = headerTitle,
+                                                style = MaterialTheme.typography.titleLarge,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .combinedClickable(
+                                                        onClick = {
+                                                            if (isVaultUnlocked) vaultAccessMode = VaultAccessMode.LOCKED
+                                                        },
+                                                        onLongClick = { triggerStealthVaultAccess() }
+                                                    )
+                                                    .padding(vertical = 4.dp, horizontal = 4.dp)
+                                            )
+
+                                            if (activeTab == MainTab.LIBRARY) {
+                                                LiquidGlassIconButton(
+                                                    onClick = { isSearchExpanded = true },
+                                                    size = 36.dp
+                                                ) {
+                                                    Icon(Icons.Default.Search, contentDescription = "T\u00ECm ki\u1EBFm", tint = Color.White, modifier = Modifier.size(18.dp))
                                                 }
                                             }
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isVaultUnlocked) AppIcons.Shield else Icons.Default.MoreVert,
-                                                contentDescription = "Tùy chọn",
-                                                tint = if (isVaultUnlocked) styleConfig.palette.primaryGlow else Color.White
-                                            )
-                                        }
 
-                                        DropdownMenu(
-                                            expanded = showTopOverflowMenu && !isVaultUnlocked,
-                                            onDismissRequest = { showTopOverflowMenu = false },
-                                            modifier = Modifier.background(styleConfig.palette.deepBgMid)
-                                        ) {
-                                            DropdownMenuItem(
-                                                leadingIcon = { Icon(AppIcons.Palette, null, tint = styleConfig.palette.primaryGlow) },
-                                                text = { Text("Tùy chỉnh Giao diện & OTA", color = Color.White, fontWeight = FontWeight.SemiBold) },
-                                                onClick = {
-                                                    showTopOverflowMenu = false
-                                                    showGeneralSettingsModal = true
+                                            if (isVaultUnlocked) {
+                                                Spacer(Modifier.width(8.dp))
+                                                LiquidGlassIconButton(
+                                                    onClick = { showVaultOnlySettingsModal = true },
+                                                    size = 36.dp,
+                                                    active = true
+                                                ) {
+                                                    Icon(AppIcons.Shield, contentDescription = "C\u00E0i \u0111\u1EB7t Kho", tint = styleConfig.palette.primaryGlow, modifier = Modifier.size(18.dp))
                                                 }
-                                            )
-                                            DropdownMenuItem(
-                                                leadingIcon = { Icon(AppIcons.Stream, null, tint = styleConfig.palette.primaryGlow) },
-                                                text = { Text("Phát luồng Stream Mạng", color = Color.White) },
-                                                onClick = {
-                                                    showTopOverflowMenu = false
-                                                    showStreamModal = true
-                                                }
-                                            )
-                                            if (!FileOperationHelper.hasAllFilesAccess()) {
-                                                DropdownMenuItem(
-                                                    leadingIcon = { Icon(AppIcons.DriveFileMove, null, tint = Color(0xFFFFD54F)) },
-                                                    text = { Text("Cấp quyền Di chuyển tệp nhanh", color = Color(0xFFFFD54F)) },
-                                                    onClick = {
-                                                        showTopOverflowMenu = false
-                                                        FileOperationHelper.requestAllFilesAccess(context)
-                                                    }
-                                                )
                                             }
                                         }
                                     }
                                 }
+
+                                // ================= NỘI DUNG 3 TAB CHÍNH =================
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    when (activeTab) {
+                                        MainTab.LIBRARY -> HomeScreen(
+                                            selectedFolder = selectedFolder,
+                                            searchQuery = searchQuery,
+                                            vaultAccessMode = vaultAccessMode,
+                                            folderListState = folderListState,
+                                            videoListState = activeVideoListState,
+                                            lastViewedVideoId = lastViewedVideoId,
+                                            onSelectFolder = { folder -> selectedFolder = folder },
+                                            onExitVault = { vaultAccessMode = VaultAccessMode.LOCKED },
+                                            onOpenVaultPinSettings = {
+                                                if (isVaultUnlocked) showVaultOnlySettingsModal = true
+                                            },
+                                            onMultiSelectChanged = { isHomeMultiSelect = it },
+                                            onVideoClick = { video, playlist ->
+                                                selectedVideo = video
+                                                lastViewedVideoId = video.id
+                                                currentPlaylist = playlist
+                                                streamUrl = null
+                                                streamTitle = null
+                                                isInPlayer = true
+                                            }
+                                        )
+                                        MainTab.STREAM -> NetworkStreamScreen(
+                                            modifier = Modifier.padding(bottom = 96.dp),
+                                            onPlayClick = { url, title ->
+                                                selectedVideo = null
+                                                currentPlaylist = emptyList()
+                                                streamUrl = url
+                                                streamTitle = title
+                                                isInPlayer = true
+                                            }
+                                        )
+                                        MainTab.SETTINGS -> SettingsScreen()
+                                    }
+                                }
                             }
 
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                HomeScreen(
-                                    selectedFolder = selectedFolder,
-                                    vaultAccessMode = vaultAccessMode,
-                                    folderListState = folderListState,
-                                    videoListState = activeVideoListState,
-                                    lastViewedVideoId = lastViewedVideoId,
-                                    onSelectFolder = { folder -> selectedFolder = folder },
-                                    onExitVault = { vaultAccessMode = VaultAccessMode.LOCKED },
-                                    onOpenVaultPinSettings = {
-                                        if (isVaultUnlocked) showVaultOnlySettingsModal = true
-                                    },
-                                    onVideoClick = { video, playlist ->
-                                        selectedVideo = video
-                                        lastViewedVideoId = video.id
-                                        currentPlaylist = playlist
-                                        streamUrl = null
-                                        isInPlayer = true
-                                    },
-                                    onStreamClick = { showStreamModal = true }
-                                )
-                            }
-                        }
-
-                        // Modal 1: Cài đặt Giao diện & OTA bên ngoài
-                        if (showGeneralSettingsModal && !isVaultUnlocked) {
-                            Dialog(
-                                onDismissRequest = { showGeneralSettingsModal = false },
-                                properties = DialogProperties(usePlatformDefaultWidth = false)
+                            // ================= FLOATING LIQUID GLASS BOTTOM DOCK (3 TAB) =================
+                            val showBottomDock = !isVaultUnlocked && !isHomeMultiSelect && !isSearchExpanded
+                            AnimatedVisibility(
+                                visible = showBottomDock,
+                                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(horizontal = 24.dp, vertical = 14.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.86f))
-                                        .padding(horizontal = 16.dp, vertical = 24.dp),
-                                    contentAlignment = Alignment.Center
+                                LiquidGlassBar(
+                                    variant = LiquidGlassVariant.REGULAR,
+                                    cornerRadius = 32.dp,
+                                    shadowElevation = 20.dp,
+                                    highlighted = true
                                 ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgMid,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(max = 640.dp)
-                                            .border(
-                                                width = 1.4.dp,
-                                                brush = Brush.linearGradient(
-                                                    listOf(
-                                                        Color.White.copy(alpha = 0.55f),
-                                                        styleConfig.palette.primaryGlow.copy(alpha = 0.65f)
-                                                    )
-                                                ),
-                                                shape = RoundedCornerShape(28.dp)
-                                            )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                        val dockItems = listOf(
+                                            Triple(MainTab.LIBRARY, "Th\u01B0 vi\u1EC7n", AppIcons.VideoLibrary),
+                                            Triple(MainTab.STREAM, "Stream", AppIcons.Stream),
+                                            Triple(MainTab.SETTINGS, "C\u00E0i \u0111\u1EB7t", Icons.Default.Settings)
+                                        )
+                                        dockItems.forEach { (tab, label, icon) ->
+                                            val selected = (activeTab == tab)
                                             Row(
                                                 modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                                                    .clip(RoundedCornerShape(24.dp))
+                                                    .background(
+                                                        if (selected) styleConfig.palette.primaryGlow.copy(alpha = 0.24f)
+                                                        else Color.Transparent
+                                                    )
+                                                    .clickable {
+                                                        activeTab = tab
+                                                        if (tab != MainTab.LIBRARY) {
+                                                            isSearchExpanded = false
+                                                            searchQuery = ""
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 16.dp, vertical = 9.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.Default.Settings,
-                                                    contentDescription = null,
-                                                    tint = styleConfig.palette.primaryGlow,
-                                                    modifier = Modifier.size(22.dp)
+                                                    imageVector = icon,
+                                                    contentDescription = label,
+                                                    tint = if (selected) styleConfig.palette.primaryGlow else Color.White.copy(alpha = 0.70f),
+                                                    modifier = Modifier.size(18.dp)
                                                 )
-                                                Spacer(Modifier.width(10.dp))
-                                                Text(
-                                                    text = "Cài đặt Giao diện & OTA",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                IconButton(
-                                                    onClick = { showGeneralSettingsModal = false },
-                                                    modifier = Modifier
-                                                        .size(34.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color.White.copy(alpha = 0.12f))
-                                                ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Đóng", tint = Color.White, modifier = Modifier.size(18.dp))
+                                                if (selected) {
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(
+                                                        text = label,
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
                                             }
-                                            Divider(color = Color.White.copy(alpha = 0.12f))
-                                            OtaSettingsScreen(modifier = Modifier.weight(1f, fill = false))
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // Modal 2: Cài đặt riêng của Kho Ẩn (Tự động ẩn tùy chọn Decoy khi đang ở DECOY_VAULT)
+                        // ================= CÁC HỘP THOẠI BẢO MẬT KHO ẨN & HTTP =================
                         if (showVaultOnlySettingsModal && isVaultUnlocked) {
                             VaultOnlySettingsModal(
                                 accessMode = vaultAccessMode,
@@ -588,70 +565,6 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        // Modal 3: Phát luồng Stream Mạng
-                        if (showStreamModal) {
-                            Dialog(
-                                onDismissRequest = { showStreamModal = false },
-                                properties = DialogProperties(usePlatformDefaultWidth = false)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.86f))
-                                        .padding(18.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(28.dp),
-                                        color = styleConfig.palette.deepBgMid,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .border(1.2.dp, styleConfig.palette.primaryGlow, RoundedCornerShape(28.dp))
-                                    ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(styleConfig.palette.deepBgMid)
-                                                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(AppIcons.Stream, null, tint = styleConfig.palette.primaryGlow)
-                                                Spacer(Modifier.width(8.dp))
-                                                Text(
-                                                    "Phát Luồng Stream Mạng",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                IconButton(
-                                                    onClick = { showStreamModal = false },
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color.White.copy(alpha = 0.12f))
-                                                ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Đóng", tint = Color.White, modifier = Modifier.size(18.dp))
-                                                }
-                                            }
-                                            NetworkStreamScreen(
-                                                onPlayClick = { url, title ->
-                                                    showStreamModal = false
-                                                    selectedVideo = null
-                                                    currentPlaylist = emptyList()
-                                                    streamUrl = url
-                                                    streamTitle = title
-                                                    isInPlayer = true
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Hộp thoại Thiết lập PIN Giả (Decoy PIN) - Chỉ mở được khi đang ở REAL_VAULT
                         if (showConfigureDecoyPinDialog && vaultAccessMode == VaultAccessMode.REAL_VAULT) {
                             ConfigureDecoyPinDialog(
                                 vaultSecState = vaultSecState,
@@ -661,7 +574,6 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        // Hộp thoại Đổi Mã PIN Thật
                         if (showVaultChangePinDialog && vaultAccessMode == VaultAccessMode.REAL_VAULT) {
                             var currentPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
@@ -674,7 +586,7 @@ class MainActivity : FragmentActivity() {
                                 containerColor = styleConfig.palette.deepBgMid,
                                 title = {
                                     Text(
-                                        if (hasExistingPin) "🔑 Thay đổi Mã PIN Lưu trữ" else "🔐 Thiết lập Mã PIN Lưu trữ",
+                                        if (hasExistingPin) "Thay \u0111\u1ED5i M\u00E3 PIN L\u01B0u tr\u1EEF" else "Thi\u1EBFt l\u1EADp M\u00E3 PIN L\u01B0u tr\u1EEF",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -685,15 +597,11 @@ class MainActivity : FragmentActivity() {
                                             OutlinedTextField(
                                                 value = currentPinInput,
                                                 onValueChange = { currentPinInput = it },
-                                                label = { Text("Mã PIN hiện tại") },
+                                                label = { Text("M\u00E3 PIN hi\u1EC7n t\u1EA1i") },
                                                 visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                                 trailingIcon = {
                                                     IconButton(onClick = { showChars = !showChars }) {
-                                                        Icon(
-                                                            imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                            contentDescription = "Hiện/Ẩn",
-                                                            tint = Color.White
-                                                        )
+                                                        Icon(if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility, null, tint = Color.White)
                                                     }
                                                 },
                                                 singleLine = true,
@@ -703,15 +611,11 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = newPinInput,
                                             onValueChange = { newPinInput = it },
-                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
+                                            label = { Text("M\u00E3 PIN m\u1EDBi (>= 6 k\u00FD t\u1EF1)") },
                                             visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             trailingIcon = {
                                                 IconButton(onClick = { showChars = !showChars }) {
-                                                    Icon(
-                                                        imageVector = if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                        contentDescription = "Hiện/Ẩn",
-                                                        tint = Color.White
-                                                    )
+                                                    Icon(if (showChars) AppIcons.VisibilityOff else AppIcons.Visibility, null, tint = Color.White)
                                                 }
                                             },
                                             singleLine = true,
@@ -720,7 +624,7 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = confirmNewPinInput,
                                             onValueChange = { confirmNewPinInput = it },
-                                            label = { Text("Nhập lại Mã PIN mới") },
+                                            label = { Text("Nh\u1EADp l\u1EA1i M\u00E3 PIN m\u1EDBi") },
                                             visualTransformation = if (showChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             singleLine = true,
                                             modifier = Modifier.fillMaxWidth()
@@ -736,16 +640,16 @@ class MainActivity : FragmentActivity() {
                                                 storedSaltBase64 = vaultSecState.pinSalt ?: ""
                                             )
                                             if (!validOld) {
-                                                Toast.makeText(context, "Mã PIN hiện tại không đúng!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "M\u00E3 PIN hi\u1EC7n t\u1EA1i kh\u00F4ng \u0111\u00FAng", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                         }
                                         if (!PinSecurityManager.isValidNewPin(newPinInput)) {
-                                            Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "M\u00E3 PIN m\u1EDBi ph\u1EA3i t\u1EEB 6 k\u00FD t\u1EF1 tr\u1EDF l\u00EAn", Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
                                         if (newPinInput.trim() != confirmNewPinInput.trim()) {
-                                            Toast.makeText(context, "Hai ô Mã PIN mới không khớp nhau!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Hai \u00F4 M\u00E3 PIN m\u1EDBi kh\u00F4ng kh\u1EDBp", Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
                                         scope.launch {
@@ -753,19 +657,16 @@ class MainActivity : FragmentActivity() {
                                             val newHash = PinSecurityManager.hashPinPbkdf2(newPinInput, newSalt)
                                             context.saveHashedVaultPin(newHash, newSalt)
                                             showVaultChangePinDialog = false
-                                            Toast.makeText(context, "✅ Đã cập nhật Mã PIN mới thành công!", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "\u0110\u00E3 c\u1EADp nh\u1EADt M\u00E3 PIN m\u1EDBi", Toast.LENGTH_SHORT).show()
                                         }
-                                    }) {
-                                        Text("Lưu Mã PIN")
-                                    }
+                                    }) { Text("L\u01B0u") }
                                 },
                                 dismissButton = {
-                                    TextButton(onClick = { showVaultChangePinDialog = false }) { Text("Hủy") }
+                                    TextButton(onClick = { showVaultChangePinDialog = false }) { Text("H\u1EE7y") }
                                 }
                             )
                         }
 
-                        // Hộp thoại Migration
                         if (showMigrationDialog) {
                             var oldPinInput by remember { mutableStateOf("") }
                             var newPinInput by remember { mutableStateOf("") }
@@ -775,13 +676,11 @@ class MainActivity : FragmentActivity() {
                             AlertDialog(
                                 onDismissRequest = { if (!isMigratingVault) showMigrationDialog = false },
                                 containerColor = styleConfig.palette.deepBgMid,
-                                title = {
-                                    Text("🛡️ Nâng cấp Lưu trữ Bảo mật", color = Color.White, fontWeight = FontWeight.Bold)
-                                },
+                                title = { Text("N\u00E2ng c\u1EA5p L\u01B0u tr\u1EEF B\u1EA3o m\u1EADt", color = Color.White, fontWeight = FontWeight.Bold) },
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            "Xác nhận mã PIN cũ và đặt mã PIN mới (tối thiểu 6 ký tự):",
+                                            "X\u00E1c nh\u1EADn m\u00E3 PIN c\u0169 v\u00E0 \u0111\u1EB7t m\u00E3 PIN m\u1EDBi (>= 6 k\u00FD t\u1EF1):",
                                             color = Color.White,
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -789,7 +688,7 @@ class MainActivity : FragmentActivity() {
                                             OutlinedTextField(
                                                 value = oldPinInput,
                                                 onValueChange = { oldPinInput = it },
-                                                label = { Text("Mã PIN cũ") },
+                                                label = { Text("M\u00E3 PIN c\u0169") },
                                                 visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
                                                 singleLine = true,
                                                 modifier = Modifier.fillMaxWidth()
@@ -798,15 +697,11 @@ class MainActivity : FragmentActivity() {
                                         OutlinedTextField(
                                             value = newPinInput,
                                             onValueChange = { newPinInput = it },
-                                            label = { Text("Mã PIN mới (>= 6 ký tự)") },
+                                            label = { Text("M\u00E3 PIN m\u1EDBi (>= 6 k\u00FD t\u1EF1)") },
                                             visualTransformation = if (showPinChars) VisualTransformation.None else PasswordVisualTransformation(),
                                             trailingIcon = {
                                                 IconButton(onClick = { showPinChars = !showPinChars }) {
-                                                    Icon(
-                                                        imageVector = if (showPinChars) AppIcons.VisibilityOff else AppIcons.Visibility,
-                                                        contentDescription = "Hiện/Ẩn",
-                                                        tint = Color.White
-                                                    )
+                                                    Icon(if (showPinChars) AppIcons.VisibilityOff else AppIcons.Visibility, null, tint = Color.White)
                                                 }
                                             },
                                             singleLine = true,
@@ -819,11 +714,11 @@ class MainActivity : FragmentActivity() {
                                         enabled = !isMigratingVault,
                                         onClick = {
                                             if (hasLegacyPin && oldPinInput.trim() != vaultSecState.legacyPlainPin?.trim()) {
-                                                Toast.makeText(context, "Mã PIN cũ không đúng!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "M\u00E3 PIN c\u0169 kh\u00F4ng \u0111\u00FAng", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                             if (!PinSecurityManager.isValidNewPin(newPinInput)) {
-                                                Toast.makeText(context, "Mã PIN mới phải từ 6 ký tự trở lên!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "M\u00E3 PIN m\u1EDBi ph\u1EA3i t\u1EEB 6 k\u00FD t\u1EF1 tr\u1EDF l\u00EAn", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                             scope.launch {
@@ -835,28 +730,27 @@ class MainActivity : FragmentActivity() {
                                                 val legacyIds = vaultSecState.legacyVaultIds
                                                 if (legacyIds.isNotEmpty()) {
                                                     val allVids = VideoRepository(context).getAllVideos().first()
-                                                    val toMigrate = allVids.filter { it.id in legacyIds }
-                                                    toMigrate.forEach { vid ->
+                                                    allVids.filter { it.id in legacyIds }.forEach { vid ->
                                                         VaultManager.moveVideoToVault(context, vid)
                                                     }
                                                 }
                                                 context.clearLegacyVaultDataAfterMigration()
                                                 isMigratingVault = false
                                                 showMigrationDialog = false
+                                                activeTab = MainTab.LIBRARY
                                                 vaultAccessMode = VaultAccessMode.REAL_VAULT
                                             }
                                         }
-                                    ) { Text("Lưu & Hoàn tất") }
+                                    ) { Text("Ho\u00E0n t\u1EA5t") }
                                 },
                                 dismissButton = {
                                     if (!isMigratingVault) {
-                                        TextButton(onClick = { showMigrationDialog = false }) { Text("Để sau") }
+                                        TextButton(onClick = { showMigrationDialog = false }) { Text("\u0110\u1EC3 sau") }
                                     }
                                 }
                             )
                         }
 
-                        // Hộp thoại nhập Mã PIN mở Kho (Hỗ trợ cả PIN Thật và Decoy PIN)
                         if (showVaultPinDialog) {
                             VaultUnlockPinDialog(
                                 activity = this@MainActivity,
@@ -865,6 +759,7 @@ class MainActivity : FragmentActivity() {
                                 context = context,
                                 onDismiss = { showVaultPinDialog = false },
                                 onUnlocked = { mode ->
+                                    activeTab = MainTab.LIBRARY
                                     vaultAccessMode = mode
                                     showVaultPinDialog = false
                                 }
@@ -875,10 +770,8 @@ class MainActivity : FragmentActivity() {
                             AlertDialog(
                                 onDismissRequest = { pendingHttpIntentUrl = null },
                                 containerColor = styleConfig.palette.deepBgMid,
-                                title = { Text("⚠️ Cảnh báo luồng HTTP không mã hóa", color = Color.White, fontWeight = FontWeight.Bold) },
-                                text = {
-                                    Text("Liên kết bên ngoài ($httpUrl) sử dụng giao thức HTTP không mã hóa. Bạn có muốn tiếp tục phát không?", color = Color.White)
-                                },
+                                title = { Text("C\u1EA3nh b\u00E1o lu\u1ED3ng HTTP kh\u00F4ng m\u00E3 h\u00F3a", color = Color.White, fontWeight = FontWeight.Bold) },
+                                text = { Text("Li\u00EAn k\u1EBFt ($httpUrl) s\u1EED d\u1EE5ng HTTP kh\u00F4ng m\u00E3 h\u00F3a. Ti\u1EBFp t\u1EE5c ph\u00E1t?", color = Color.White) },
                                 confirmButton = {
                                     Button(onClick = {
                                         scope.launch {
@@ -888,506 +781,16 @@ class MainActivity : FragmentActivity() {
                                             selectedVideo = null
                                             currentPlaylist = emptyList()
                                             streamUrl = target
+                                            streamTitle = null
                                             isInPlayer = true
                                         }
-                                    }) { Text("Tiếp tục phát") }
+                                    }) { Text("Ti\u1EBFp t\u1EE5c") }
                                 },
                                 dismissButton = {
-                                    TextButton(onClick = { pendingHttpIntentUrl = null }) { Text("Hủy") }
+                                    TextButton(onClick = { pendingHttpIntentUrl = null }) { Text("H\u1EE7y") }
                                 }
                             )
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-@Composable
-fun OtaSettingsScreen(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val palette = LocalGlassPalette.current
-    val scope = rememberCoroutineScope()
-    val updateManager = remember { UpdateManager(context) }
-
-    val activeEngineId by context.observeThemeEngineMode().collectAsState(initial = ThemeEngineId.LIQUID_GLASS.id)
-    val activeSubVariantId by context.observeThemeSubVariant().collectAsState(initial = "gold_signature")
-    val currentThemeId by context.observeGlassTheme().collectAsState(initial = "apple_ice")
-    val currentTintId by context.observeGlassTint().collectAsState(initial = "crystal_white")
-    val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.16f)
-
-    var expandedEngineId by remember { mutableStateOf<String?>(null) }
-
-    val savedRepo by context.readGithubRepo("Melbournejr/ProPlayVideo").collectAsState(initial = "Melbournejr/ProPlayVideo")
-    var repoInput by remember(savedRepo) { mutableStateOf(savedRepo) }
-    var selectedMirror by remember { mutableIntStateOf(0) }
-    var statusText by remember {
-        mutableStateOf("Phi\u00EAn b\u1EA3n hi\u1EC7n t\u1EA1i: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-    }
-    var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
-    var latestMeta by remember { mutableStateOf<VersionMetadata?>(null) }
-    var isNewerAvailable by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableIntStateOf(-1) }
-    var speedInfo by remember { mutableStateOf("") }
-    var isDownloading by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        // 1. BO GIAO DIEN CHU DE (6 THEME ENGINES VOI MENU THU GON)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(palette.deepBgMid)
-                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.Palette, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "B\u1ED9 Giao Di\u1EC7n Ch\u1EE7 \u0110\u1EC1 (6 Theme Engines)",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        text = "Ch\u1EA1m v\u00E0o b\u1ED9 Theme \u0111\u1EC3 \u00E1p d\u1EE5ng & m\u1EDF/\u0111\u00F3ng menu t\u00F9y ch\u1EC9nh",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFA7B8D8)
-                    )
-                }
-            }
-
-            ThemeEngineId.values().forEach { engine ->
-                val isSelectedEngine = (activeEngineId == engine.id)
-                val isExpanded = (expandedEngineId == engine.id)
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            if (isSelectedEngine) palette.primaryGlow.copy(alpha = 0.14f)
-                            else Color.Black.copy(alpha = 0.30f)
-                        )
-                        .border(
-                            width = if (isSelectedEngine) 1.5.dp else 0.8.dp,
-                            color = if (isSelectedEngine) palette.primaryGlow else Color.White.copy(alpha = 0.16f),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                scope.launch {
-                                    context.saveThemeEngineMode(engine.id)
-                                    if (engine != ThemeEngineId.LIQUID_GLASS) {
-                                        val firstVar = ThemeSubVariants.firstOrNull { it.engineId == engine.id }
-                                        val currentMatches = ThemeSubVariants.any { it.engineId == engine.id && it.id == activeSubVariantId }
-                                        if (!currentMatches && firstVar != null) {
-                                            context.saveThemeSubVariant(firstVar.id)
-                                        }
-                                    }
-                                }
-                                expandedEngineId = if (isExpanded) null else engine.id
-                            }
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = engine.title,
-                                    color = if (isSelectedEngine) palette.primaryGlow else Color.White,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                if (isSelectedEngine) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        text = "\u2022 \u0110ang d\u00F9ng",
-                                        color = Color(0xFF80FFDB),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = engine.subtitle,
-                                color = Color(0xFFA7B8D8),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.White.copy(alpha = 0.10f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = if (isExpanded) "Thu g\u1ECDn \u25B2" else "T\u00F9y ch\u1EC9nh \u25BC",
-                                color = if (isSelectedEngine) palette.primaryGlow else Color.White,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(visible = isExpanded) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color.Black.copy(alpha = 0.35f))
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Divider(color = Color.White.copy(alpha = 0.12f))
-
-                            if (engine == ThemeEngineId.LIQUID_GLASS) {
-                                val reduceTrans by context.observeReduceTransparency().collectAsState(initial = false)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color.White.copy(alpha = 0.06f))
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "Gi\u1EA3m \u0111\u1ED9 trong su\u1ED1t (Reduce Transparency)",
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "T\u0103ng \u0111\u1ED9 \u0111\u1EB7c & t\u01B0\u01A1ng ph\u1EA3n chu\u1EA9n Apple Accessibility",
-                                            color = Color(0xFFA7B8D8),
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-                                    Switch(
-                                        checked = reduceTrans,
-                                        onCheckedChange = { enabled ->
-                                            scope.launch { context.saveReduceTransparency(enabled) }
-                                        }
-                                    )
-                                }
-
-                                val pct = ((currentFrostAlpha / 0.45f) * 100).roundToInt().coerceIn(8, 100)
-                                Text(
-                                    text = "1. \u0110\u1ED9 \u0111\u1EE5c s\u01B0\u01A1ng m\u1EDD c\u1EE7a k\u00EDnh (Frost Opacity): $pct%",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = palette.primaryGlow,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Slider(
-                                    value = currentFrostAlpha,
-                                    onValueChange = { newAlpha -> scope.launch { context.saveGlassFrostAlpha(newAlpha) } },
-                                    valueRange = 0.04f..0.45f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Color.White,
-                                        activeTrackColor = palette.primaryGlow,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                                    )
-                                )
-
-                                Text(
-                                    text = "2. M\u00E0u ph\u1EE7 t\u1EA5m k\u00EDnh (Glass Surface Tint):",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = palette.primaryGlow,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                GlassTintPresets.forEach { tintOpt ->
-                                    val isTintSelected = (tintOpt.id == currentTintId)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (isTintSelected) tintOpt.surfaceColor.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f))
-                                            .border(
-                                                width = if (isTintSelected) 1.3.dp else 0.6.dp,
-                                                color = if (isTintSelected) tintOpt.rimTint else Color.White.copy(alpha = 0.15f),
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .clickable { scope.launch { context.saveGlassTint(tintOpt.id) } }
-                                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(16.dp)
-                                                    .clip(CircleShape)
-                                                    .background(tintOpt.surfaceColor)
-                                                    .border(1.dp, Color.White, CircleShape)
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                            Text(tintOpt.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
-                                        }
-                                        if (isTintSelected) {
-                                            Text("\u2713", color = tintOpt.rimTint, fontWeight = FontWeight.ExtraBold)
-                                        }
-                                    }
-                                }
-
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = "3. T\u00F4ng m\u00E0u \u00C1nh s\u00E1ng N\u1EC1n (Ambient Glow):",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = palette.primaryGlow,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                GlassThemePresets.forEach { preset ->
-                                    val isGlowSelected = (preset.id == currentThemeId)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (isGlowSelected) preset.primaryGlow.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.05f))
-                                            .border(
-                                                width = if (isGlowSelected) 1.3.dp else 0.6.dp,
-                                                color = if (isGlowSelected) preset.primaryGlow else Color.White.copy(alpha = 0.15f),
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .clickable { scope.launch { context.saveGlassTheme(preset.id) } }
-                                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(16.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Brush.linearGradient(listOf(preset.primaryGlow, preset.secondaryGlow)))
-                                                    .border(1.dp, Color.White, CircleShape)
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                            Text(preset.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
-                                        }
-                                        if (isGlowSelected) {
-                                            Text("\u2713", color = preset.primaryGlow, fontWeight = FontWeight.ExtraBold)
-                                        }
-                                    }
-                                }
-                            } else {
-                                val subList = ThemeSubVariants.filter { it.engineId == engine.id }
-                                Text(
-                                    text = "Ch\u1ECDn phi\u00EAn b\u1EA3n ph\u1ED1i m\u00E0u cho ${engine.title}:",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = palette.primaryGlow,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                subList.forEach { variant ->
-                                    val isVarSelected = (isSelectedEngine && activeSubVariantId == variant.id)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (isVarSelected) variant.primaryAccent.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f))
-                                            .border(
-                                                width = if (isVarSelected) 1.4.dp else 0.6.dp,
-                                                color = if (isVarSelected) variant.primaryAccent else Color.White.copy(alpha = 0.15f),
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .clickable {
-                                                scope.launch {
-                                                    context.saveThemeEngineMode(engine.id)
-                                                    context.saveThemeSubVariant(variant.id)
-                                                }
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(18.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Brush.linearGradient(listOf(variant.primaryAccent, variant.secondaryAccent)))
-                                                    .border(1.dp, Color.White, CircleShape)
-                                            )
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(
-                                                text = variant.name,
-                                                color = Color.White,
-                                                fontWeight = if (isVarSelected) FontWeight.Bold else FontWeight.Normal,
-                                                style = MaterialTheme.typography.labelMedium
-                                            )
-                                        }
-                                        if (isVarSelected) {
-                                            Text("\u2713", color = variant.primaryAccent, fontWeight = FontWeight.ExtraBold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. LOCAL LAN WEB SERVER (NANOHTTPD CONG 8080 + NUT COPY IP)
-        LanWebServerSettingsCard()
-
-        // 3. TRUNG TAM CAP NHAT OTA AN TOAN
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(palette.deepBgMid)
-                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.CloudDownload, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "C\u1EADp nh\u1EADt OTA An To\u00E0n (SHA-256)",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            LiquidGlassPill(
-                active = false,
-                onClick = {
-                    val freed = updateManager.cleanupOldApks()
-                    val freedMb = "%.1f MB".format(freed / (1024f * 1024f))
-                    Toast.makeText(context, "\uD83E\uDDF9 \u0110\u00E3 d\u1ECDn s\u1EA1ch g\u00F3i c\u1EADp nh\u1EADt c\u0169 ($freedMb)!", Toast.LENGTH_SHORT).show()
-                    statusText = "\u2705 \u0110\u00E3 gi\u1EA3i ph\u00F3ng $freedMb b\u1ED9 nh\u1EDB \u0111\u1EC7m!"
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("\uD83E\uDDF9 D\u1ECDn s\u1EA1ch g\u00F3i APK c\u0169 & Cache", color = Color.White, style = MaterialTheme.typography.labelMedium)
-            }
-
-            OutlinedTextField(
-                value = repoInput,
-                onValueChange = { repoInput = it },
-                label = { Text("GitHub Repo (owner/repo)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                LiquidGlassPill(active = selectedMirror == 0, onClick = { selectedMirror = 0 }) {
-                    Text("GitHub", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                }
-                LiquidGlassPill(active = selectedMirror == 1, onClick = { selectedMirror = 1 }) {
-                    Text("CDN 1", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                }
-                LiquidGlassPill(active = selectedMirror == 2, onClick = { selectedMirror = 2 }) {
-                    Text("CDN 2", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-
-            LiquidGlassPill(
-                active = true,
-                onClick = {
-                    if (!isDownloading) {
-                        if (!updateManager.isValidRepoFormat(repoInput)) {
-                            statusText = "\u274C \u0110\u1ECBnh d\u1EA1ng Repo ph\u1EA3i l\u00E0 'owner/repo'!"
-                            return@LiquidGlassPill
-                        }
-                        scope.launch {
-                            context.saveGithubRepo(repoInput)
-                            statusText = "\u0110ang ki\u1EC3m tra t\u1EEB api.github.com..."
-                            val result = updateManager.checkLatestRelease(repoInput)
-                            result.onSuccess { (release, meta) ->
-                                latestRelease = release
-                                latestMeta = meta
-                                val newer = updateManager.isRemoteVersionCodeNewer(BuildConfig.VERSION_CODE, meta)
-                                isNewerAvailable = newer
-                                statusText = if (newer) {
-                                    "\uD83C\uDF89 C\u00F3 b\u1EA3n m\u1EDBi: v${meta.versionName} (${meta.versionCode})"
-                                } else {
-                                    "\u2705 \u0110ang d\u00F9ng b\u1EA3n m\u1EDBi nh\u1EA5t (${BuildConfig.VERSION_CODE})!"
-                                }
-                            }.onFailure { err ->
-                                statusText = "\u274C L\u1ED7i: ${err.message}"
-                            }
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("\uD83D\uDD0D Ki\u1EC3m tra c\u1EADp nh\u1EADt m\u1EDBi", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-            }
-
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isNewerAvailable) palette.primaryGlow else Color(0xFF80FFDB),
-                fontWeight = FontWeight.SemiBold
-            )
-
-            val currentRel = latestRelease
-            val currentMeta = latestMeta
-            if (currentRel != null && currentMeta != null && isNewerAvailable) {
-                val apkAsset = currentRel.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
-                if (apkAsset != null) {
-                    if (downloadProgress in 0..100) {
-                        LinearProgressIndicator(
-                            progress = downloadProgress / 100f,
-                            color = palette.primaryGlow,
-                            trackColor = Color.White.copy(alpha = 0.15f),
-                            modifier = Modifier.fillMaxWidth().height(5.dp)
-                        )
-                        Text("\u0110ang t\u1EA3i: $downloadProgress% ($speedInfo)", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall)
-                    }
-                    LiquidGlassPill(
-                        active = true,
-                        onClick = {
-                            if (!isDownloading) {
-                                if (!updateManager.canRequestPackageInstalls()) {
-                                    updateManager.openManageUnknownAppSourcesSettings()
-                                    return@LiquidGlassPill
-                                }
-                                scope.launch {
-                                    isDownloading = true
-                                    downloadProgress = 0
-                                    val dl = updateManager.downloadAndVerifyApk(
-                                        rawUrl = apkAsset.browser_download_url,
-                                        expectedSize = apkAsset.size,
-                                        expectedSha256 = currentMeta.sha256,
-                                        mirrorIndex = selectedMirror
-                                    ) { p, spd ->
-                                        downloadProgress = p
-                                        speedInfo = spd
-                                    }
-                                    isDownloading = false
-                                    dl.onSuccess { verifiedFile ->
-                                        statusText = "\u2705 \u0110\u00E3 x\u00E1c th\u1EF1c SHA-256! \u0110ang c\u00E0i \u0111\u1EB7t..."
-                                        updateManager.installVerifiedApk(verifiedFile)
-                                    }.onFailure { err ->
-                                        statusText = "\u274C ${err.message}"
-                                    }
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (isDownloading) "\u23F3 \u0110ang t\u1EA3i & x\u00E1c minh..." else "\uD83D\uDEE1\uFE0F T\u1EA3i 8 lu\u1ED3ng & C\u00E0i \u0111\u1EB7t ngay",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
-                        )
                     }
                 }
             }

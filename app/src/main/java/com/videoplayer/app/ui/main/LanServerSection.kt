@@ -24,11 +24,6 @@ import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 
-/**
- * The dieu khien Local LAN Web Server (NanoHTTPD) trong Cai dat:
- * - Cho phep Bat / Tat HTTP Server tren cong 8080
- * - Hien thi ro dia chi http://192.168.x.x:8080 kem nut Copy nhanh vao Clipboard
- */
 @Composable
 fun LanWebServerSettingsCard() {
     val context = LocalContext.current
@@ -39,10 +34,10 @@ fun LanWebServerSettingsCard() {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(palette.deepBgMid)
+            .background(Color(0xFF121722).copy(alpha = 0.88f))
             .border(
-                width = 1.dp,
-                color = if (lanStatus.isRunning) palette.primaryGlow else Color.White.copy(alpha = 0.16f),
+                width = 0.9.dp,
+                color = if (lanStatus.isRunning) palette.primaryGlow.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.10f),
                 shape = RoundedCornerShape(20.dp)
             )
             .padding(16.dp),
@@ -55,21 +50,21 @@ fun LanWebServerSettingsCard() {
             Icon(
                 imageVector = AppIcons.WifiTethering,
                 contentDescription = null,
-                tint = if (lanStatus.isRunning) Color(0xFF80FFDB) else palette.primaryGlow,
+                tint = if (lanStatus.isRunning) palette.primaryGlow else Color.White.copy(alpha = 0.85f),
                 modifier = Modifier.size(22.dp)
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Local LAN Web Server (Wi-Fi)",
+                    text = "Local LAN Web Server",
                     style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Xem video t\u1EEB tr\u00ECnh duy\u1EC7t m\u00E1y t\u00EDnh / TV c\u00F9ng m\u1EA1ng Wi-Fi",
+                    text = "Xem video qua tr\u00ECnh duy\u1EC7t c\u00F9ng m\u1EA1ng Wi-Fi",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFA7B8D8)
+                    color = Color.White.copy(alpha = 0.60f)
                 )
             }
             Switch(
@@ -89,8 +84,8 @@ fun LanWebServerSettingsCard() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black.copy(alpha = 0.40f))
-                    .border(1.dp, palette.primaryGlow.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .border(0.8.dp, palette.primaryGlow.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -101,16 +96,16 @@ fun LanWebServerSettingsCard() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "\uD83C\uDF10 \u0110\u1ECBa ch\u1EC9 truy c\u1EADp tr\u00EAn tr\u00ECnh duy\u1EC7t:",
+                            text = "\u0110\u1ECBa ch\u1EC9 truy c\u1EADp",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA7B8D8)
+                            color = Color.White.copy(alpha = 0.60f)
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = lanStatus.url,
                             style = MaterialTheme.typography.titleMedium,
-                            color = Color(0xFF80FFDB),
-                            fontWeight = FontWeight.ExtraBold
+                            color = palette.primaryGlow,
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
@@ -119,23 +114,19 @@ fun LanWebServerSettingsCard() {
                         onClick = {
                             val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cb.setPrimaryClip(ClipData.newPlainText("LAN Server URL", lanStatus.url))
-                            Toast.makeText(
-                                context,
-                                "\u2705 \u0110\u00E3 sao ch\u00E9p: ${lanStatus.url}",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            Toast.makeText(context, "\u0110\u00E3 sao ch\u00E9p: ${lanStatus.url}", Toast.LENGTH_SHORT).show()
                         }
                     ) {
                         Icon(AppIcons.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(5.dp))
-                        Text("Copy URL", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Text("Copy", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
                 Text(
-                    text = "\u2022 \u0110ang chia s\u1EBB ${lanStatus.sharedVideoCount} video trong th\u01B0 vi\u1EC7n (T\u1EF1 \u0111\u1ED9ng t\u1EAFt khi \u0111\u00F3ng \u1EE9ng d\u1EE5ng).",
+                    text = "\u0110ang chia s\u1EBB ${lanStatus.sharedVideoCount} video c\u00F4ng khai (t\u1EF1 t\u1EAFt khi \u0111\u00F3ng \u1EE9ng d\u1EE5ng)",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.82f)
+                    color = Color.White.copy(alpha = 0.65f)
                 )
             }
         }

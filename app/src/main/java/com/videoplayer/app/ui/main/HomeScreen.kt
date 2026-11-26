@@ -9,12 +9,8 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +25,7 @@ import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassCard
+import com.videoplayer.app.ui.components.LiquidGlassIconButton
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 import com.videoplayer.app.util.FileOperationHelper
@@ -46,6 +43,7 @@ import java.io.File
 fun HomeScreen(
     modifier: Modifier = Modifier,
     selectedFolder: String?,
+    searchQuery: String = "",
     vaultAccessMode: VaultAccessMode = VaultAccessMode.LOCKED,
     folderListState: LazyListState,
     videoListState: LazyListState,
@@ -53,8 +51,8 @@ fun HomeScreen(
     onSelectFolder: (String?) -> Unit,
     onExitVault: () -> Unit = {},
     onOpenVaultPinSettings: () -> Unit = {},
-    onVideoClick: (VideoItem, List<VideoItem>) -> Unit,
-    onStreamClick: () -> Unit
+    onMultiSelectChanged: (Boolean) -> Unit = {},
+    onVideoClick: (VideoItem, List<VideoItem>) -> Unit
 ) {
     val context = LocalContext.current
     val palette = LocalGlassPalette.current
@@ -63,7 +61,7 @@ fun HomeScreen(
     val repository = remember(context) { VideoRepository(context) }
     val rawVideos by remember(refreshTrigger) { repository.getAllVideos() }.collectAsState(initial = emptyList())
     val savedPositions by context.observeAllPositions().collectAsState(initial = emptyMap())
-    val lastPlayedId by context.observeLastPlayedVideoId().collectAsState(initial = null)
+
     LaunchedEffect(Unit) { WatchExperienceManager.ensureInitialized(context) }
     val watchExpData by WatchExperienceManager.state.collectAsState()
     var activeFeedFilter by remember { mutableStateOf(HomeFeedFilter.FOLDERS) }
@@ -110,8 +108,6 @@ fun HomeScreen(
         }
     }
 
-    var searchQuery by remember { mutableStateOf("") }
-    var isSearchExpanded by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.DATE_DESC) }
     var showSortMenu by remember { mutableStateOf(false) }
     var isGridView by remember { mutableStateOf(false) }
@@ -137,7 +133,6 @@ fun HomeScreen(
                     refreshTrigger++
                 }
             } else {
-                Toast.makeText(context, "Đã thực hiện thao tác tệp!", Toast.LENGTH_SHORT).show()
                 refreshTrigger++
             }
         }
@@ -146,19 +141,20 @@ fun HomeScreen(
     fun exitMultiSelect() {
         isMultiSelectMode = false
         selectedVideoIds.clear()
+        onMultiSelectChanged(false)
+    }
+
+    LaunchedEffect(isMultiSelectMode) {
+        onMultiSelectChanged(isMultiSelectMode)
     }
 
     LaunchedEffect(selectedFolder, vaultAccessMode) {
         exitMultiSelect()
     }
 
-    BackHandler(enabled = isMultiSelectMode || selectedFolder != null || isVaultMode || isSearchExpanded || activeFeedFilter != HomeFeedFilter.FOLDERS) {
+    BackHandler(enabled = isMultiSelectMode || selectedFolder != null || isVaultMode || activeFeedFilter != HomeFeedFilter.FOLDERS) {
         when {
             isMultiSelectMode -> exitMultiSelect()
-            isSearchExpanded -> {
-                isSearchExpanded = false
-                searchQuery = ""
-            }
             isVaultMode -> onExitVault()
             selectedFolder != null -> onSelectFolder(null)
             activeFeedFilter != HomeFeedFilter.FOLDERS -> activeFeedFilter = HomeFeedFilter.FOLDERS
@@ -169,11 +165,8 @@ fun HomeScreen(
         VaultManager.getHiddenOriginalPaths(context)
     }
     val visibleVideos = remember(rawVideos, vaultEntries, isVaultMode, hiddenPaths, refreshTrigger) {
-        if (isVaultMode) {
-            vaultEntries
-        } else {
-            rawVideos.filter { it.path !in hiddenPaths && File(it.path).exists() }
-        }
+        if (isVaultMode) vaultEntries
+        else rawVideos.filter { it.path !in hiddenPaths && File(it.path).exists() }
     }
 
     fun applySorting(list: List<VideoItem>, sort: SortOption): List<VideoItem> {
@@ -211,9 +204,7 @@ fun HomeScreen(
             val vid = videoMap[h.videoId] ?: return@mapNotNull null
             val pos = savedPositions[vid.id] ?: h.lastPositionMs
             val dur = vid.duration.coerceAtLeast(h.durationMs).coerceAtLeast(1L)
-            if (pos in 2000L..(dur - 2000L)) {
-                ContinueWatchingItem(vid, pos, dur)
-            } else null
+            if (pos in 2000L..(dur - 2000L)) ContinueWatchingItem(vid, pos, dur) else null
         }
         if (fromHistory.isNotEmpty()) {
             fromHistory.take(15)
@@ -232,12 +223,8 @@ fun HomeScreen(
         val base = when {
             isVaultMode -> visibleVideos
             selectedFolder != null -> visibleVideos.filter { it.folder == selectedFolder }
-            activeFeedFilter == HomeFeedFilter.WATCH_LATER -> {
-                watchExpData.watchLaterIds.mapNotNull { videoMap[it] }
-            }
-            activeFeedFilter == HomeFeedFilter.HISTORY -> {
-                watchExpData.history.mapNotNull { videoMap[it.videoId] }
-            }
+            activeFeedFilter == HomeFeedFilter.WATCH_LATER -> watchExpData.watchLaterIds.mapNotNull { videoMap[it] }
+            activeFeedFilter == HomeFeedFilter.HISTORY -> watchExpData.history.mapNotNull { videoMap[it.videoId] }
             else -> visibleVideos
         }
         val filtered = if (searchQuery.isBlank()) base else {
@@ -247,7 +234,7 @@ fun HomeScreen(
             }
         }
         if (activeFeedFilter == HomeFeedFilter.HISTORY && selectedFolder == null && !isVaultMode) {
-            filtered // Giữ đúng thứ tự thời gian xem gần nhất cho tab Lịch sử
+            filtered
         } else {
             applySorting(filtered, sortOption)
         }
@@ -318,7 +305,7 @@ fun HomeScreen(
                 onVaultActionSelected = {
                     if (selectedVideoIds.isNotEmpty() && !isProcessingVault) {
                         if (!isVaultMode && !FileOperationHelper.hasAllFilesAccess()) {
-                            Toast.makeText(context, "Hãy bật 'Cho phép quản lý tất cả tệp' 1 lần để di chuyển trực tiếp!", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "H\u00E3y b\u1EADt quy\u1EC1n Qu\u1EA3n l\u00FD t\u1EA5t c\u1EA3 t\u1EC7p \u0111\u1EC3 di chuy\u1EC3n tr\u1EF1c ti\u1EBFp", Toast.LENGTH_LONG).show()
                             FileOperationHelper.requestAllFilesAccess(context)
                             return@MultiSelectActionBar
                         }
@@ -331,12 +318,12 @@ fun HomeScreen(
                                     targets.forEach { v ->
                                         if (VaultManager.restoreVideoFromVault(context, v.id, isDecoyVault).isSuccess) okCount++
                                     }
-                                    Toast.makeText(context, "🔓 Đã khôi phục tức thì $okCount video về thư mục gốc!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "\u0110\u00E3 kh\u00F4i ph\u1EE5c $okCount video", Toast.LENGTH_SHORT).show()
                                 } else {
                                     targets.forEach { v ->
                                         if (VaultManager.hideVideoToVaultFast(context, v, targetDecoy) is VaultHideOutcome.Success) okCount++
                                     }
-                                    Toast.makeText(context, "🔒 Đã di chuyển trực tiếp $okCount video vào lưu trữ bảo mật!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "\u0110\u00E3 chuy\u1EC3n $okCount video v\u00E0o l\u01B0u tr\u1EEF b\u1EA3o m\u1EADt", Toast.LENGTH_SHORT).show()
                                 }
                                 isProcessingVault = false
                                 exitMultiSelect()
@@ -348,116 +335,89 @@ fun HomeScreen(
                 onDeleteSelected = { if (selectedVideoIds.isNotEmpty()) dialogType = FileDialogType.BATCH_DELETE }
             )
         } else {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isSearchExpanded) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Tìm tên video hoặc thư mục...") },
-                        leadingIcon = { Icon(Icons.Default.Search, null, tint = palette.primaryGlow) },
-                        trailingIcon = {
-                            IconButton(onClick = {
-                                searchQuery = ""
-                                isSearchExpanded = false
-                            }) {
-                                Icon(Icons.Default.Close, null, tint = Color.White)
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.weight(1f)
+            // Thanh Segmented Pill chỉ hiện ở trang gốc (không hiện khi đã mở thư mục con hoặc Kho Ẩn)
+            if (!isVaultMode && selectedFolder == null) {
+                HomeFeedFilterTabs(
+                    activeFilter = activeFeedFilter,
+                    watchLaterCount = watchExpData.watchLaterIds.size,
+                    historyCount = watchExpData.history.size,
+                    onSelectFilter = { activeFeedFilter = it },
+                    onClearHistory = {
+                        WatchExperienceManager.clearAllHistory(context)
+                        Toast.makeText(context, "\u0110\u00E3 x\u00F3a l\u1ECBch s\u1EED xem", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+
+            // Hàng tiện ích cực gọn (chỉ hiện khi đang xem danh sách video trong thư mục / Xem sau / Lịch sử / Kho Ẩn)
+            val isViewingVideoList = selectedFolder != null || isVaultMode || searchQuery.isNotBlank() || activeFeedFilter != HomeFeedFilter.FOLDERS
+            if (isViewingVideoList) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${displayedVideos.size} video",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.65f)
                     )
-                } else {
-                    LiquidGlassPill(
-                        active = false,
-                        onClick = { isSearchExpanded = true },
-                        modifier = Modifier.weight(1f)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Tìm kiếm...",
-                            color = Color.White.copy(alpha = 0.85f),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1
-                        )
-                    }
-
-                    if (isVaultMode) {
-                        LiquidGlassPill(
-                            active = true,
-                            onClick = onOpenVaultPinSettings
-                        ) {
-                            Icon(AppIcons.Shield, contentDescription = "Cài đặt Kho", tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Cài đặt Kho", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (selectedFolder != null || isVaultMode) {
-                        LiquidGlassPill(onClick = { isMultiSelectMode = true }) {
-                            Icon(AppIcons.Checklist, contentDescription = "Chọn nhiều", tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Chọn", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-
-                    Box {
-                        LiquidGlassPill(
-                            active = sortOption != SortOption.DATE_DESC,
-                            onClick = { showSortMenu = true }
-                        ) {
-                            Icon(AppIcons.Sort, contentDescription = "Sắp xếp", tint = Color.White, modifier = Modifier.size(18.dp))
-                        }
-                        DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
-                            SortOption.values().forEach { opt ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = if (sortOption == opt) "✓ ${opt.label}" else "    ${opt.label}",
-                                            fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        sortOption = opt
-                                        showSortMenu = false
-                                    }
-                                )
+                        if (isVaultMode) {
+                            LiquidGlassPill(active = true, onClick = onOpenVaultPinSettings) {
+                                Icon(AppIcons.Shield, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("C\u00E0i \u0111\u1EB7t Kho", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                             }
                         }
-                    }
 
-                    LiquidGlassPill(active = isGridView, onClick = { isGridView = !isGridView }) {
-                        Icon(
-                            imageVector = if (isGridView) AppIcons.ViewList else AppIcons.GridView,
-                            contentDescription = "Đổi kiểu xem",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                        Box {
+                            LiquidGlassIconButton(
+                                onClick = { showSortMenu = true },
+                                size = 34.dp,
+                                active = sortOption != SortOption.DATE_DESC
+                            ) {
+                                Icon(AppIcons.Sort, contentDescription = "S\u1EAFp x\u1EBFp", tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
+                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                                SortOption.values().forEach { opt ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (sortOption == opt) "\u2713 ${opt.label}" else "    ${opt.label}",
+                                                fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            sortOption = opt
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
 
-                    LiquidGlassPill(onClick = { refreshTrigger++ }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
+                        LiquidGlassIconButton(
+                            onClick = { isGridView = !isGridView },
+                            size = 34.dp,
+                            active = isGridView
+                        ) {
+                            Icon(
+                                imageVector = if (isGridView) AppIcons.ViewList else AppIcons.GridView,
+                                contentDescription = "\u0110\u1ED5i ki\u1EC3u xem",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
-        }
-
-        if (!isVaultMode && selectedFolder == null && !isMultiSelectMode) {
-            HomeFeedFilterTabs(
-                activeFilter = activeFeedFilter,
-                watchLaterCount = watchExpData.watchLaterIds.size,
-                historyCount = watchExpData.history.size,
-                onSelectFilter = { activeFeedFilter = it },
-                onClearHistory = {
-                    WatchExperienceManager.clearAllHistory(context)
-                    Toast.makeText(context, "🧹 Đã xóa toàn bộ lịch sử xem!", Toast.LENGTH_SHORT).show()
-                }
-            )
         }
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -473,15 +433,15 @@ fun HomeScreen(
                             Icon(
                                 if (isVaultMode) Icons.Default.Lock else AppIcons.VideoLibrary,
                                 contentDescription = null,
-                                modifier = Modifier.size(64.dp),
+                                modifier = Modifier.size(52.dp),
                                 tint = palette.primaryGlow
                             )
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                if (isVaultMode) "Thư mục lưu trữ nội bộ đang trống."
-                                else "Chưa tìm thấy video hoặc chưa cấp quyền bộ nhớ.",
-                                color = Color.White,
-                                style = MaterialTheme.typography.bodyLarge
+                                if (isVaultMode) "Th\u01B0 m\u1EE5c l\u01B0u tr\u1EEF n\u1ED9i b\u1ED9 \u0111ang tr\u1ED1ng."
+                                else "Ch\u01B0a t\u00ECm th\u1EA5y video ho\u1EB7c ch\u01B0a c\u1EA5p quy\u1EC1n b\u1ED9 nh\u1EDB.",
+                                color = Color.White.copy(alpha = 0.85f),
+                                style = MaterialTheme.typography.bodyMedium
                             )
                         }
                     }
@@ -510,17 +470,17 @@ fun HomeScreen(
                             Icon(
                                 imageVector = if (activeFeedFilter == HomeFeedFilter.WATCH_LATER) AppIcons.WatchLater else AppIcons.History,
                                 contentDescription = null,
-                                modifier = Modifier.size(56.dp),
+                                modifier = Modifier.size(48.dp),
                                 tint = palette.primaryGlow
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 text = if (activeFeedFilter == HomeFeedFilter.WATCH_LATER) {
-                                    "Danh sách 'Xem sau' đang trống.\nBấm nút 3 chấm (⋮) ở bất kỳ video nào và chọn 'Thêm vào danh sách Xem sau'."
+                                    "Ch\u01B0a c\u00F3 video trong danh s\u00E1ch Xem sau."
                                 } else {
-                                    "Chưa có lịch sử phát video gần đây."
+                                    "Ch\u01B0a c\u00F3 l\u1ECBch s\u1EED xem g\u1EA7n \u0111\u00E2y."
                                 },
-                                color = Color.White,
+                                color = Color.White.copy(alpha = 0.80f),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -569,7 +529,7 @@ fun HomeScreen(
             },
             onVaultToggleAction = { vid, isCurrentlyInVault ->
                 if (!isCurrentlyInVault && !FileOperationHelper.hasAllFilesAccess()) {
-                    Toast.makeText(context, "Hãy bật 'Cho phép quản lý tất cả tệp' 1 lần để di chuyển trực tiếp!", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "H\u00E3y b\u1EADt quy\u1EC1n Qu\u1EA3n l\u00FD t\u1EA5t c\u1EA3 t\u1EC7p \u0111\u1EC3 di chuy\u1EC3n tr\u1EF1c ti\u1EBFp", Toast.LENGTH_LONG).show()
                     FileOperationHelper.requestAllFilesAccess(context)
                     return@VideoItemActionMenuDialog
                 }
@@ -578,22 +538,22 @@ fun HomeScreen(
                         isProcessingVault = true
                         if (isCurrentlyInVault) {
                             VaultManager.restoreVideoFromVault(context, vid.id, isDecoyVault).onSuccess { path ->
-                                Toast.makeText(context, "🔓 Đã khôi phục về: $path", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "\u0110\u00E3 kh\u00F4i ph\u1EE5c v\u1EC1: $path", Toast.LENGTH_SHORT).show()
                                 refreshTrigger++
                             }.onFailure { err ->
-                                Toast.makeText(context, "Lỗi khôi phục: ${err.message}", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "L\u1ED7i kh\u00F4i ph\u1EE5c: ${err.message}", Toast.LENGTH_LONG).show()
                             }
                         } else {
                             when (val out = VaultManager.hideVideoToVaultFast(context, vid, targetDecoy)) {
                                 is VaultHideOutcome.Success -> {
-                                    Toast.makeText(context, "🔒 Đã chuyển trực tiếp vào lưu trữ bảo mật!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "\u0110\u00E3 chuy\u1EC3n v\u00E0o l\u01B0u tr\u1EEF b\u1EA3o m\u1EADt", Toast.LENGTH_SHORT).show()
                                     refreshTrigger++
                                 }
                                 is VaultHideOutcome.NeedsAllFilesPermission -> {
                                     FileOperationHelper.requestAllFilesAccess(context)
                                 }
                                 is VaultHideOutcome.Error -> {
-                                    Toast.makeText(context, "Lỗi: ${out.message}", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "L\u1ED7i: ${out.message}", Toast.LENGTH_LONG).show()
                                 }
                             }
                         }

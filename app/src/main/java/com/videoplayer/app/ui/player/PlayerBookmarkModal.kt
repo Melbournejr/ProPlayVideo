@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,16 +23,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.ui.components.AppIcons
+import com.videoplayer.app.ui.components.LiquidGlassIconButton
 import com.videoplayer.app.ui.components.LiquidGlassModalSheet
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
 
-/**
- * Modal Quản lý Bookmark có ghi chú (Phần C.2):
- * - Đánh dấu mốc thời gian đang phát kèm ghi chú văn bản
- * - Hiển thị danh sách Bookmark của video hiện tại
- * - Chạm vào Bookmark để nhảy (Seek) tới đúng thời điểm đó ngay lập tức
- */
 @Composable
 fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
     val palette = LocalGlassPalette.current
@@ -39,12 +35,12 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
     var noteInput by remember { mutableStateOf("") }
 
     LiquidGlassModalSheet(
-        cornerRadius = 30.dp,
+        cornerRadius = 28.dp,
         modifier = Modifier
-            .align(Alignment.Center)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .widthIn(max = 500.dp)
-            .heightIn(max = 380.dp)
+            .align(Alignment.BottomCenter)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .widthIn(max = 560.dp)
+            .heightIn(max = 320.dp)
             .fillMaxWidth()
     ) {
         Column(
@@ -52,23 +48,22 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.Bookmark, contentDescription = null, tint = palette.primaryGlow)
+                Icon(AppIcons.Bookmark, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Đánh dấu & Ghi chú (${state.bookmarks.size})",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "\u0110\u00E1nh d\u1EA5u & Ghi ch\u00FA (${state.bookmarks.size})",
+                    style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                LiquidGlassPill(onClick = { state.activeModal = ActiveModal.NONE }) {
-                    Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                LiquidGlassIconButton(onClick = { state.activeModal = ActiveModal.NONE }, size = 32.dp) {
+                    Icon(Icons.Default.Close, contentDescription = "\u0110\u00F3ng", tint = Color.White, modifier = Modifier.size(16.dp))
                 }
             }
 
-            // Ô nhập ghi chú mới tại mốc thời gian hiện tại
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -77,9 +72,7 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
                 OutlinedTextField(
                     value = noteInput,
                     onValueChange = { noteInput = it },
-                    placeholder = {
-                        Text("Ghi chú tại ${formatTimeMs(state.currentPos)}...", style = MaterialTheme.typography.bodySmall)
-                    },
+                    placeholder = { Text("Ghi ch\u00FA t\u1EA1i ${formatTimeMs(state.currentPos)}...", style = MaterialTheme.typography.bodySmall) },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.weight(1f)
@@ -95,46 +88,46 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
                             note = noteInput
                         )
                         noteInput = ""
-                        Toast.makeText(state.context, "🔖 Đã lưu mốc ${formatTimeMs(pos)}!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(state.context, "\u0110\u00E3 l\u01B0u m\u1ED1c ${formatTimeMs(pos)}", Toast.LENGTH_SHORT).show()
                     }
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Lưu mốc", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text("L\u01B0u m\u1ED1c", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             if (state.bookmarks.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "Chưa có mốc đánh dấu nào cho video này.\nNhập ghi chú và bấm 'Lưu mốc' để đánh dấu cảnh quan trọng.",
-                        color = Color(0xFFA7B8D8),
+                        "Ch\u01B0a c\u00F3 m\u1ED1c \u0111\u00E1nh d\u1EA5u n\u00E0o cho video n\u00E0y.",
+                        color = Color.White.copy(alpha = 0.60f),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     items(state.bookmarks, key = { it.id }) { bm ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color.Black.copy(alpha = 0.32f))
-                                .border(1.dp, palette.primaryGlow.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(alpha = 0.30f))
+                                .border(0.8.dp, palette.primaryGlow.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
                                 .clickable {
                                     state.playerManager.seekToFast(bm.timestampMs)
                                     state.currentPos = bm.timestampMs
                                     state.lastSeekCompletedTimeMs = System.currentTimeMillis()
                                     state.activeModal = ActiveModal.NONE
-                                    state.showTemporaryHint("🔖 Nhảy tới: ${bm.note} (${formatTimeMs(bm.timestampMs)})")
+                                    state.showTemporaryHint("${bm.note} (${formatTimeMs(bm.timestampMs)})")
                                 }
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -146,17 +139,17 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
                                 Text(
                                     text = formatTimeMs(bm.timestampMs),
                                     color = palette.primaryGlow,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.ExtraBold
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                             Spacer(Modifier.width(10.dp))
                             Text(
                                 text = bm.note,
                                 color = Color.White,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
@@ -168,14 +161,9 @@ fun BoxScope.PlayerBookmarkModal(state: PlayerStateHolder) {
                                         bookmarkId = bm.id
                                     )
                                 },
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(28.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Xóa mốc",
-                                    tint = Color(0xFFFF5C8A),
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Default.Delete, contentDescription = "X\u00F3a", tint = Color(0xFFFF5C8A), modifier = Modifier.size(16.dp))
                             }
                         }
                     }

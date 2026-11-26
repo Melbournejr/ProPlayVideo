@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -21,6 +22,7 @@ import androidx.media3.common.C
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.videoplayer.app.data.local.saveSubtitleAppearance
 import com.videoplayer.app.ui.components.AppIcons
+import com.videoplayer.app.ui.components.LiquidGlassIconButton
 import com.videoplayer.app.ui.components.LiquidGlassModalSheet
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassPalette
@@ -37,8 +39,8 @@ fun BoxScope.PlayerActiveModals(
     if (state.isInPipMode) return
 
     when (state.activeModal) {
-        ActiveModal.STUDIO -> ProStudioModal(state = state)
-        ActiveModal.TOOLS -> PlayerToolsModal(
+        ActiveModal.STUDIO -> ProStudioBottomSheet(state = state)
+        ActiveModal.TOOLS -> PlayerToolsBottomSheet(
             state = state,
             activity = activity,
             onLaunchSubtitlePicker = onLaunchSubtitlePicker
@@ -49,16 +51,16 @@ fun BoxScope.PlayerActiveModals(
 }
 
 @Composable
-private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
+private fun BoxScope.ProStudioBottomSheet(state: PlayerStateHolder) {
     val palette = LocalGlassPalette.current
 
     LiquidGlassModalSheet(
-        cornerRadius = 30.dp,
+        cornerRadius = 28.dp,
         modifier = Modifier
-            .align(Alignment.Center)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .widthIn(max = 520.dp)
-            .heightIn(max = 350.dp)
+            .align(Alignment.BottomCenter)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .widthIn(max = 560.dp)
+            .heightIn(max = 310.dp)
             .fillMaxWidth()
     ) {
         Column(
@@ -66,17 +68,17 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.AutoAwesome, contentDescription = null, tint = palette.primaryGlow)
+                Icon(AppIcons.AutoAwesome, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "Pro Studio",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-                LiquidGlassPill(onClick = { state.activeModal = ActiveModal.NONE }) {
-                    Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                LiquidGlassIconButton(onClick = { state.activeModal = ActiveModal.NONE }, size = 32.dp) {
+                    Icon(Icons.Default.Close, contentDescription = "\u0110\u00F3ng", tint = Color.White, modifier = Modifier.size(16.dp))
                 }
             }
 
@@ -85,7 +87,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                     active = state.studioTabIndex == 0,
                     onClick = { state.studioTabIndex = 0 },
                     modifier = Modifier.weight(1f)
-                ) { Text("🎬 Hình Ảnh & A-B", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                ) { Text("H\u00ECnh \u1EA3nh & A-B", color = Color.White, style = MaterialTheme.typography.labelMedium) }
 
                 LiquidGlassPill(
                     active = state.studioTabIndex == 1,
@@ -94,7 +96,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                         state.studioTabIndex = 1
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("🎵 Âm Thanh & EQ", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                ) { Text("\u00C2m thanh & EQ", color = Color.White, style = MaterialTheme.typography.labelMedium) }
             }
 
             if (state.studioTabIndex == 0) {
@@ -108,7 +110,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                             state.loopPointA = state.playerManager.getCurrentPosition()
                             if (state.loopPointB != null && state.loopPointB!! <= state.loopPointA!!) state.loopPointB = null
                         }
-                    ) { Text(if (state.loopPointA != null) "A: ${formatTimeMs(state.loopPointA!!)}" else "Đặt điểm A", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    ) { Text(if (state.loopPointA != null) "A: ${formatTimeMs(state.loopPointA!!)}" else "\u0110\u1EB7t \u0111i\u1EC3m A", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                     LiquidGlassPill(
                         active = state.loopPointB != null,
@@ -117,24 +119,24 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                             if (state.loopPointA == null) state.loopPointA = 0L
                             if (now > state.loopPointA!! + 500L) state.loopPointB = now
                         }
-                    ) { Text(if (state.loopPointB != null) "B: ${formatTimeMs(state.loopPointB!!)}" else "Đặt điểm B", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    ) { Text(if (state.loopPointB != null) "B: ${formatTimeMs(state.loopPointB!!)}" else "\u0110\u1EB7t \u0111i\u1EC3m B", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                     if (state.loopPointA != null || state.loopPointB != null) {
                         LiquidGlassPill(onClick = { state.loopPointA = null; state.loopPointB = null }) {
-                            Text("Xóa A-B", color = Color(0xFFFF5C8A), style = MaterialTheme.typography.labelSmall)
+                            Text("X\u00F3a A-B", color = Color(0xFFFF5C8A), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     LiquidGlassPill(onClick = {
                         state.playerManager.stepFrame(forward = false)
                         state.isPlaying = false
                         state.currentPos = state.playerManager.getCurrentPosition()
-                    }) { Text("⏮ -1 Frame", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    }) { Text("-1 Frame", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                     LiquidGlassPill(onClick = {
                         state.playerManager.stepFrame(forward = true)
                         state.isPlaying = false
                         state.currentPos = state.playerManager.getCurrentPosition()
-                    }) { Text("+1 Frame ⏭", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    }) { Text("+1 Frame", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                 }
 
                 Row(
@@ -142,7 +144,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     LiquidGlassPill(active = state.isMirrorFlipped, onClick = { state.isMirrorFlipped = !state.isMirrorFlipped }) {
-                        Text(if (state.isMirrorFlipped) "Lật Gương: BẬT" else "Lật Gương", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text(if (state.isMirrorFlipped) "L\u1EADt g\u01B0\u01A1ng: B\u1EACT" else "L\u1EADt g\u01B0\u01A1ng", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(
                         active = state.showNerdStats,
@@ -150,17 +152,17 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                             state.showNerdStats = !state.showNerdStats
                             if (state.showNerdStats) state.nerdStats = state.playerManager.getNerdStats()
                         }
-                    ) { Text("📊 Nerd Stats", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    ) { Text("Th\u00F4ng s\u1ED1 k\u1EF9 thu\u1EADt", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                     LiquidGlassPill(onClick = {
                         state.videoSaturation = 1.0f
                         state.videoContrast = 1.0f
                         state.videoBrightnessFilter = 0f
-                    }) { Text("Màu gốc", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    }) { Text("M\u00E0u g\u1ED1c", color = Color.White, style = MaterialTheme.typography.labelSmall) }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Độ tươi màu", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp))
+                    Text("\u0110\u1ED9 t\u01B0\u01A1i m\u00E0u", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp))
                     Slider(
                         value = state.videoSaturation,
                         onValueChange = { state.videoSaturation = it },
@@ -172,7 +174,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Tương phản", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp))
+                    Text("T\u01B0\u01A1ng ph\u1EA3n", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(78.dp))
                     Slider(
                         value = state.videoContrast,
                         onValueChange = { state.videoContrast = it },
@@ -193,13 +195,13 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                             state.audioBoostPercent = if (state.audioBoostPercent == 0) 50 else if (state.audioBoostPercent == 50) 100 else 0
                             state.playerManager.setAudioBoostPercent(state.audioBoostPercent)
                         }
-                    ) { Text("🚀 Boost: ${100 + state.audioBoostPercent}%", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                    ) { Text("Boost: ${100 + state.audioBoostPercent}%", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                     val presets = listOf(
-                        Triple("Mặc định", listOf(0f, 0f, 0f, 0f, 0f), 0),
-                        Triple("Siêu Trầm", listOf(8f, 5f, 0f, 2f, 4f), 75),
-                        Triple("Rạp Phim", listOf(6f, 3f, -1f, 4f, 6f), 50),
-                        Triple("Giọng Nói", listOf(-3f, 2f, 7f, 5f, 1f), 0)
+                        Triple("M\u1EB7c \u0111\u1ECBnh", listOf(0f, 0f, 0f, 0f, 0f), 0),
+                        Triple("Si\u00EAu tr\u1EA7m", listOf(8f, 5f, 0f, 2f, 4f), 75),
+                        Triple("R\u1EA1p phim", listOf(6f, 3f, -1f, 4f, 6f), 50),
+                        Triple("Gi\u1ECDng n\u00F3i", listOf(-3f, 2f, 7f, 5f, 1f), 0)
                     )
                     presets.forEach { (name, levels, bass) ->
                         LiquidGlassPill(
@@ -215,7 +217,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Siêu trầm", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.width(64.dp))
+                    Text("Si\u00EAu tr\u1EA7m", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.width(64.dp))
                     Slider(
                         value = state.bassBoostPercent.toFloat(),
                         onValueChange = {
@@ -224,9 +226,9 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                         },
                         valueRange = 0f..100f,
                         modifier = Modifier.weight(1f),
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFFFFD54F), activeTrackColor = Color(0xFFFFD54F))
+                        colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = palette.primaryGlow)
                     )
-                    Text("${state.bassBoostPercent}%", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(38.dp))
+                    Text("${state.bassBoostPercent}%", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(38.dp))
                 }
 
                 state.eqBands.forEach { band ->
@@ -235,7 +237,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
                         Slider(
                             value = band.levelDb,
                             onValueChange = { newDb ->
-                                state.activeEqPresetName = "Tùy chỉnh"
+                                state.activeEqPresetName = "T\u00F9y ch\u1EC9nh"
                                 state.playerManager.setEqBandLevel(band.index, newDb)
                                 state.eqBands = state.playerManager.getEqualizerBands()
                             },
@@ -253,7 +255,7 @@ private fun BoxScope.ProStudioModal(state: PlayerStateHolder) {
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun BoxScope.PlayerToolsModal(
+private fun BoxScope.PlayerToolsBottomSheet(
     state: PlayerStateHolder,
     activity: Activity?,
     onLaunchSubtitlePicker: () -> Unit
@@ -261,12 +263,12 @@ private fun BoxScope.PlayerToolsModal(
     val palette = LocalGlassPalette.current
 
     LiquidGlassModalSheet(
-        cornerRadius = 30.dp,
+        cornerRadius = 28.dp,
         modifier = Modifier
-            .align(Alignment.Center)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .widthIn(max = 500.dp)
-            .heightIn(max = 360.dp)
+            .align(Alignment.BottomCenter)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .widthIn(max = 560.dp)
+            .heightIn(max = 320.dp)
             .fillMaxWidth()
     ) {
         Column(
@@ -274,30 +276,30 @@ private fun BoxScope.PlayerToolsModal(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(AppIcons.Tune, contentDescription = null, tint = palette.primaryGlow)
+                Icon(AppIcons.Tune, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Tiện Ích & Phụ Đề",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "Ti\u1EC7n \u00EDch & Ph\u1EE5 \u0111\u1EC1",
+                    style = MaterialTheme.typography.titleSmall,
                     color = Color.White,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-                LiquidGlassPill(onClick = { state.activeModal = ActiveModal.NONE }) {
-                    Text("Đóng ✕", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                LiquidGlassIconButton(onClick = { state.activeModal = ActiveModal.NONE }, size = 32.dp) {
+                    Icon(Icons.Default.Close, contentDescription = "\u0110\u00F3ng", tint = Color.White, modifier = Modifier.size(16.dp))
                 }
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 LiquidGlassPill(onClick = { state.takeVideoSnapshot() }, modifier = Modifier.weight(1f)) {
-                    Icon(AppIcons.PhotoCamera, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(AppIcons.PhotoCamera, null, tint = Color.White, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Chụp ảnh", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("Ch\u1EE5p \u1EA3nh", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
                 LiquidGlassPill(onClick = { state.enterPip(activity) }, modifier = Modifier.weight(1f)) {
-                    Icon(AppIcons.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(AppIcons.PictureInPictureAlt, null, tint = Color.White, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Cửa sổ PiP", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("PiP", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
                 if (state.currentVideo != null) {
                     LiquidGlassPill(
@@ -309,9 +311,9 @@ private fun BoxScope.PlayerToolsModal(
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Chia sẻ", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("Chia s\u1EBB", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -322,9 +324,9 @@ private fun BoxScope.PlayerToolsModal(
                     onClick = { state.backgroundAudioEnabled = !state.backgroundAudioEnabled },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(AppIcons.Headphones, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(AppIcons.Headphones, null, tint = Color.White, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (state.backgroundAudioEnabled) "Nghe nền: BẬT" else "Nghe nền: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(if (state.backgroundAudioEnabled) "Nghe n\u1EC1n: B\u1EACT" else "Nghe n\u1EC1n", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
                 LiquidGlassPill(
                     onClick = {
@@ -333,13 +335,10 @@ private fun BoxScope.PlayerToolsModal(
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Khóa cảm ứng", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("Kh\u00F3a ch\u1EA1m", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 LiquidGlassPill(
                     active = state.resizeMode != AspectRatioFrameLayout.RESIZE_MODE_FIT,
                     onClick = {
@@ -352,11 +351,11 @@ private fun BoxScope.PlayerToolsModal(
                     modifier = Modifier.weight(1f)
                 ) {
                     val modeName = when (state.resizeMode) {
-                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Cắt tràn"
-                        AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Kéo giãn"
-                        else -> "Vừa khung"
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "C\u1EAFt tr\u00E0n"
+                        AspectRatioFrameLayout.RESIZE_MODE_FILL -> "K\u00E9o gi\u00E3n"
+                        else -> "V\u1EEBa khung"
                     }
-                    Text("Khung hình: $modeName", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(modeName, color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
             }
 
@@ -365,10 +364,10 @@ private fun BoxScope.PlayerToolsModal(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("💤 Hẹn giờ:", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                Text("H\u1EB9n gi\u1EDD:", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
                 listOf(0, 15, 30, 45, 60).forEach { mins ->
                     LiquidGlassPill(active = state.sleepTimerMinutes == mins, onClick = { state.sleepTimerMinutes = mins }) {
-                        Text(if (mins == 0) "Tắt" else "${mins}p", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text(if (mins == 0) "T\u1EAFt" else "${mins}p", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -384,21 +383,21 @@ private fun BoxScope.PlayerToolsModal(
                         state.subtitlesEnabled = !state.subtitlesEnabled
                         state.playerManager.toggleSubtitles(state.subtitlesEnabled)
                     }
-                ) { Text(if (state.subtitlesEnabled) "💬 Phụ đề: BẬT" else "💬 Phụ đề: TẮT", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                ) { Text(if (state.subtitlesEnabled) "Ph\u1EE5 \u0111\u1EC1: B\u1EACT" else "Ph\u1EE5 \u0111\u1EC1: T\u1EAET", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 
                 LiquidGlassPill(
                     onClick = {
                         state.activeModal = ActiveModal.NONE
                         onLaunchSubtitlePicker()
                     }
-                ) { Text("📂 Mở file .SRT/.ASS", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                ) { Text("M\u1EDF file .SRT/.ASS", color = Color.White, style = MaterialTheme.typography.labelSmall) }
             }
 
             val audioTracks = remember(state.currentVideo, state.isPlaying, state.activeModal) {
                 state.playerManager.getAvailableTracks(C.TRACK_TYPE_AUDIO)
             }
             if (audioTracks.isNotEmpty()) {
-                Text("🔊 Chọn Kênh Âm Thanh:", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("K\u00EAnh \u00E2m thanh", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -408,11 +407,9 @@ private fun BoxScope.PlayerToolsModal(
                             active = trackOpt.isSelected,
                             onClick = {
                                 state.playerManager.selectTrackOverride(trackOpt)
-                                state.showTemporaryHint("🔊 Đã chọn âm thanh: ${trackOpt.label}", 1200L)
+                                state.showTemporaryHint("\u00C2m thanh: ${trackOpt.label}", 1200L)
                             }
-                        ) {
-                            Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
+                        ) { Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall) }
                     }
                 }
             }
@@ -421,7 +418,7 @@ private fun BoxScope.PlayerToolsModal(
                 state.playerManager.getAvailableTracks(C.TRACK_TYPE_TEXT)
             }
             if (textTracks.isNotEmpty()) {
-                Text("💬 Chọn Kênh Phụ Đề:", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("K\u00EAnh ph\u1EE5 \u0111\u1EC1", color = palette.primaryGlow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -432,11 +429,9 @@ private fun BoxScope.PlayerToolsModal(
                             onClick = {
                                 state.subtitlesEnabled = true
                                 state.playerManager.selectTrackOverride(trackOpt)
-                                state.showTemporaryHint("💬 Đã chọn phụ đề: ${trackOpt.label}", 1200L)
+                                state.showTemporaryHint("Ph\u1EE5 \u0111\u1EC1: ${trackOpt.label}", 1200L)
                             }
-                        ) {
-                            Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        }
+                        ) { Text(trackOpt.label, color = Color.White, style = MaterialTheme.typography.labelSmall) }
                     }
                 }
             }
@@ -446,28 +441,24 @@ private fun BoxScope.PlayerToolsModal(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Cỡ & Màu:", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                listOf(16f to "Nhỏ", 20f to "Vừa", 26f to "Lớn", 32f to "To").forEach { (sz, lbl) ->
+                Text("C\u1EE1 & M\u00E0u:", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
+                listOf(16f to "Nh\u1ECF", 20f to "V\u1EEBa", 26f to "L\u1EDBn", 32f to "To").forEach { (sz, lbl) ->
                     LiquidGlassPill(
                         active = state.subtitleSizeSp == sz,
                         onClick = {
                             state.subtitleSizeSp = sz
                             state.scope.launch { state.context.saveSubtitleAppearance(sz, state.subtitleTextColor.toArgb()) }
                         }
-                    ) {
-                        Text(lbl, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                    }
+                    ) { Text(lbl, color = Color.White, style = MaterialTheme.typography.labelSmall) }
                 }
-                listOf(Color.White to "Trắng", Color(0xFFFFEA00) to "Vàng", Color(0xFF00F0FF) to "Cyan").forEach { (col, name) ->
+                listOf(Color.White to "Tr\u1EAFng", Color(0xFFFFEA00) to "V\u00E0ng", Color(0xFF00F0FF) to "Cyan").forEach { (col, name) ->
                     LiquidGlassPill(
                         active = state.subtitleTextColor == col,
                         onClick = {
                             state.subtitleTextColor = col
                             state.scope.launch { state.context.saveSubtitleAppearance(state.subtitleSizeSp, col.toArgb()) }
                         }
-                    ) {
-                        Text(name, color = col, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
+                    ) { Text(name, color = col, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
                 }
             }
         }

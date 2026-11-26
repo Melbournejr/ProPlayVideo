@@ -3,11 +3,9 @@ package com.videoplayer.app.ui.main
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,10 +37,7 @@ data class ContinueWatchingItem(
 }
 
 /**
- * Thanh chuyển đổi chế độ xem trên HomeScreen:
- * - 📁 Thư mục
- * - 🔖 Xem sau (Watch Later)
- * - 🕒 Lịch sử xem (Playback History)
+ * Thanh Segmented Pill gọn 1 hàng cho Thư mục / Xem sau / Lịch sử
  */
 @Composable
 fun HomeFeedFilterTabs(
@@ -57,65 +52,72 @@ fun HomeFeedFilterTabs(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 4.dp)
-            .horizontalScroll(rememberScrollState()),
+            .padding(horizontal = 14.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        LiquidGlassPill(
-            active = activeFilter == HomeFeedFilter.FOLDERS,
-            onClick = { onSelectFilter(HomeFeedFilter.FOLDERS) }
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(50.dp))
+                .background(Color.White.copy(alpha = 0.06f))
+                .border(0.7.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50.dp))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Icon(AppIcons.Folder, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(5.dp))
-            Text("Thư mục", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-        }
-
-        LiquidGlassPill(
-            active = activeFilter == HomeFeedFilter.WATCH_LATER,
-            onClick = { onSelectFilter(HomeFeedFilter.WATCH_LATER) }
-        ) {
-            Icon(AppIcons.WatchLater, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(5.dp))
-            Text(
-                text = if (watchLaterCount > 0) "Xem sau ($watchLaterCount)" else "Xem sau",
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
+            val tabs = listOf(
+                Triple(HomeFeedFilter.FOLDERS, "Th\u01B0 m\u1EE5c", AppIcons.Folder),
+                Triple(
+                    HomeFeedFilter.WATCH_LATER,
+                    if (watchLaterCount > 0) "Xem sau ($watchLaterCount)" else "Xem sau",
+                    AppIcons.WatchLater
+                ),
+                Triple(
+                    HomeFeedFilter.HISTORY,
+                    if (historyCount > 0) "L\u1ECBch s\u1EED ($historyCount)" else "L\u1ECBch s\u1EED",
+                    AppIcons.History
+                )
             )
-        }
 
-        LiquidGlassPill(
-            active = activeFilter == HomeFeedFilter.HISTORY,
-            onClick = { onSelectFilter(HomeFeedFilter.HISTORY) }
-        ) {
-            Icon(AppIcons.History, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(5.dp))
-            Text(
-                text = if (historyCount > 0) "Lịch sử ($historyCount)" else "Lịch sử",
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
-            )
+            tabs.forEach { (tab, label, icon) ->
+                val selected = (activeFilter == tab)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(if (selected) palette.primaryGlow.copy(alpha = 0.24f) else Color.Transparent)
+                        .clickable { onSelectFilter(tab) }
+                        .padding(vertical = 7.dp, horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = if (selected) palette.primaryGlow else Color.White.copy(alpha = 0.65f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = label,
+                        color = if (selected) Color.White else Color.White.copy(alpha = 0.68f),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
 
         if (activeFilter == HomeFeedFilter.HISTORY && historyCount > 0) {
-            LiquidGlassPill(
-                active = false,
-                onClick = onClearHistory
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Xóa lịch sử", color = Color(0xFFFF5C8A), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            LiquidGlassIconButton(onClick = onClearHistory, size = 34.dp) {
+                Icon(Icons.Default.Delete, contentDescription = "X\u00F3a l\u1ECBch s\u1EED", tint = Color(0xFFFF5C8A), modifier = Modifier.size(16.dp))
             }
         }
     }
 }
 
-/**
- * Khu vực "Tiếp tục xem" (Continue Watching Carousel) hiển thị các video đang xem dở
- * kèm thanh tiến trình ngay trên Thumbnail và nút gỡ nhanh.
- */
 @Composable
 fun ContinueWatchingCarousel(
     items: List<ContinueWatchingItem>,
@@ -130,18 +132,13 @@ fun ContinueWatchingCarousel(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "▶ Tiếp tục xem (${items.size})",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
-            )
-        }
+        Text(
+            text = "Ti\u1EBFp t\u1EE5c xem",
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -150,9 +147,9 @@ fun ContinueWatchingCarousel(
             items(items, key = { "cw_${it.video.id}" }) { cw ->
                 LiquidGlassCard(
                     cornerRadius = 18.dp,
-                    highlighted = true,
+                    highlighted = false,
                     onClick = { onPlayItem(cw.video) },
-                    modifier = Modifier.width(190.dp)
+                    modifier = Modifier.width(184.dp)
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
                         Box {
@@ -160,7 +157,7 @@ fun ContinueWatchingCarousel(
                                 video = cw.video,
                                 progressFraction = cw.progressFraction,
                                 isWatchLater = cw.video.id in watchLaterIds,
-                                modifier = Modifier.fillMaxWidth().height(96.dp)
+                                modifier = Modifier.fillMaxWidth().height(94.dp)
                             )
                             Box(
                                 modifier = Modifier
@@ -174,9 +171,9 @@ fun ContinueWatchingCarousel(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Ẩn khỏi Tiếp tục xem",
+                                    contentDescription = "\u1EA8n",
                                     tint = Color.White,
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(12.dp)
                                 )
                             }
                         }
@@ -185,12 +182,12 @@ fun ContinueWatchingCarousel(
                             text = cw.video.displayName,
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.White,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Đã xem ${(cw.progressFraction * 100).toInt()}% • ${cw.video.folder}",
+                            text = "${(cw.progressFraction * 100).toInt()}% \u2022 ${cw.video.folder}",
                             style = MaterialTheme.typography.labelSmall,
                             color = palette.primaryGlow,
                             maxLines = 1,

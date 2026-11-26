@@ -13,15 +13,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,12 +36,12 @@ data class FolderSummary(
 )
 
 enum class SortOption(val label: String) {
-    DATE_DESC("Mới nhất trước"),
-    DATE_ASC("Cũ nhất trước"),
-    SIZE_DESC("Dung lượng: Lớn -> Nhỏ"),
-    SIZE_ASC("Dung lượng: Nhỏ -> Lớn"),
-    DURATION_DESC("Thời lượng: Dài -> Ngắn"),
-    NAME_ASC("Tên: A -> Z")
+    DATE_DESC("M\u1EDBi nh\u1EA5t tr\u01B0\u1EDBc"),
+    DATE_ASC("C\u0169 nh\u1EA5t tr\u01B0\u1EDBc"),
+    SIZE_DESC("Dung l\u01B0\u1EE3ng: L\u1EDBn \u2192 Nh\u1ECF"),
+    SIZE_ASC("Dung l\u01B0\u1EE3ng: Nh\u1ECF \u2192 L\u1EDBn"),
+    DURATION_DESC("Th\u1EDDi l\u01B0\u1EE3ng: D\u00E0i \u2192 Ng\u1EAFn"),
+    NAME_ASC("T\u00EAn: A \u2192 Z")
 }
 
 fun formatFolderSize(bytes: Long): String {
@@ -67,8 +64,10 @@ fun MultiSelectActionBar(
 ) {
     val palette = LocalGlassPalette.current
 
-    LiquidGlassCard(
-        cornerRadius = 20.dp,
+    LiquidGlassBar(
+        variant = LiquidGlassVariant.REGULAR,
+        cornerRadius = 22.dp,
+        shadowElevation = 12.dp,
         highlighted = true,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
     ) {
@@ -79,21 +78,21 @@ fun MultiSelectActionBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Đã chọn $selectedCount/$totalCount video",
+                    text = "\u0110\u00E3 ch\u1ECDn $selectedCount/$totalCount",
                     color = palette.primaryGlow,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleSmall
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     LiquidGlassPill(onClick = onToggleSelectAll) {
                         Text(
-                            if (selectedCount == totalCount) "Bỏ chọn hết" else "Chọn tất cả",
+                            if (selectedCount == totalCount) "B\u1ECF ch\u1ECDn" else "Ch\u1ECDn h\u1EBFt",
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
                     LiquidGlassPill(onClick = onCancel) {
-                        Text("Hủy ✕", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("H\u1EE7y", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -103,31 +102,31 @@ fun MultiSelectActionBar(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 LiquidGlassPill(onClick = onShareSelected) {
-                    Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Chia sẻ", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text("Chia s\u1EBB", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
                 if (!isVaultMode) {
                     LiquidGlassPill(onClick = onCopySelected) {
-                        Icon(AppIcons.ContentCopy, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Icon(AppIcons.ContentCopy, null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Copy", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                     LiquidGlassPill(onClick = onMoveSelected) {
-                        Icon(AppIcons.DriveFileMove, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Icon(AppIcons.DriveFileMove, null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Chuyển", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text("Chuy\u1EC3n", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
                 LiquidGlassPill(onClick = onVaultActionSelected) {
-                    Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                    Icon(if (isVaultMode) AppIcons.LockOpen else Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (isVaultMode) "Khôi phục" else "Lưu bảo mật", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    Text(if (isVaultMode) "Kh\u00F4i ph\u1EE5c" else "\u1EA8n", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
                 LiquidGlassPill(active = true, onClick = onDeleteSelected) {
-                    Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.Delete, null, tint = Color(0xFFFF5C8A), modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Xóa ($selectedCount)", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Text("X\u00F3a", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -150,10 +149,10 @@ fun BoxScope.FolderListSection(
     LazyColumn(
         state = folderListState,
         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 6.dp, bottom = 104.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-                if (continueWatchingItems.isNotEmpty()) {
+        if (continueWatchingItems.isNotEmpty()) {
             item(key = "continue_watching_carousel") {
                 ContinueWatchingCarousel(
                     items = continueWatchingItems,
@@ -169,80 +168,65 @@ fun BoxScope.FolderListSection(
 
         item(key = "folders_header") {
             Text(
-                text = "Thư mục Video (${folders.size})",
-                style = MaterialTheme.typography.titleMedium,
+                text = "Th\u01B0 m\u1EE5c (${folders.size})",
+                style = MaterialTheme.typography.titleSmall,
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp, start = 4.dp)
             )
         }
 
         items(folders, key = { it.name }) { folder ->
             LiquidGlassCard(
-                cornerRadius = 22.dp,
+                cornerRadius = 20.dp,
                 onClick = { onSelectFolder(folder.name) },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(contentAlignment = Alignment.BottomEnd) {
                         VideoThumbnailView(
                             video = folder.previewVideo,
-                            modifier = Modifier.size(width = 100.dp, height = 62.dp)
+                            modifier = Modifier.size(width = 96.dp, height = 58.dp)
                         )
                         Box(
                             modifier = Modifier
                                 .padding(4.dp)
                                 .background(palette.primaryGlow.copy(alpha = 0.9f), CircleShape)
-                                .padding(4.dp)
+                                .padding(3.5.dp)
                         ) {
                             Icon(
                                 imageVector = AppIcons.Folder,
                                 contentDescription = null,
                                 tint = Color(0xFF001F29),
-                                modifier = Modifier.size(13.dp)
+                                modifier = Modifier.size(12.dp)
                             )
                         }
                     }
-                    Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                    Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                         Text(
                             text = folder.name,
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                             color = Color.White,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${folder.count} video",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = palette.primaryGlow,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "  •  ${formatFolderSize(folder.totalSize)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFA7B8D8)
-                            )
-                        }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                            .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = Color.White
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${folder.count} video \u2022 ${formatFolderSize(folder.totalSize)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.62f)
                         )
                     }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.45f),
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }
@@ -280,7 +264,7 @@ fun VideoCollectionSection(
                 state = gridState,
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+                contentPadding = PaddingValues(top = 6.dp, bottom = 104.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -293,7 +277,7 @@ fun VideoCollectionSection(
                     val isJustWatched = (video.id == lastViewedVideoId)
 
                     LiquidGlassCard(
-                        cornerRadius = 20.dp,
+                        cornerRadius = 18.dp,
                         highlighted = isSelected || isJustWatched,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -308,7 +292,7 @@ fun VideoCollectionSection(
                                     video = video,
                                     progressFraction = progress,
                                     isWatchLater = video.id in watchLaterIds,
-                                    modifier = Modifier.fillMaxWidth().height(104.dp)
+                                    modifier = Modifier.fillMaxWidth().height(102.dp)
                                 )
                                 if (isMultiSelectMode) {
                                     Checkbox(
@@ -317,15 +301,6 @@ fun VideoCollectionSection(
                                         modifier = Modifier.align(Alignment.TopStart)
                                     )
                                 }
-                            }
-                            if (progress > 0f) {
-                                Spacer(Modifier.height(4.dp))
-                                LinearProgressIndicator(
-                                    progress = progress,
-                                    color = palette.primaryGlow,
-                                    trackColor = Color.White.copy(alpha = 0.12f),
-                                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))
-                                )
                             }
                             Spacer(Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -341,7 +316,7 @@ fun VideoCollectionSection(
                                     Text(
                                         text = video.sizeFormatted,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFA7B8D8)
+                                        color = Color.White.copy(alpha = 0.60f)
                                     )
                                 }
                                 if (!isMultiSelectMode) {
@@ -349,7 +324,7 @@ fun VideoCollectionSection(
                                         onClick = { onOpenMenuFor(video) },
                                         modifier = Modifier.size(28.dp)
                                     ) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White.copy(alpha = 0.75f), modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -368,8 +343,8 @@ fun VideoCollectionSection(
             LazyColumn(
                 state = videoListState,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                contentPadding = PaddingValues(top = 6.dp, bottom = 104.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
                 items(displayedVideos, key = { it.id }) { video ->
                     val savedPos = savedPositions[video.id] ?: 0L
@@ -380,7 +355,7 @@ fun VideoCollectionSection(
                     val isJustWatched = (video.id == lastViewedVideoId)
 
                     LiquidGlassCard(
-                        cornerRadius = 20.dp,
+                        cornerRadius = 18.dp,
                         highlighted = isSelected || isJustWatched,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -390,7 +365,7 @@ fun VideoCollectionSection(
                             )
                     ) {
                         Row(
-                            modifier = Modifier.padding(10.dp),
+                            modifier = Modifier.padding(9.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (isMultiSelectMode) {
@@ -403,42 +378,33 @@ fun VideoCollectionSection(
                                 video = video,
                                 progressFraction = progress,
                                 isWatchLater = video.id in watchLaterIds,
-                                modifier = Modifier.size(width = 112.dp, height = 64.dp)
+                                modifier = Modifier.size(width = 108.dp, height = 62.dp)
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                                 Text(
                                     text = video.displayName,
                                     style = MaterialTheme.typography.titleSmall,
                                     color = if (isSelected || isJustWatched) palette.primaryGlow else Color.White,
-                                    fontWeight = if (isSelected || isJustWatched) FontWeight.Bold else FontWeight.SemiBold,
+                                    fontWeight = if (isSelected || isJustWatched) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = if (isVaultMode) {
-                                        "📁 Lưu trữ • ${video.sizeFormatted}"
+                                        "L\u01B0u tr\u1EEF n\u1ED9i b\u1ED9 \u2022 ${video.sizeFormatted}"
                                     } else if (savedPos > 2000L) {
-                                        "${video.sizeFormatted} • Đã xem ${(progress * 100).toInt()}%"
+                                        "${video.sizeFormatted} \u2022 \u0110\u00E3 xem ${(progress * 100).toInt()}%"
                                     } else {
                                         video.sizeFormatted
                                     },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (savedPos > 2000L || isVaultMode) palette.primaryGlow else Color(0xFFA7B8D8)
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (savedPos > 2000L || isVaultMode) palette.primaryGlow else Color.White.copy(alpha = 0.60f)
                                 )
-                                if (progress > 0f) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    LinearProgressIndicator(
-                                        progress = progress,
-                                        color = palette.primaryGlow,
-                                        trackColor = Color.White.copy(alpha = 0.12f),
-                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
-                                    )
-                                }
                             }
                             if (!isMultiSelectMode) {
                                 IconButton(onClick = { onOpenMenuFor(video) }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "Quản lý file", tint = Color.White)
+                                    Icon(Icons.Default.MoreVert, contentDescription = "T\u00F9y ch\u1ECDn", tint = Color.White.copy(alpha = 0.72f))
                                 }
                             }
                         }
