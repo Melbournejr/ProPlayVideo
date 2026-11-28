@@ -351,5 +351,16 @@ object AppIcons {
         }
     }
 
+    val Cloud: ImageVector = createIcon("Cloud") {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(19.35f, 10.04f); curveTo(18.67f, 6.59f, 15.64f, 4f, 12f, 4f)
+            curveTo(9.11f, 4f, 6.6f, 5.64f, 5.35f, 8.04f)
+            curveTo(2.34f, 8.36f, 0f, 10.91f, 0f, 14f)
+            curveTo(0f, 17.31f, 2.69f, 20f, 6f, 20f)
+            lineTo(19f, 20f); curveTo(21.76f, 20f, 24f, 17.76f, 24f, 15f)
+            curveTo(24f, 12.36f, 21.95f, 10.22f, 19.35f, 10.04f); close()
+        }
+    }
+
     val Public: ImageVector = Stream
 }

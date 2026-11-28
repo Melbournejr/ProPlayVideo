@@ -141,7 +141,7 @@ object StreamHistoryManager {
 
     fun recordStreamPlayed(context: Context, rawUrl: String, optionalName: String = ""): String {
         val cleanUrl = rawUrl.trim()
-        if (cleanUrl.isBlank()) return ""
+        if (cleanUrl.isBlank() || cleanUrl.startsWith("http://127.0.0.1")) return optionalName
         ensureInitialized(context)
 
         val current = _items.value
@@ -173,7 +173,7 @@ object StreamHistoryManager {
 
     fun updateStreamProgress(context: Context, rawUrl: String, positionMs: Long, durationMs: Long) {
         val cleanUrl = rawUrl.trim()
-        if (cleanUrl.isBlank() || durationMs <= 10_000L) return
+        if (cleanUrl.isBlank() || cleanUrl.startsWith("http://127.0.0.1") || durationMs <= 10_000L) return
         ensureInitialized(context)
 
         val current = _items.value

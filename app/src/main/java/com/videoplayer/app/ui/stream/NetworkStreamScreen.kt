@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.network.StreamDownloadManager
+import com.videoplayer.app.network.cloud.GoogleDriveProvider
 import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassPill
 import com.videoplayer.app.ui.components.LocalGlassStyle
@@ -158,7 +159,25 @@ fun NetworkStreamScreen(
     fun launchStream(targetUrl: String, titleHint: String = "") {
         val trimmed = targetUrl.trim()
         if (trimmed.isBlank()) return
-        if (trimmed.startsWith("http://", ignoreCase = true) && !httpWarnAck) {
+        if (GoogleDriveProvider.isGoogleDriveUrl(trimmed)) {
+            scope.launch {
+                isImportingM3u = true
+                GoogleDriveProvider.resolvePublicLink(trimmed).onSuccess { (directUrl, detectedName) ->
+                    val resolvedTitle = StreamHistoryManager.recordStreamPlayed(
+                        context,
+                        trimmed,
+                        titleHint.ifBlank { detectedName.orEmpty() }
+                    )
+                    onPlayClick(directUrl, resolvedTitle)
+                }.onFailure { err ->
+                    Toast.makeText(context, "Google Drive: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+                isImportingM3u = false
+            }
+            return
+        }
+        val isLocalProxy = trimmed.startsWith("http://127.0.0.1", ignoreCase = true)
+        if (trimmed.startsWith("http://", ignoreCase = true) && !isLocalProxy && !httpWarnAck) {
             pendingUrlToPlay = trimmed
             pendingTitleToSave = titleHint
             showHttpWarningDialog = true
@@ -171,6 +190,20 @@ fun NetworkStreamScreen(
     fun triggerStreamDownload(targetUrl: String, titleHint: String) {
         val trimmed = targetUrl.trim()
         if (trimmed.isBlank()) return
+        if (GoogleDriveProvider.isGoogleDriveUrl(trimmed)) {
+            scope.launch {
+                isImportingM3u = true
+                GoogleDriveProvider.resolvePublicLink(trimmed).onSuccess { (directUrl, detectedName) ->
+                    val name = titleHint.ifBlank { detectedName ?: StreamHistoryManager.findTitleForUrl(trimmed) ?: "GoogleDrive_Video" }
+                    StreamDownloadManager.startDownload(context, directUrl, name.substringBeforeLast('.'))
+                    Toast.makeText(context, "\u0110ang t\u1EA3i t\u1EEB Google Drive: $name", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Google Drive: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+                isImportingM3u = false
+            }
+            return
+        }
         val name = titleHint.ifBlank { StreamHistoryManager.findTitleForUrl(trimmed) ?: "Stream" }
         StreamDownloadManager.startDownload(context, trimmed, name)
         Toast.makeText(context, "\u0110ang t\u1EA3i: $name", Toast.LENGTH_SHORT).show()
@@ -182,20 +215,21 @@ fun NetworkStreamScreen(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Thanh chuyen doi 2 Tab: [URL & Lich su] | [IPTV M3U]
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Thanh chuyen doi 3 Tab: [Lich su] | [IPTV M3U] | [Kho Mang]
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LiquidGlassPill(
                 active = activeTab == 0,
                 onClick = { activeTab = 0 },
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(AppIcons.History, contentDescription = null, tint = if (activeTab == 0) Color.White else style.textPrimary, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(5.dp))
+                Icon(AppIcons.History, contentDescription = null, tint = if (activeTab == 0) Color.White else style.textPrimary, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "L\u1ECBch s\u1EED (${streamHistory.size})",
+                    text = "L\u1ECBch s\u1EED",
                     color = if (activeTab == 0) Color.White else style.textPrimary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
 
@@ -204,13 +238,30 @@ fun NetworkStreamScreen(
                 onClick = { activeTab = 1 },
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(AppIcons.PlaylistPlay, contentDescription = null, tint = if (activeTab == 1) Color.White else style.textPrimary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
+                Icon(AppIcons.PlaylistPlay, contentDescription = null, tint = if (activeTab == 1) Color.White else style.textPrimary, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "IPTV M3U (${m3uChannels.size})",
+                    text = "IPTV",
                     color = if (activeTab == 1) Color.White else style.textPrimary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
+
+            LiquidGlassPill(
+                active = activeTab == 2,
+                onClick = { activeTab = 2 },
+                modifier = Modifier.weight(1.1f)
+            ) {
+                Icon(AppIcons.Cloud, contentDescription = null, tint = if (activeTab == 2) Color.White else style.textPrimary, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "Kho M\u1EA1ng",
+                    color = if (activeTab == 2) Color.White else style.textPrimary,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
         }
@@ -306,7 +357,7 @@ fun NetworkStreamScreen(
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
-                label = { Text("Nh\u1EADp URL (MP4, MKV, HLS .m3u8)") },
+                label = { Text("URL video, HLS .m3u8 ho\u1EB7c link Google Drive") },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -531,6 +582,11 @@ fun NetworkStreamScreen(
                     }
                 }
             }
+        } else if (activeTab == 2) {
+            CloudStorageTab(
+                modifier = Modifier.weight(1f),
+                onPlayCloudVideo = { proxyUrl, title -> onPlayClick(proxyUrl, title) }
+            )
         } else {
             // ================= TAB 1: DANH SACH KENH IPTV (M3U / M3U8) =================
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -54,3 +54,14 @@
 -dontwarn fi.iki.elonen.**
 
 -keep class com.videoplayer.app.data.local.M3uChannelItem { *; }
+
+# Unified Cloud Hub & SMBJ (R8 Release safety)
+-keep class com.videoplayer.app.network.cloud.** { *; }
+-keep class com.hierynomus.** { *; }
+-dontwarn com.hierynomus.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.slf4j.**
+-dontwarn net.engio.**
+-dontwarn org.ietf.jgss.**
+-dontwarn javax.security.**
+-dontwarn javax.naming.**

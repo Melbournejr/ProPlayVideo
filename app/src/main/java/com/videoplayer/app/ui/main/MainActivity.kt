@@ -50,6 +50,7 @@ import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.data.repository.VideoRepository
 import com.videoplayer.app.network.LanVideoHttpServer
+import com.videoplayer.app.network.cloud.CloudStreamProxyServer
 import com.videoplayer.app.ui.components.*
 import com.videoplayer.app.ui.player.PlayerScreen
 import com.videoplayer.app.ui.settings.SettingsScreen
@@ -73,6 +74,7 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try { LanVideoHttpServer.stopServer() } catch (_: Exception) {}
+        try { CloudStreamProxyServer.stopServer() } catch (_: Exception) {}
     }
 
     override fun onNewIntent(intent: Intent?) {
