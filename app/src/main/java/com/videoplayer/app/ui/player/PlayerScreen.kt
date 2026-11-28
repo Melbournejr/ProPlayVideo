@@ -141,7 +141,14 @@ fun PlayerScreen(
             delay(250)
             state.eqBands = playerManager.getEqualizerBands()
         } else if (!streamUrl.isNullOrEmpty()) {
+            StreamHistoryManager.ensureInitialized(context)
             playerManager.playStream(streamUrl)
+            val savedStreamPos = StreamHistoryManager.getSavedPositionForUrl(streamUrl)
+            if (savedStreamPos > 2000L) {
+                playerManager.seekToFast(savedStreamPos)
+                state.currentPos = savedStreamPos
+                state.showTemporaryHint("Ti\u1EBFp t\u1EE5c t\u1EEB ${formatTimeMs(savedStreamPos)}", 1400L)
+            }
             state.loadedSubtitles = emptyList()
         }
     }
@@ -248,6 +255,8 @@ fun PlayerScreen(
             if (activeVid != null && state.isPlaying && !state.isDraggingSlider && tick % 4 == 0) {
                 context.saveLastPosition(activeVid.id, pos)
                 WatchExperienceManager.recordPlaybackProgress(context, activeVid, pos, state.duration)
+            } else if (activeVid == null && !streamUrl.isNullOrBlank() && state.isPlaying && !state.isDraggingSlider && tick % 8 == 0 && state.duration > 10_000L) {
+                StreamHistoryManager.updateStreamProgress(context, streamUrl, pos, state.duration)
             }
             delay(300)
         }

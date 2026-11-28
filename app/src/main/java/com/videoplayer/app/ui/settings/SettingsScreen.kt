@@ -49,6 +49,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     val currentFrostAlpha by context.observeGlassFrostAlpha().collectAsState(initial = 0.20f)
     val reduceTrans by context.observeReduceTransparency().collectAsState(initial = false)
     val isGlassLight by context.observeGlassLightMode().collectAsState(initial = false)
+    val streamHistoryLimit by context.observeStreamHistoryMaxLimit().collectAsState(initial = 1000)
 
     var showThemeCustomize by remember { mutableStateOf(true) }
     var showAdvancedOta by remember { mutableStateOf(false) }
@@ -305,6 +306,43 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         // 2. LOCAL LAN WEB SERVER
         LanWebServerSettingsCard()
+
+        // 2.5. GIOI HAN LICH SU XEM STREAM
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(sectionCorner))
+                .background(style.cardSurfaceColor)
+                .border(0.9.dp, style.cardBorderColor, RoundedCornerShape(sectionCorner))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(AppIcons.History, contentDescription = null, tint = palette.primaryGlow, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("L\u1ECBch s\u1EED xem Stream t\u1ED1i \u0111a", style = MaterialTheme.typography.titleSmall, color = style.textPrimary, fontWeight = FontWeight.SemiBold)
+                    Text("C\u00E1c k\u00EAnh \u0111\u00E3 ghim lu\u00F4n \u0111\u01B0\u1EE3c gi\u1EEF nguy\u00EAn kh\u00F4ng b\u1ECB x\u00F3a", style = MaterialTheme.typography.labelSmall, color = style.textSecondary)
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(100 to "100", 500 to "500", 1000 to "1.000", 0 to "Kh\u00F4ng gi\u1EDBi h\u1EA1n").forEach { (limitVal, label) ->
+                    val selected = (streamHistoryLimit == limitVal)
+                    LiquidGlassPill(
+                        active = selected,
+                        onClick = {
+                            scope.launch {
+                                context.saveStreamHistoryMaxLimit(limitVal)
+                                StreamHistoryManager.setMaxUnpinnedLimit(context, limitVal)
+                            }
+                        },
+                        modifier = if (limitVal == 0) Modifier.weight(1.4f) else Modifier.weight(1f)
+                    ) {
+                        Text(label, color = if (selected) Color.White else style.textPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
 
         // 3. QUYEN QUAN LY TEP
         if (!FileOperationHelper.hasAllFilesAccess()) {

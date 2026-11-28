@@ -20,7 +20,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.ui.AspectRatioFrameLayout
+import android.widget.Toast
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.videoplayer.app.data.local.StreamHistoryManager
 import com.videoplayer.app.data.local.saveSubtitleAppearance
+import com.videoplayer.app.network.StreamDownloadManager
 import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassIconButton
 import com.videoplayer.app.ui.components.LiquidGlassModalSheet
@@ -314,6 +319,33 @@ private fun BoxScope.PlayerToolsBottomSheet(
                         Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Chia s\u1EBB", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                    }
+                } else if (!state.streamUrl.isNullOrBlank()) {
+                    val dlTasks by StreamDownloadManager.tasks.collectAsState()
+                    val activeDl = dlTasks.find { it.url == state.streamUrl && it.isRunning }
+                    LiquidGlassPill(
+                        active = activeDl != null,
+                        onClick = {
+                            if (activeDl != null) {
+                                StreamDownloadManager.cancelDownload(state.streamUrl)
+                                Toast.makeText(state.context, "\u0110\u00E3 h\u1EE7y t\u1EA3i lu\u1ED3ng video", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val title = state.streamTitle?.takeIf { it.isNotBlank() }
+                                    ?: StreamHistoryManager.findTitleForUrl(state.streamUrl)
+                                    ?: "Stream"
+                                StreamDownloadManager.startDownload(state.context, state.streamUrl, title)
+                                state.showTemporaryHint("\u0110ang t\u1EA3i v\u1EC1 Movies/VideoPlayerPro...", 1800L)
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(AppIcons.CloudDownload, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = if (activeDl != null && activeDl.progressPercent >= 0) "T\u1EA3i ${activeDl.progressPercent}%" else if (activeDl != null) "H\u1EE7y t\u1EA3i" else "T\u1EA3i v\u1EC1",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }

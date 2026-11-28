@@ -18,6 +18,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import com.videoplayer.app.data.local.getSystemScreenBrightness
 import com.videoplayer.app.data.local.readLastPosition
 import com.videoplayer.app.data.local.VideoBookmark
+import com.videoplayer.app.data.local.StreamHistoryManager
 import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
@@ -195,13 +196,18 @@ class PlayerStateHolder(
     }
 
     fun persistCurrentPosition() {
-        val vid = currentVideo ?: return
+        val vid = currentVideo
         val pos = playerManager.getCurrentPosition()
         val dur = playerManager.getDuration()
-        val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
-        WatchExperienceManager.recordPlaybackProgress(context, vid, posToSave, dur)
-        CoroutineScope(Dispatchers.IO).launch {
-            context.saveLastPosition(vid.id, posToSave)
+        if (vid != null) {
+            val posToSave = if (dur > 5000L && pos >= dur - 2000L) 0L else pos
+            WatchExperienceManager.recordPlaybackProgress(context, vid, posToSave, dur)
+            CoroutineScope(Dispatchers.IO).launch {
+                context.saveLastPosition(vid.id, posToSave)
+            }
+        } else if (!streamUrl.isNullOrBlank() && dur > 10_000L) {
+            val posToSave = if (pos >= dur - 3000L) 0L else pos
+            StreamHistoryManager.updateStreamProgress(context, streamUrl, posToSave, dur)
         }
     }
 

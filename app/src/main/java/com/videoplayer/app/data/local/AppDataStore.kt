@@ -320,3 +320,12 @@ suspend fun Context.saveGlassLightMode(enabled: Boolean) {
 fun Context.observeGlassLightMode(): Flow<Boolean> {
     return this.datastore.data.map { prefs -> prefs[glassLightModeKey] ?: false }
 }
+private val streamHistoryMaxLimitKey = intPreferencesKey("stream_history_max_limit")
+
+suspend fun Context.saveStreamHistoryMaxLimit(limit: Int) {
+    this.datastore.edit { prefs -> prefs[streamHistoryMaxLimitKey] = limit.coerceAtLeast(0) }
+}
+
+fun Context.observeStreamHistoryMaxLimit(): Flow<Int> {
+    return this.datastore.data.map { prefs -> prefs[streamHistoryMaxLimitKey] ?: 1000 }
+}

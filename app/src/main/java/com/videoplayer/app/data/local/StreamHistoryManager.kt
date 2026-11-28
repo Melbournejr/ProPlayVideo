@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.annotation.Keep
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +19,9 @@ data class SavedStreamItem(
     val url: String,
     val customName: String,
     val lastPlayedAtMs: Long,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    val lastPositionMs: Long = 0L,
+    val durationMs: Long = 0L
 )
 
 @Keep
@@ -36,14 +39,15 @@ data class StreamHistoryStoreData(
 )
 
 /**
- * Quan ly Lich su phat Stream mang, Ghim kenh yeu thich (Pin) va Danh sach kenh IPTV (M3U):
- * - Cac muc duoc ghim (isPinned = true) luon xep tren dau va khong bi xoa khi vuot moc 50 lich su
- * - Ho tro tra cuu nhanh ten goi nho theo URL de hien thi len thanh tieu de Player
+ * Quan ly Lich su phat Stream mang nang cao:
+ * - Gioi han mac dinh 1000 muc (0 = Khong gioi han), cac kenh da ghim luon giu nguyen
+ * - Luu tien do xem do (lastPositionMs / durationMs) cho tung luong Stream VOD
+ * - Ho tro Sao luu / Khoi phuc toan bo danh sach qua tep JSON
  */
 object StreamHistoryManager {
     private const val STORE_FILE_NAME = "stream_history_store.json"
-    private const val MAX_UNPINNED_ITEMS = 50
     private val gson = Gson()
+    private val prettyGson = GsonBuilder().setPrettyPrinting().create()
     private val ioScope = CoroutineScope(Dispatchers.IO)
 
     private val _items = MutableStateFlow<List<SavedStreamItem>>(emptyList())
@@ -51,6 +55,9 @@ object StreamHistoryManager {
 
     private val _m3uChannels = MutableStateFlow<List<M3uChannelItem>>(emptyList())
     val m3uChannels: StateFlow<List<M3uChannelItem>> = _m3uChannels.asStateFlow()
+
+    @Volatile
+    private var maxUnpinnedLimit: Int = 1000 // 0 = Khong gioi han
 
     @Volatile
     private var isInitialized = false
@@ -74,11 +81,21 @@ object StreamHistoryManager {
         }
     }
 
+    fun setMaxUnpinnedLimit(context: Context, limit: Int) {
+        maxUnpinnedLimit = limit.coerceAtLeast(0)
+        if (isInitialized) {
+            val sorted = sortHistory(_items.value)
+            if (sorted.size != _items.value.size) {
+                _items.value = sorted
+                ioScope.launch { persist(context.applicationContext, sorted, _m3uChannels.value) }
+            }
+        }
+    }
+
     private fun sortHistory(list: List<SavedStreamItem>): List<SavedStreamItem> {
         val pinned = list.filter { it.isPinned }.sortedByDescending { it.lastPlayedAtMs }
-        val unpinned = list.filterNot { it.isPinned }
-            .sortedByDescending { it.lastPlayedAtMs }
-            .take(MAX_UNPINNED_ITEMS)
+        val unpinnedSorted = list.filterNot { it.isPinned }.sortedByDescending { it.lastPlayedAtMs }
+        val unpinned = if (maxUnpinnedLimit > 0) unpinnedSorted.take(maxUnpinnedLimit) else unpinnedSorted
         return pinned + unpinned
     }
 
@@ -115,6 +132,13 @@ object StreamHistoryManager {
         return null
     }
 
+    fun getSavedPositionForUrl(url: String): Long {
+        val clean = url.trim()
+        val entry = _items.value.find { it.url.equals(clean, ignoreCase = true) } ?: return 0L
+        if (entry.durationMs <= 10_000L) return 0L
+        return if (entry.lastPositionMs in 2000L..(entry.durationMs - 3000L)) entry.lastPositionMs else 0L
+    }
+
     fun recordStreamPlayed(context: Context, rawUrl: String, optionalName: String = ""): String {
         val cleanUrl = rawUrl.trim()
         if (cleanUrl.isBlank()) return ""
@@ -133,7 +157,9 @@ object StreamHistoryManager {
             url = cleanUrl,
             customName = resolvedName,
             lastPlayedAtMs = System.currentTimeMillis(),
-            isPinned = existing?.isPinned ?: false
+            isPinned = existing?.isPinned ?: false,
+            lastPositionMs = existing?.lastPositionMs ?: 0L,
+            durationMs = existing?.durationMs ?: 0L
         )
 
         val merged = mutableListOf(updatedItem).apply {
@@ -143,6 +169,44 @@ object StreamHistoryManager {
         _items.value = sorted
         ioScope.launch { persist(context.applicationContext, sorted, _m3uChannels.value) }
         return resolvedName
+    }
+
+    fun updateStreamProgress(context: Context, rawUrl: String, positionMs: Long, durationMs: Long) {
+        val cleanUrl = rawUrl.trim()
+        if (cleanUrl.isBlank() || durationMs <= 10_000L) return
+        ensureInitialized(context)
+
+        val current = _items.value
+        val existing = current.find { it.url.equals(cleanUrl, ignoreCase = true) }
+        val safePos = positionMs.coerceIn(0L, durationMs)
+        val finalPos = if (safePos >= durationMs - 3000L) 0L else safePos
+
+        val updated = if (existing != null) {
+            current.map { item ->
+                if (item.id == existing.id) {
+                    item.copy(
+                        lastPositionMs = finalPos,
+                        durationMs = durationMs,
+                        lastPlayedAtMs = System.currentTimeMillis()
+                    )
+                } else item
+            }
+        } else {
+            val newItem = SavedStreamItem(
+                id = "stream_${System.currentTimeMillis()}",
+                url = cleanUrl,
+                customName = findTitleForUrl(cleanUrl) ?: deriveDefaultName(cleanUrl),
+                lastPlayedAtMs = System.currentTimeMillis(),
+                isPinned = false,
+                lastPositionMs = finalPos,
+                durationMs = durationMs
+            )
+            listOf(newItem) + current
+        }
+
+        val sorted = sortHistory(updated)
+        _items.value = sorted
+        ioScope.launch { persist(context.applicationContext, sorted, _m3uChannels.value) }
     }
 
     fun togglePin(context: Context, id: String): Boolean {
@@ -196,5 +260,56 @@ object StreamHistoryManager {
         ensureInitialized(context)
         _m3uChannels.value = emptyList()
         ioScope.launch { persist(context.applicationContext, _items.value, emptyList()) }
+    }
+
+    fun exportToJson(context: Context): String {
+        ensureInitialized(context)
+        return prettyGson.toJson(StreamHistoryStoreData(_items.value, _m3uChannels.value))
+    }
+
+    fun importFromJson(context: Context, jsonText: String): Result<Pair<Int, Int>> {
+        return try {
+            ensureInitialized(context)
+            val parsed = gson.fromJson(jsonText, StreamHistoryStoreData::class.java)
+                ?: return Result.failure(Exception("T\u1EC7p sao l\u01B0u kh\u00F4ng h\u1EE3p l\u1EC7"))
+
+            val importedHistory = parsed.items ?: emptyList()
+            val importedM3u = parsed.m3uChannels ?: emptyList()
+
+            // Hop nhat voi danh sach hien tai (uu tien giu lai muc da co, bo sung muc moi)
+            val existingByUrl = _items.value.associateBy { it.url.lowercase() }.toMutableMap()
+            var addedHistory = 0
+            importedHistory.forEach { item ->
+                val key = item.url.trim().lowercase()
+                if (key.isNotBlank()) {
+                    val prev = existingByUrl[key]
+                    if (prev == null) {
+                        existingByUrl[key] = item
+                        addedHistory++
+                    } else if (!prev.isPinned && item.isPinned) {
+                        existingByUrl[key] = prev.copy(isPinned = true, customName = item.customName.ifBlank { prev.customName })
+                    }
+                }
+            }
+            val mergedHistory = sortHistory(existingByUrl.values.toList())
+
+            val existingM3uByUrl = _m3uChannels.value.associateBy { it.url.lowercase() }.toMutableMap()
+            var addedM3u = 0
+            importedM3u.forEach { ch ->
+                val key = ch.url.trim().lowercase()
+                if (key.isNotBlank() && !existingM3uByUrl.containsKey(key)) {
+                    existingM3uByUrl[key] = ch
+                    addedM3u++
+                }
+            }
+            val mergedM3u = existingM3uByUrl.values.toList()
+
+            _items.value = mergedHistory
+            _m3uChannels.value = mergedM3u
+            ioScope.launch { persist(context.applicationContext, mergedHistory, mergedM3u) }
+            Result.success(addedHistory to addedM3u)
+        } catch (e: Exception) {
+            Result.failure(Exception("Kh\u00F4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c JSON: ${e.message}"))
+        }
     }
 }
