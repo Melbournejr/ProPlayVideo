@@ -1,30 +1,29 @@
 package com.videoplayer.app.ui.player
 
 import android.app.Activity
-import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
-import android.os.Build
-import android.provider.OpenableColumns
+import android.graphics.Rect
 import android.net.Uri
-import android.util.Rational
+import android.provider.OpenableColumns
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.videoplayer.app.data.local.StreamHistoryManager
+import com.videoplayer.app.data.local.VideoBookmark
+import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.data.local.getSystemScreenBrightness
 import com.videoplayer.app.data.local.readLastPosition
-import com.videoplayer.app.data.local.VideoBookmark
-import com.videoplayer.app.data.local.StreamHistoryManager
-import com.videoplayer.app.data.local.WatchExperienceManager
 import com.videoplayer.app.data.local.saveLastPosition
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.ExternalSubtitleItem
 import com.videoplayer.app.media.PlayerManager
 import com.videoplayer.app.media.VideoNerdStats
+import com.videoplayer.app.util.PipController
 import com.videoplayer.app.util.VideoSnapshotHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,10 +87,6 @@ fun buildVideoColorPaint(saturation: Float, contrast: Float, brightnessOffset: F
     return Paint().apply { colorFilter = ColorMatrixColorFilter(satMatrix) }
 }
 
-/**
- * StateHolder quản lý tập trung toàn bộ trạng thái và hành vi của PlayerScreen.
- * Giúp các Composable bên dưới hoàn toàn "dumb" và giảm thiểu Recomposition.
- */
 @Stable
 class PlayerStateHolder(
     val context: Context,
@@ -132,6 +127,12 @@ class PlayerStateHolder(
     var gestureHint by mutableStateOf<String?>(null)
     var isInPipMode by mutableStateOf(false)
 
+    // Thong so khung hinh thuc phuc vu PiP tu dong co gian theo video Doc / Ngang
+    var videoWidth by mutableIntStateOf(0)
+    var videoHeight by mutableIntStateOf(0)
+    var videoPixelRatio by mutableFloatStateOf(1f)
+    var playerBoundsRect by mutableStateOf<Rect?>(null)
+
     var audioBoostPercent by mutableIntStateOf(0)
     var backgroundAudioEnabled by mutableStateOf(false)
     var sleepTimerMinutes by mutableIntStateOf(0)
@@ -143,7 +144,7 @@ class PlayerStateHolder(
 
     var eqBands by mutableStateOf(playerManager.getEqualizerBands())
     var bassBoostPercent by mutableIntStateOf(0)
-    var activeEqPresetName by mutableStateOf("Mặc định")
+    var activeEqPresetName by mutableStateOf("M\u1EB7c \u0111\u1ECBnh")
 
     var loopPointA by mutableStateOf<Long?>(null)
     var loopPointB by mutableStateOf<Long?>(null)
@@ -221,6 +222,16 @@ class PlayerStateHolder(
         isPlaying = !isPlaying
     }
 
+    fun seekByDelta(deltaMs: Long) {
+        val cur = playerManager.getCurrentPosition()
+        val dur = playerManager.getDuration().coerceAtLeast(1L)
+        val target = (cur + deltaMs).coerceIn(0L, dur)
+        playerManager.seekToFast(target)
+        currentPos = target
+        lastSeekCompletedTimeMs = System.currentTimeMillis()
+        persistCurrentPosition()
+    }
+
     fun toggleScreenOrientation(activity: Activity?) {
         val act = activity ?: return
         val isLandscape = act.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -244,7 +255,7 @@ class PlayerStateHolder(
                 refreshBookmarksForCurrentVideo()
                 loadedSubtitles = subs
                 onVideoChangedCallback(nextVid)
-                showTemporaryHint("⏭️ ${nextVid.displayName}")
+                if (!isInPipMode) showTemporaryHint(nextVid.displayName)
             }
         }
     }
@@ -262,7 +273,7 @@ class PlayerStateHolder(
                 refreshBookmarksForCurrentVideo()
                 loadedSubtitles = subs
                 onVideoChangedCallback(prevVid)
-                showTemporaryHint("⏮️ ${prevVid.displayName}")
+                if (!isInPipMode) showTemporaryHint(prevVid.displayName)
             }
         }
     }
@@ -271,30 +282,35 @@ class PlayerStateHolder(
         val vid = currentVideo
         val pos = playerManager.getCurrentPosition()
         activeModal = ActiveModal.NONE
-        gestureHint = "📸 Đang chụp khung hình gốc..."
+        gestureHint = "\u0110ang ch\u1EE5p khung h\u00ECnh g\u1ED1c..."
         scope.launch {
             val res = VideoSnapshotHelper.captureCurrentFrame(context, vid?.path, pos, vid?.title ?: "Video")
             val msg = res.fold(
-                onSuccess = { "✅ Đã lưu: $it" },
-                onFailure = { "⚠️ Lỗi: ${it.message}" }
+                onSuccess = { "\u0110\u00E3 l\u01B0u: $it" },
+                onFailure = { "L\u1ED7i: ${it.message}" }
             )
             showTemporaryHint(msg, 2000L)
         }
     }
 
     fun enterPip(activity: Activity?) {
-        val act = activity ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                persistCurrentPosition()
-                resetZoom()
-                showControls = false
-                activeModal = ActiveModal.NONE
-                act.enterPictureInPictureMode(
-                    PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
-                )
-                isInPipMode = true
-            } catch (_: Exception) {}
+        persistCurrentPosition()
+        resetZoom()
+        showControls = false
+        activeModal = ActiveModal.NONE
+        val entered = PipController.enterPipNow(
+            activity = activity,
+            isPlaying = isPlaying,
+            hasPlaylistNavigation = effectivePlaylist.size > 1,
+            hasPrevious = hasPrevious,
+            hasNext = hasNext,
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+            pixelWidthHeightRatio = videoPixelRatio,
+            sourceRectHint = playerBoundsRect
+        )
+        if (entered) {
+            isInPipMode = true
         }
     }
 }

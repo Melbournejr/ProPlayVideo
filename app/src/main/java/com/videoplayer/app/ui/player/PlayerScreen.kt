@@ -1,8 +1,11 @@
 package com.videoplayer.app.ui.player
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.graphics.Rect
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -21,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
@@ -30,20 +35,19 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.videoplayer.app.data.local.*
 import com.videoplayer.app.data.model.VideoItem
 import com.videoplayer.app.media.PlayerManager
+import com.videoplayer.app.util.PipController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
-/**
- * PlayerScreen đã được Refactor gọn sạch:
- * Chỉ đảm nhiệm Orchestration (Lifecycle, SystemUI, ExoPlayer Listener) và kết nối với PlayerStateHolder.
- */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun PlayerScreen(
@@ -74,6 +78,70 @@ fun PlayerScreen(
         )
     }
 
+    // Dong bo trang thai PiP tuc thi tu MainActivity.onPictureInPictureModeChanged
+    val pipModeFlow by PipController.isInPipMode.collectAsState()
+    LaunchedEffect(pipModeFlow) {
+        state.isInPipMode = pipModeFlow
+        if (pipModeFlow) {
+            state.showControls = false
+            state.activeModal = ActiveModal.NONE
+            state.resetZoom()
+        }
+    }
+
+    // Cap nhat PictureInPictureParams (Ty le Doc/Ngang + Nut Play/Pause/Next/Prev + SeamlessResize + AutoEnter)
+    LaunchedEffect(
+        activity,
+        state.isPlaying,
+        state.effectivePlaylist.size,
+        state.hasPrevious,
+        state.hasNext,
+        state.videoWidth,
+        state.videoHeight,
+        state.videoPixelRatio,
+        state.playerBoundsRect,
+        state.isLocked
+    ) {
+        PipController.updateActivityPipParams(
+            activity = activity,
+            isPlaying = state.isPlaying,
+            hasPlaylistNavigation = state.effectivePlaylist.size > 1,
+            hasPrevious = state.hasPrevious,
+            hasNext = state.hasNext,
+            videoWidth = state.videoWidth,
+            videoHeight = state.videoHeight,
+            pixelWidthHeightRatio = state.videoPixelRatio,
+            sourceRectHint = state.playerBoundsRect,
+            autoEnterEnabled = state.isPlaying && !state.isLocked
+        )
+    }
+
+    // Dang ky BroadcastReceiver nhan su kien bam nut tren cua so PiP
+    DisposableEffect(context, state) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != PipController.ACTION_PIP_CONTROL) return
+                when (intent.getIntExtra(PipController.EXTRA_CONTROL_TYPE, 0)) {
+                    PipController.CONTROL_PLAY_PAUSE -> state.togglePlayPause()
+                    PipController.CONTROL_PREV -> state.triggerPreviousVideo()
+                    PipController.CONTROL_NEXT -> state.triggerNextVideo()
+                    PipController.CONTROL_REWIND_10 -> state.seekByDelta(-10_000L)
+                    PipController.CONTROL_FORWARD_10 -> state.seekByDelta(10_000L)
+                }
+            }
+        }
+        val filter = IntentFilter(PipController.ACTION_PIP_CONTROL)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose {
+            try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+        }
+    }
+
     val subtitlePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -86,12 +154,12 @@ fun PlayerScreen(
             scope.launch {
                 state.loadedSubtitles = playerManager.attachExternalSubtitleToCurrent(vid, uri, fileName)
                 state.subtitlesEnabled = true
-                state.showTemporaryHint("💬 Đã nạp phụ đề: $fileName", 1600L)
+                state.showTemporaryHint("\u0110\u00E3 n\u1EA1p ph\u1EE5 \u0111\u1EC1: $fileName", 1600L)
             }
         }
     }
 
-    // Quản lý System Bars & FLAG_SECURE khi phát video thuộc Kho Ẩn
+    // Quan ly System Bars, FLAG_SECURE & tat Auto-Enter PiP khi thoat PlayerScreen
     DisposableEffect(activity, state.isVaultVideo) {
         val window = activity?.window
         if (window != null) {
@@ -105,6 +173,7 @@ fun PlayerScreen(
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         onDispose {
+            PipController.disableAutoEnter(activity)
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null) {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -115,7 +184,7 @@ fun PlayerScreen(
         }
     }
 
-    // Khởi tạo phát video ban đầu và đồng bộ độ sáng / kiểu dáng phụ đề
+    // Khoi tao phat video ban dau
     LaunchedEffect(state) {
         val initBright = context.readPreferredBrightness()
         state.currentScreenBrightness = initBright
@@ -153,9 +222,28 @@ fun PlayerScreen(
         }
     }
 
-    // Tự động chuyển tập tiếp theo khi kết thúc video hiện tại
+    // Lang nghe ExoPlayer: Tu chuyen tap + Cap nhat kich thuoc video Doc/Ngang + Dong bo Play/Pause tuc thi
     DisposableEffect(playerManager, state.effectivePlaylist) {
+        val initialSize = playerManager.player.videoSize
+        if (initialSize.width > 0 && initialSize.height > 0) {
+            state.videoWidth = initialSize.width
+            state.videoHeight = initialSize.height
+            state.videoPixelRatio = initialSize.pixelWidthHeightRatio
+        }
+
         val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    state.videoWidth = videoSize.width
+                    state.videoHeight = videoSize.height
+                    state.videoPixelRatio = videoSize.pixelWidthHeightRatio
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                state.isPlaying = isPlaying
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
                     state.currentVideo?.let { finishedVid ->
@@ -169,9 +257,12 @@ fun PlayerScreen(
                             val savedPos = context.readLastPosition(nextVid.id)
                             val (_, subs) = playerManager.playVideoAtIndex(nextIdx, savedPos)
                             state.currentVideo = nextVid
+                            state.refreshBookmarksForCurrentVideo()
                             state.loadedSubtitles = subs
                             onVideoChanged(nextVid)
-                            state.showTemporaryHint("⏭️ Tự phát tiếp: ${nextVid.displayName}", 1600L)
+                            if (!state.isInPipMode) {
+                                state.showTemporaryHint("T\u1EF1 ph\u00E1t ti\u1EBFp: ${nextVid.displayName}", 1600L)
+                            }
                         }
                     }
                 }
@@ -190,7 +281,6 @@ fun PlayerScreen(
         }
     }
 
-    // Tự động ẩn thanh điều khiển sau 3.5 giây khi video đang phát
     LaunchedEffect(
         state.showControls,
         state.isPlaying,
@@ -207,7 +297,6 @@ fun PlayerScreen(
         }
     }
 
-    // Bộ đếm Hẹn giờ ngủ
     LaunchedEffect(state.sleepTimerMinutes) {
         if (state.sleepTimerMinutes > 0) {
             state.sleepRemainingSec = state.sleepTimerMinutes * 60
@@ -218,19 +307,22 @@ fun PlayerScreen(
             playerManager.pause()
             state.persistCurrentPosition()
             state.sleepTimerMinutes = 0
-            state.gestureHint = "💤 Đã tạm dừng theo Hẹn giờ ngủ"
+            state.gestureHint = "\u0110\u00E3 t\u1EA1m d\u1EEBng theo H\u1EB9n gi\u1EDD ng\u1EE7"
         } else {
             state.sleepRemainingSec = 0
         }
     }
 
-    // Vòng lặp đồng bộ tiến trình phát & kiểm tra A-B Loop
     LaunchedEffect(state) {
         var tick = 0
         while (true) {
             state.isPlaying = playerManager.isPlaying()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity != null) {
-                state.isInPipMode = activity.isInPictureInPictureMode
+                val sysPip = activity.isInPictureInPictureMode
+                if (state.isInPipMode != sysPip) {
+                    state.isInPipMode = sysPip
+                    PipController.isInPipMode.value = sysPip
+                }
             }
             val pos = playerManager.getCurrentPosition()
             val now = System.currentTimeMillis()
@@ -287,7 +379,6 @@ fun PlayerScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // Tầng 1: Bề mặt Video + Lớp Cử chỉ Cảm ứng
         AndroidView(
             factory = { ctx ->
                 (android.view.LayoutInflater.from(ctx).inflate(
@@ -328,6 +419,13 @@ fun PlayerScreen(
             },
             modifier = Modifier
                 .fillMaxSize()
+                .onGloballyPositioned { coords ->
+                    val b = coords.boundsInWindow()
+                    val r = Rect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt())
+                    if (!r.isEmpty && r != state.playerBoundsRect) {
+                        state.playerBoundsRect = r
+                    }
+                }
                 .graphicsLayer(
                     scaleX = if (state.isMirrorFlipped) -state.zoomScale else state.zoomScale,
                     scaleY = state.zoomScale,
@@ -341,14 +439,12 @@ fun PlayerScreen(
                 )
         )
 
-        // Tầng 2: Lớp phủ HUD, Nerd Stats & Thanh Điều Khiển
         PlayerOverlaysAndControls(
             state = state,
             activity = activity,
             onBack = onBack
         )
 
-        // Tầng 3: Các Bảng Modal mở rộng (Pro Studio & Tiện Ích/Phụ đề)
         PlayerActiveModals(
             state = state,
             activity = activity,

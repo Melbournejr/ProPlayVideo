@@ -3,6 +3,7 @@ package com.videoplayer.app.ui.main
 import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -59,6 +60,7 @@ import com.videoplayer.app.ui.theme.VideoPlayerTheme
 import com.videoplayer.app.update.UpdateManager
 import com.videoplayer.app.util.PermissionHelper
 import com.videoplayer.app.util.PinSecurityManager
+import com.videoplayer.app.util.PipController
 import com.videoplayer.app.util.VaultManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -109,14 +111,15 @@ class MainActivity : FragmentActivity() {
         return uri.lastPathSegment ?: "External_Video"
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PipController.isInPipMode.value = isInPictureInPictureMode
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isCurrentlyInPlayerScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                enterPictureInPictureMode(
-                    PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
-                )
-            } catch (_: Exception) {}
+        if (isCurrentlyInPlayerScreen) {
+            PipController.enterPipOnUserLeaveIfNeeded(this)
         }
     }
 
