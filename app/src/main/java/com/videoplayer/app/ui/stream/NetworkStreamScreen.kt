@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.videoplayer.app.data.local.*
+import com.videoplayer.app.network.DuplicateDownloadMatch
 import com.videoplayer.app.network.StreamDownloadManager
 import com.videoplayer.app.network.cloud.GoogleDriveProvider
 import com.videoplayer.app.ui.components.AppIcons
@@ -40,12 +41,27 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+private data class PendingStreamDuplicate(
+    val rawUrl: String,
+    val titleHint: String,
+    val sourceKey: String,
+    val match: DuplicateDownloadMatch
+)
+
 private fun formatStreamPos(ms: Long): String {
     val totalSec = (ms / 1000L).coerceAtLeast(0L)
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
     return if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+}
+
+private fun buildStreamSourceKey(rawUrl: String): String {
+    val trimmed = rawUrl.trim()
+    return if (GoogleDriveProvider.isGoogleDriveUrl(trimmed)) {
+        val fid = GoogleDriveProvider.extractFileId(trimmed)
+        if (!fid.isNullOrBlank()) "gdrive_pub_$fid" else trimmed
+    } else trimmed
 }
 
 @Composable
@@ -63,11 +79,13 @@ fun NetworkStreamScreen(
     LaunchedEffect(maxLimit) {
         StreamHistoryManager.ensureInitialized(context)
         StreamHistoryManager.setMaxUnpinnedLimit(context, maxLimit)
+        StreamDownloadManager.ensureInitialized(context)
     }
 
     val streamHistory by StreamHistoryManager.items.collectAsState()
     val m3uChannels by StreamHistoryManager.m3uChannels.collectAsState()
     val downloadTasks by StreamDownloadManager.tasks.collectAsState()
+    val downloadedRecords by StreamDownloadManager.downloadedRecords.collectAsState()
 
     var activeTab by remember { mutableIntStateOf(0) }
     var url by remember { mutableStateOf("") }
@@ -81,6 +99,7 @@ fun NetworkStreamScreen(
     var showHttpWarningDialog by remember { mutableStateOf(false) }
     var showImportM3uUrlDialog by remember { mutableStateOf(false) }
     var renamingItem by remember { mutableStateOf<SavedStreamItem?>(null) }
+    var pendingDuplicate by remember { mutableStateOf<PendingStreamDuplicate?>(null) }
 
     val m3uFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -100,7 +119,6 @@ fun NetworkStreamScreen(
         }
     }
 
-    // Sao luu lich su Stream & kenh IPTV ra tep JSON
     val exportBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
@@ -114,9 +132,7 @@ fun NetworkStreamScreen(
                             os.flush()
                         }
                         true
-                    } catch (_: Exception) {
-                        false
-                    }
+                    } catch (_: Exception) { false }
                 }
                 Toast.makeText(
                     context,
@@ -127,7 +143,6 @@ fun NetworkStreamScreen(
         }
     }
 
-    // Khoi phuc lich su Stream & kenh IPTV tu tep JSON
     val importBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -139,9 +154,7 @@ fun NetworkStreamScreen(
                             BufferedReader(InputStreamReader(input, Charsets.UTF_8)).readText()
                         } ?: return@withContext Result.failure(Exception("Kh\u00F4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c t\u1EC7p"))
                         StreamHistoryManager.importFromJson(context, json)
-                    } catch (e: Exception) {
-                        Result.failure(e)
-                    }
+                    } catch (e: Exception) { Result.failure(e) }
                 }
                 res.onSuccess { (addedHist, addedM3u) ->
                     Toast.makeText(
@@ -152,6 +165,55 @@ fun NetworkStreamScreen(
                 }.onFailure { err ->
                     Toast.makeText(context, "L\u1ED7i: ${err.message}", Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    fun executeStreamDownload(targetUrl: String, titleHint: String, sourceKey: String, isRedownload: Boolean) {
+        val trimmed = targetUrl.trim()
+        if (trimmed.isBlank()) return
+        if (GoogleDriveProvider.isGoogleDriveUrl(trimmed)) {
+            scope.launch {
+                isImportingM3u = true
+                GoogleDriveProvider.resolvePublicLink(trimmed).onSuccess { (directUrl, detectedName) ->
+                    val name = titleHint.ifBlank { detectedName ?: StreamHistoryManager.findTitleForUrl(trimmed) ?: "GoogleDrive_Video" }
+                    StreamDownloadManager.startDownload(
+                        context = context,
+                        rawUrl = directUrl,
+                        suggestedTitle = name.substringBeforeLast('.'),
+                        sourceKey = sourceKey,
+                        isRedownload = isRedownload
+                    )
+                    Toast.makeText(context, "\u0110ang t\u1EA3i t\u1EEB Google Drive: $name", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(context, "Google Drive: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+                isImportingM3u = false
+            }
+        } else {
+            val name = titleHint.ifBlank { StreamHistoryManager.findTitleForUrl(trimmed) ?: "Stream" }
+            StreamDownloadManager.startDownload(
+                context = context,
+                rawUrl = trimmed,
+                suggestedTitle = name,
+                sourceKey = sourceKey,
+                isRedownload = isRedownload
+            )
+            Toast.makeText(context, "\u0110ang t\u1EA3i: $name", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun triggerStreamDownloadWithCheck(targetUrl: String, titleHint: String) {
+        val trimmed = targetUrl.trim()
+        if (trimmed.isBlank()) return
+        val sourceKey = buildStreamSourceKey(trimmed)
+        val resolvedTitle = titleHint.ifBlank { StreamHistoryManager.findTitleForUrl(trimmed) ?: "" }
+        scope.launch {
+            val match = StreamDownloadManager.checkAlreadyDownloaded(context, sourceKey, resolvedTitle)
+            if (match != null) {
+                pendingDuplicate = PendingStreamDuplicate(trimmed, resolvedTitle, sourceKey, match)
+            } else {
+                executeStreamDownload(trimmed, resolvedTitle, sourceKey, isRedownload = false)
             }
         }
     }
@@ -187,35 +249,13 @@ fun NetworkStreamScreen(
         }
     }
 
-    fun triggerStreamDownload(targetUrl: String, titleHint: String) {
-        val trimmed = targetUrl.trim()
-        if (trimmed.isBlank()) return
-        if (GoogleDriveProvider.isGoogleDriveUrl(trimmed)) {
-            scope.launch {
-                isImportingM3u = true
-                GoogleDriveProvider.resolvePublicLink(trimmed).onSuccess { (directUrl, detectedName) ->
-                    val name = titleHint.ifBlank { detectedName ?: StreamHistoryManager.findTitleForUrl(trimmed) ?: "GoogleDrive_Video" }
-                    StreamDownloadManager.startDownload(context, directUrl, name.substringBeforeLast('.'))
-                    Toast.makeText(context, "\u0110ang t\u1EA3i t\u1EEB Google Drive: $name", Toast.LENGTH_SHORT).show()
-                }.onFailure { err ->
-                    Toast.makeText(context, "Google Drive: ${err.message}", Toast.LENGTH_LONG).show()
-                }
-                isImportingM3u = false
-            }
-            return
-        }
-        val name = titleHint.ifBlank { StreamHistoryManager.findTitleForUrl(trimmed) ?: "Stream" }
-        StreamDownloadManager.startDownload(context, trimmed, name)
-        Toast.makeText(context, "\u0110ang t\u1EA3i: $name", Toast.LENGTH_SHORT).show()
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Thanh chuyen doi 3 Tab: [Lich su] | [IPTV M3U] | [Kho Mang]
+        // Thanh chuyen doi 3 Tab: [Lich su] | [IPTV] | [Kho Mang]
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LiquidGlassPill(
                 active = activeTab == 0,
@@ -266,7 +306,7 @@ fun NetworkStreamScreen(
             }
         }
 
-        // Khung hien thi tien trinh tai video (khi co tac vu dang tai hoac vua tai xong)
+        // Khung hien thi tien trinh tai video
         if (downloadTasks.isNotEmpty()) {
             Column(
                 modifier = Modifier
@@ -353,7 +393,6 @@ fun NetworkStreamScreen(
         }
 
         if (activeTab == 0) {
-            // ================= TAB 0: NHAP URL + TAI + LICH SU + TIM KIEM + SAO LUU =================
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
@@ -386,7 +425,7 @@ fun NetworkStreamScreen(
                 LiquidGlassPill(
                     active = false,
                     onClick = {
-                        if (url.isNotBlank()) triggerStreamDownload(url, customTitle)
+                        if (url.isNotBlank()) triggerStreamDownloadWithCheck(url, customTitle)
                         else Toast.makeText(context, "H\u00E3y nh\u1EADp URL c\u1EA7n t\u1EA3i", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.height(42.dp)
@@ -397,7 +436,6 @@ fun NetworkStreamScreen(
                 }
             }
 
-            // Hang dieu khien lich su: Sao luu / Khoi phuc / Don lich su
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -446,7 +484,6 @@ fun NetworkStreamScreen(
             }
 
             if (streamHistory.isNotEmpty()) {
-                // O tim kiem nhanh trong lich su Stream
                 OutlinedTextField(
                     value = historySearchQuery,
                     onValueChange = { historySearchQuery = it },
@@ -482,6 +519,10 @@ fun NetworkStreamScreen(
                             (item.lastPositionMs.toFloat() / item.durationMs.toFloat()).coerceIn(0f, 1f)
                         } else 0f
                         val isDl = downloadTasks.any { it.url == item.url && it.isRunning }
+                        val itemSourceKey = remember(item.url) { buildStreamSourceKey(item.url) }
+                        val alreadySaved = remember(downloadedRecords, itemSourceKey, item.customName) {
+                            StreamDownloadManager.isRecordedDownloaded(itemSourceKey, item.customName)
+                        }
 
                         Column(
                             modifier = Modifier
@@ -505,14 +546,32 @@ fun NetworkStreamScreen(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.customName,
-                                        color = if (item.isPinned) palette.primaryGlow else style.textPrimary,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(
+                                            text = item.customName,
+                                            color = if (item.isPinned) palette.primaryGlow else style.textPrimary,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (alreadySaved) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF34D399).copy(alpha = 0.20f))
+                                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                            ) {
+                                                Text(
+                                                    text = "\u0110\u00E3 t\u1EA3i",
+                                                    color = Color(0xFF34D399),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
                                     Text(
                                         text = if (hasProgress) {
                                             "${formatStreamPos(item.lastPositionMs)} / ${formatStreamPos(item.durationMs)} \u2022 ${item.url}"
@@ -527,14 +586,14 @@ fun NetworkStreamScreen(
                                 IconButton(
                                     onClick = {
                                         if (isDl) StreamDownloadManager.cancelDownload(item.url)
-                                        else triggerStreamDownload(item.url, item.customName)
+                                        else triggerStreamDownloadWithCheck(item.url, item.customName)
                                     },
                                     modifier = Modifier.size(30.dp)
                                 ) {
                                     Icon(
                                         imageVector = AppIcons.CloudDownload,
                                         contentDescription = "T\u1EA3i v\u1EC1",
-                                        tint = if (isDl) Color(0xFF34D399) else palette.primaryGlow,
+                                        tint = if (isDl || alreadySaved) Color(0xFF34D399) else palette.primaryGlow,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
@@ -554,17 +613,11 @@ fun NetworkStreamScreen(
                                     )
                                 }
 
-                                IconButton(
-                                    onClick = { renamingItem = item },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
+                                IconButton(onClick = { renamingItem = item }, modifier = Modifier.size(30.dp)) {
                                     Icon(Icons.Default.Edit, contentDescription = "\u0110\u1ED5i t\u00EAn", tint = style.textSecondary, modifier = Modifier.size(16.dp))
                                 }
 
-                                IconButton(
-                                    onClick = { StreamHistoryManager.deleteStream(context, item.id) },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
+                                IconButton(onClick = { StreamHistoryManager.deleteStream(context, item.id) }, modifier = Modifier.size(30.dp)) {
                                     Icon(Icons.Default.Delete, contentDescription = "X\u00F3a", tint = Color(0xFFFF5C8A), modifier = Modifier.size(16.dp))
                                 }
                             }
@@ -588,7 +641,6 @@ fun NetworkStreamScreen(
                 onPlayCloudVideo = { proxyUrl, title -> onPlayClick(proxyUrl, title) }
             )
         } else {
-            // ================= TAB 1: DANH SACH KENH IPTV (M3U / M3U8) =================
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 LiquidGlassPill(
                     active = true,
@@ -642,6 +694,10 @@ fun NetworkStreamScreen(
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     items(filteredChannels, key = { it.id }) { ch ->
+                        val chKey = remember(ch.url) { buildStreamSourceKey(ch.url) }
+                        val alreadySaved = remember(downloadedRecords, chKey, ch.name) {
+                            StreamDownloadManager.isRecordedDownloaded(chKey, ch.name)
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -661,10 +717,15 @@ fun NetworkStreamScreen(
                                 }
                             }
                             IconButton(
-                                onClick = { triggerStreamDownload(ch.url, ch.name) },
+                                onClick = { triggerStreamDownloadWithCheck(ch.url, ch.name) },
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Icon(AppIcons.CloudDownload, contentDescription = "T\u1EA3i v\u1EC1", tint = style.textSecondary, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    AppIcons.CloudDownload,
+                                    contentDescription = "T\u1EA3i v\u1EC1",
+                                    tint = if (alreadySaved) Color(0xFF34D399) else style.textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }
@@ -679,6 +740,36 @@ fun NetworkStreamScreen(
                 }
             }
         }
+    }
+
+    // Hop thoai nhac nho khi video da duoc tai truoc do
+    pendingDuplicate?.let { dup ->
+        val sizePart = dup.match.sizeFormatted.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+        val timePart = dup.match.timeFormatted.takeIf { it.isNotBlank() }?.let { "\nTh\u1EDDi \u0111i\u1EC3m t\u1EA3i: $it" }.orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingDuplicate = null },
+            containerColor = palette.deepBgMid,
+            title = {
+                Text("Video \u0111\u00E3 \u0111\u01B0\u1EE3c t\u1EA3i tr\u01B0\u1EDBc \u0111\u00F3", color = style.textPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "T\u1EC7p '${dup.match.fileName}'$sizePart \u0111\u00E3 c\u00F3 trong Movies/VideoPlayerPro.$timePart\n\nB\u1EA1n c\u00F3 mu\u1ED1n t\u1EA3i th\u00EAm m\u1ED9t b\u1EA3n n\u1EEFa kh\u00F4ng?",
+                    color = style.textPrimary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val target = dup
+                    pendingDuplicate = null
+                    executeStreamDownload(target.rawUrl, target.titleHint, target.sourceKey, isRedownload = true)
+                }) { Text("V\u1EABn t\u1EA3i l\u1EA1i") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDuplicate = null }) { Text("H\u1EE7y") }
+            }
+        )
     }
 
     if (showImportM3uUrlDialog) {

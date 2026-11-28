@@ -65,3 +65,5 @@
 -dontwarn org.ietf.jgss.**
 -dontwarn javax.security.**
 -dontwarn javax.naming.**
+-keep class com.videoplayer.app.network.DownloadedVideoRecord { *; }
+-keep class com.videoplayer.app.network.DownloadedVideosStoreData { *; }

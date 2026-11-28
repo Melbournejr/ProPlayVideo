@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.videoplayer.app.network.DuplicateDownloadMatch
 import com.videoplayer.app.network.StreamDownloadManager
 import com.videoplayer.app.network.cloud.*
 import com.videoplayer.app.ui.components.AppIcons
@@ -55,7 +56,12 @@ fun CloudStorageTab(
     val palette = style.palette
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) { CloudSourceManager.ensureInitialized(context) }
+    LaunchedEffect(Unit) {
+        CloudSourceManager.ensureInitialized(context)
+        StreamDownloadManager.ensureInitialized(context)
+    }
+    val downloadedRecords by StreamDownloadManager.downloadedRecords.collectAsState()
+    var pendingCloudDuplicate by remember { mutableStateOf<Triple<CloudSourceConfig, CloudEntry, DuplicateDownloadMatch>?>(null) }
     val sources by CloudSourceManager.sources.collectAsState()
 
     var activeSourceId by remember { mutableStateOf<String?>(null) }
@@ -300,6 +306,12 @@ fun CloudStorageTab(
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     items(entries, key = { it.id }) { item ->
+                        val entryKey = remember(activeSource.id, item.pathOrId) { "cloud_${activeSource.id}_${item.pathOrId}" }
+                        val entryTitle = remember(item.name) { item.name.substringBeforeLast('.') }
+                        val alreadySaved = remember(downloadedRecords, entryKey, entryTitle) {
+                            !item.isFolder && StreamDownloadManager.isRecordedDownloaded(entryKey, entryTitle)
+                        }
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -330,14 +342,32 @@ fun CloudStorageTab(
                             )
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.name,
-                                    color = style.textPrimary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (item.isFolder) FontWeight.SemiBold else FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = item.name,
+                                        color = style.textPrimary,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (item.isFolder) FontWeight.SemiBold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (alreadySaved) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFF34D399).copy(alpha = 0.20f))
+                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = "\u0110\u00E3 t\u1EA3i",
+                                                color = Color(0xFF34D399),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                                 if (!item.isFolder && item.sizeFormatted.isNotBlank()) {
                                     Text(
                                         text = item.sizeFormatted,
@@ -350,17 +380,33 @@ fun CloudStorageTab(
                                 IconButton(
                                     onClick = {
                                         scope.launch {
-                                            CloudRepository.resolvePlayableUrl(context, activeSource, item)
-                                                .onSuccess { proxyUrl ->
-                                                    StreamDownloadManager.startDownload(context, proxyUrl, item.name.substringBeforeLast('.'))
-                                                    Toast.makeText(context, "\u0110ang t\u1EA3i: ${item.name}", Toast.LENGTH_SHORT).show()
-                                                }
-                                                .onFailure { e -> Toast.makeText(context, "L\u1ED7i t\u1EA3i: ${e.message}", Toast.LENGTH_LONG).show() }
+                                            val match = StreamDownloadManager.checkAlreadyDownloaded(context, entryKey, entryTitle)
+                                            if (match != null) {
+                                                pendingCloudDuplicate = Triple(activeSource, item, match)
+                                            } else {
+                                                CloudRepository.resolvePlayableUrl(context, activeSource, item)
+                                                    .onSuccess { proxyUrl ->
+                                                        StreamDownloadManager.startDownload(
+                                                            context = context,
+                                                            rawUrl = proxyUrl,
+                                                            suggestedTitle = entryTitle,
+                                                            sourceKey = entryKey,
+                                                            isRedownload = false
+                                                        )
+                                                        Toast.makeText(context, "\u0110ang t\u1EA3i: ${item.name}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    .onFailure { e -> Toast.makeText(context, "L\u1ED7i t\u1EA3i: ${e.message}", Toast.LENGTH_LONG).show() }
+                                            }
                                         }
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(AppIcons.CloudDownload, contentDescription = "T\u1EA3i v\u1EC1", tint = palette.primaryGlow, modifier = Modifier.size(16.dp))
+                                    Icon(
+                                        AppIcons.CloudDownload,
+                                        contentDescription = "T\u1EA3i v\u1EC1",
+                                        tint = if (alreadySaved) Color(0xFF34D399) else palette.primaryGlow,
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
                             }
                         }
@@ -368,6 +414,47 @@ fun CloudStorageTab(
                 }
             }
         }
+    }
+
+    pendingCloudDuplicate?.let { (src, item, match) ->
+        val sizePart = match.sizeFormatted.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+        val timePart = match.timeFormatted.takeIf { it.isNotBlank() }?.let { "\nTh\u1EDDi \u0111i\u1EC3m t\u1EA3i: $it" }.orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingCloudDuplicate = null },
+            containerColor = palette.deepBgMid,
+            title = { Text("Video \u0111\u00E3 \u0111\u01B0\u1EE3c t\u1EA3i tr\u01B0\u1EDBc \u0111\u00F3", color = style.textPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "T\u1EC7p '${match.fileName}'$sizePart \u0111\u00E3 c\u00F3 trong Movies/VideoPlayerPro.$timePart\n\nB\u1EA1n c\u00F3 mu\u1ED1n t\u1EA3i th\u00EAm m\u1ED9t b\u1EA3n n\u1EEFa kh\u00F4ng?",
+                    color = style.textPrimary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    pendingCloudDuplicate = null
+                    val entryKey = "cloud_${src.id}_${item.pathOrId}"
+                    val entryTitle = item.name.substringBeforeLast('.')
+                    scope.launch {
+                        CloudRepository.resolvePlayableUrl(context, src, item)
+                            .onSuccess { proxyUrl ->
+                                StreamDownloadManager.startDownload(
+                                    context = context,
+                                    rawUrl = proxyUrl,
+                                    suggestedTitle = entryTitle,
+                                    sourceKey = entryKey,
+                                    isRedownload = true
+                                )
+                                Toast.makeText(context, "\u0110ang t\u1EA3i l\u1EA1i: ${item.name}", Toast.LENGTH_SHORT).show()
+                            }
+                            .onFailure { e -> Toast.makeText(context, "L\u1ED7i t\u1EA3i: ${e.message}", Toast.LENGTH_LONG).show() }
+                    }
+                }) { Text("V\u1EABn t\u1EA3i l\u1EA1i") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCloudDuplicate = null }) { Text("H\u1EE7y") }
+            }
+        )
     }
 
     if (showEditorDialog) {

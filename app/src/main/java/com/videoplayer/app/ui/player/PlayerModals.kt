@@ -25,6 +25,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.videoplayer.app.data.local.StreamHistoryManager
 import com.videoplayer.app.data.local.saveSubtitleAppearance
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.videoplayer.app.network.DuplicateDownloadMatch
 import com.videoplayer.app.network.StreamDownloadManager
 import com.videoplayer.app.ui.components.AppIcons
 import com.videoplayer.app.ui.components.LiquidGlassIconButton
@@ -321,30 +325,93 @@ private fun BoxScope.PlayerToolsBottomSheet(
                         Text("Chia s\u1EBB", color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 } else if (!state.streamUrl.isNullOrBlank()) {
+                    LaunchedEffect(Unit) { StreamDownloadManager.ensureInitialized(state.context) }
                     val dlTasks by StreamDownloadManager.tasks.collectAsState()
+                    val dlRecords by StreamDownloadManager.downloadedRecords.collectAsState()
                     val activeDl = dlTasks.find { it.url == state.streamUrl && it.isRunning }
+                    val resolvedTitle = state.streamTitle?.takeIf { it.isNotBlank() }
+                        ?: StreamHistoryManager.findTitleForUrl(state.streamUrl)
+                        ?: "Stream"
+                    val alreadySaved = remember(dlRecords, state.streamUrl, resolvedTitle) {
+                        StreamDownloadManager.isRecordedDownloaded(state.streamUrl, resolvedTitle)
+                    }
+                    var playerDupMatch by remember { mutableStateOf<DuplicateDownloadMatch?>(null) }
+
                     LiquidGlassPill(
-                        active = activeDl != null,
+                        active = activeDl != null || alreadySaved,
                         onClick = {
                             if (activeDl != null) {
                                 StreamDownloadManager.cancelDownload(state.streamUrl)
                                 Toast.makeText(state.context, "\u0110\u00E3 h\u1EE7y t\u1EA3i lu\u1ED3ng video", Toast.LENGTH_SHORT).show()
                             } else {
-                                val title = state.streamTitle?.takeIf { it.isNotBlank() }
-                                    ?: StreamHistoryManager.findTitleForUrl(state.streamUrl)
-                                    ?: "Stream"
-                                StreamDownloadManager.startDownload(state.context, state.streamUrl, title)
-                                state.showTemporaryHint("\u0110ang t\u1EA3i v\u1EC1 Movies/VideoPlayerPro...", 1800L)
+                                state.scope.launch {
+                                    val match = StreamDownloadManager.checkAlreadyDownloaded(state.context, state.streamUrl, resolvedTitle)
+                                    if (match != null) {
+                                        playerDupMatch = match
+                                    } else {
+                                        StreamDownloadManager.startDownload(
+                                            context = state.context,
+                                            rawUrl = state.streamUrl,
+                                            suggestedTitle = resolvedTitle,
+                                            sourceKey = state.streamUrl,
+                                            isRedownload = false
+                                        )
+                                        state.showTemporaryHint("\u0110ang t\u1EA3i v\u1EC1 Movies/VideoPlayerPro...", 1800L)
+                                    }
+                                }
                             }
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(AppIcons.CloudDownload, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Icon(
+                            AppIcons.CloudDownload,
+                            null,
+                            tint = if (alreadySaved && activeDl == null) Color(0xFF34D399) else Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = if (activeDl != null && activeDl.progressPercent >= 0) "T\u1EA3i ${activeDl.progressPercent}%" else if (activeDl != null) "H\u1EE7y t\u1EA3i" else "T\u1EA3i v\u1EC1",
+                            text = when {
+                                activeDl != null && activeDl.progressPercent >= 0 -> "T\u1EA3i ${activeDl.progressPercent}%"
+                                activeDl != null -> "H\u1EE7y t\u1EA3i"
+                                alreadySaved -> "\u0110\u00E3 t\u1EA3i"
+                                else -> "T\u1EA3i v\u1EC1"
+                            },
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+
+                    playerDupMatch?.let { match ->
+                        val sizePart = match.sizeFormatted.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                        val timePart = match.timeFormatted.takeIf { it.isNotBlank() }?.let { "\nTh\u1EDDi \u0111i\u1EC3m t\u1EA3i: $it" }.orEmpty()
+                        AlertDialog(
+                            onDismissRequest = { playerDupMatch = null },
+                            containerColor = palette.deepBgMid,
+                            title = { Text("Video \u0111\u00E3 \u0111\u01B0\u1EE3c t\u1EA3i tr\u01B0\u1EDBc \u0111\u00F3", color = Color.White, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text(
+                                    text = "T\u1EC7p '${match.fileName}'$sizePart \u0111\u00E3 c\u00F3 trong Movies/VideoPlayerPro.$timePart\n\nB\u1EA1n c\u00F3 mu\u1ED1n t\u1EA3i th\u00EAm m\u1ED9t b\u1EA3n n\u1EEFa kh\u00F4ng?",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            },
+                            confirmButton = {
+                                Button(onClick = {
+                                    playerDupMatch = null
+                                    StreamDownloadManager.startDownload(
+                                        context = state.context,
+                                        rawUrl = state.streamUrl,
+                                        suggestedTitle = resolvedTitle,
+                                        sourceKey = state.streamUrl,
+                                        isRedownload = true
+                                    )
+                                    state.showTemporaryHint("\u0110ang t\u1EA3i l\u1EA1i v\u1EC1 Movies/VideoPlayerPro...", 1800L)
+                                }) { Text("V\u1EABn t\u1EA3i l\u1EA1i") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { playerDupMatch = null }) { Text("H\u1EE7y") }
+                            }
                         )
                     }
                 }

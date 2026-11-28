@@ -7,13 +7,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.Keep
+import com.google.gson.Gson
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,6 +24,9 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -34,7 +38,7 @@ import javax.crypto.spec.SecretKeySpec
 data class StreamDownloadTask(
     val url: String,
     val title: String,
-    val progressPercent: Int = 0, // -1 neu chua biet tong dung luong
+    val progressPercent: Int = 0,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = -1L,
     val speedText: String = "",
@@ -43,6 +47,48 @@ data class StreamDownloadTask(
     val isCompleted: Boolean = false,
     val isFailed: Boolean = false,
     val savedFileName: String? = null
+)
+
+@Keep
+data class DownloadedVideoRecord(
+    val sourceKey: String,
+    val url: String,
+    val title: String,
+    val savedFileName: String,
+    val sizeBytes: Long,
+    val downloadedAtMs: Long
+)
+
+@Keep
+data class DownloadedVideosStoreData(
+    val records: List<DownloadedVideoRecord> = emptyList()
+)
+
+data class DuplicateDownloadMatch(
+    val fileName: String,
+    val sizeBytes: Long,
+    val downloadedAtMs: Long
+) {
+    val sizeFormatted: String
+        get() {
+            if (sizeBytes <= 0L) return ""
+            val mb = sizeBytes / (1024f * 1024f)
+            return if (mb >= 1024f) "%.2f GB".format(mb / 1024f) else "%.1f MB".format(mb)
+        }
+
+    val timeFormatted: String
+        get() {
+            if (downloadedAtMs <= 0L) return ""
+            return try {
+                SimpleDateFormat("HH:mm dd/MM/yyyy", Locale.getDefault()).format(Date(downloadedAtMs))
+            } catch (_: Exception) { "" }
+        }
+}
+
+private data class ExistingMediaFile(
+    val name: String,
+    val size: Long,
+    val modifiedMs: Long
 )
 
 private data class HlsSegmentInfo(
@@ -54,14 +100,16 @@ private data class HlsSegmentInfo(
 )
 
 /**
- * Trinh tai video Stream (Huong A):
- * - Link truc tiep (.mp4/.mkv/.webm): Tai thang qua OkHttp vao Movies/VideoPlayerPro (MediaStore)
- * - Link HLS (.m3u8 VOD): Tu dong chon luong net nhat trong Master Playlist, giai ma AES-128 neu co,
- *   tai da luong 5 ket noi song song va ghep thanh 1 tep hoan chinh (.ts / .mp4) trong Movies/VideoPlayerPro.
+ * Trinh tai video Stream (Huong A) + Canh bao tai trung 2 lop (Registry + MediaStore):
+ * - Luu lich su cac video da tai thanh cong vao downloaded_videos_store.json
+ * - Truoc khi tai, kiem tra ca sourceKey lan tep vat ly trong Movies/VideoPlayerPro
+ * - Neu nguoi dung da xoa tep cu khoi may -> tu don ban ghi cu va cho tai thang
  */
 object StreamDownloadManager {
+    private const val STORE_FILE_NAME = "downloaded_videos_store.json"
     private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
 
+    private val gson = Gson()
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -75,22 +123,206 @@ object StreamDownloadManager {
     private val _tasks = MutableStateFlow<List<StreamDownloadTask>>(emptyList())
     val tasks: StateFlow<List<StreamDownloadTask>> = _tasks.asStateFlow()
 
+    private val _downloadedRecords = MutableStateFlow<List<DownloadedVideoRecord>>(emptyList())
+    val downloadedRecords: StateFlow<List<DownloadedVideoRecord>> = _downloadedRecords.asStateFlow()
+
+    @Volatile
+    private var isStoreInitialized = false
+
+    fun ensureInitialized(context: Context) {
+        if (isStoreInitialized) return
+        synchronized(this) {
+            if (isStoreInitialized) return
+            val file = File(context.applicationContext.filesDir, STORE_FILE_NAME)
+            if (file.exists()) {
+                try {
+                    val data = gson.fromJson(file.readText(Charsets.UTF_8), DownloadedVideosStoreData::class.java)
+                    if (data?.records != null) {
+                        _downloadedRecords.value = data.records
+                    }
+                } catch (_: Exception) {}
+            }
+            isStoreInitialized = true
+        }
+    }
+
+    @Synchronized
+    private fun persistRecords(context: Context, list: List<DownloadedVideoRecord>) {
+        try {
+            File(context.applicationContext.filesDir, STORE_FILE_NAME)
+                .writeText(gson.toJson(DownloadedVideosStoreData(list)), Charsets.UTF_8)
+        } catch (_: Exception) {}
+    }
+
+    private fun recordDownloadSuccess(
+        context: Context,
+        sourceKey: String,
+        url: String,
+        title: String,
+        savedFileName: String,
+        sizeBytes: Long
+    ) {
+        ensureInitialized(context)
+        val cleanKey = sourceKey.trim().ifBlank { url.trim() }
+        val newRec = DownloadedVideoRecord(
+            sourceKey = cleanKey,
+            url = url.trim(),
+            title = title.trim(),
+            savedFileName = savedFileName,
+            sizeBytes = sizeBytes,
+            downloadedAtMs = System.currentTimeMillis()
+        )
+        val updated = listOf(newRec) + _downloadedRecords.value.filterNot {
+            it.sourceKey.equals(cleanKey, ignoreCase = true) ||
+                it.savedFileName.equals(savedFileName, ignoreCase = true)
+        }
+        val capped = updated.take(1000)
+        _downloadedRecords.value = capped
+        persistRecords(context, capped)
+    }
+
+    fun isRecordedDownloaded(sourceKey: String, titleHint: String = ""): Boolean {
+        val cleanKey = sourceKey.trim()
+        val sanitizedTitle = if (titleHint.isNotBlank()) sanitizeFileName(titleHint) else ""
+        return _downloadedRecords.value.any { rec ->
+            (cleanKey.isNotBlank() && (rec.sourceKey.equals(cleanKey, ignoreCase = true) || rec.url.equals(cleanKey, ignoreCase = true))) ||
+                (sanitizedTitle.isNotBlank() && rec.savedFileName.substringBeforeLast('.').equals(sanitizedTitle, ignoreCase = true))
+        }
+    }
+
+    /**
+     * Kiem tra 2 lop (chay tren Dispatchers.IO):
+     * 1. Doi chieu sourceKey trong so tai ve + xac minh tep vat ly con ton tai trong Movies/VideoPlayerPro
+     * 2. Quet ten tep thuc te trong Movies/VideoPlayerPro de phat hien ca tep da tai tu phien ban cu
+     */
+    suspend fun checkAlreadyDownloaded(
+        context: Context,
+        sourceKey: String,
+        suggestedTitle: String
+    ): DuplicateDownloadMatch? = withContext(Dispatchers.IO) {
+        val appCtx = context.applicationContext
+        ensureInitialized(appCtx)
+
+        val cleanKey = sourceKey.trim()
+        val sanitizedBase = if (suggestedTitle.isNotBlank()) sanitizeFileName(suggestedTitle) else ""
+        val existingFiles = queryExistingMoviesFiles(appCtx)
+
+        // Lop 1: Kiem tra ban ghi theo sourceKey/URL
+        val rec = _downloadedRecords.value.find {
+            cleanKey.isNotBlank() && (it.sourceKey.equals(cleanKey, ignoreCase = true) || it.url.equals(cleanKey, ignoreCase = true))
+        }
+        if (rec != null) {
+            val foundOnDisk = existingFiles.find {
+                it.name.equals(rec.savedFileName, ignoreCase = true)
+            }
+            if (foundOnDisk != null) {
+                return@withContext DuplicateDownloadMatch(
+                    fileName = foundOnDisk.name,
+                    sizeBytes = foundOnDisk.size.coerceAtLeast(rec.sizeBytes),
+                    downloadedAtMs = rec.downloadedAtMs
+                )
+            } else {
+                // Tep cu da bi nguoi dung xoa khoi may -> don ban ghi cu de khong nhac nham
+                val cleaned = _downloadedRecords.value.filterNot { it == rec }
+                _downloadedRecords.value = cleaned
+                persistRecords(appCtx, cleaned)
+            }
+        }
+
+        // Lop 2: Kiem tra truc tiep ten tep trong Movies/VideoPlayerPro
+        if (sanitizedBase.isNotBlank()) {
+            val byName = existingFiles.find {
+                it.name.substringBeforeLast('.').equals(sanitizedBase, ignoreCase = true)
+            }
+            if (byName != null) {
+                return@withContext DuplicateDownloadMatch(
+                    fileName = byName.name,
+                    sizeBytes = byName.size,
+                    downloadedAtMs = byName.modifiedMs
+                )
+            }
+        }
+
+        null
+    }
+
+    private fun queryExistingMoviesFiles(context: Context): List<ExistingMediaFile> {
+        val result = mutableListOf<ExistingMediaFile>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val projection = arrayOf(
+                    MediaStore.Video.Media.DISPLAY_NAME,
+                    MediaStore.Video.Media.SIZE,
+                    MediaStore.Video.Media.DATE_MODIFIED
+                )
+                val selection = "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
+                val args = arrayOf("%VideoPlayerPro%")
+                context.contentResolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    selection,
+                    args,
+                    "${MediaStore.Video.Media.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(MediaStore.Video.Media.SIZE)
+                    val dateIdx = cursor.getColumnIndex(MediaStore.Video.Media.DATE_MODIFIED)
+                    while (cursor.moveToNext()) {
+                        val name = if (nameIdx >= 0) cursor.getString(nameIdx).orEmpty() else ""
+                        val size = if (sizeIdx >= 0) cursor.getLong(sizeIdx) else 0L
+                        val modSec = if (dateIdx >= 0) cursor.getLong(dateIdx) else 0L
+                        if (name.isNotBlank() && size > 0L) {
+                            result.add(ExistingMediaFile(name, size, modSec * 1000L))
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Fallback quet truc tiep thu muc Movies/VideoPlayerPro (Android < 10 hoac khi da co All Files Access)
+        try {
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "VideoPlayerPro")
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.length() > 0L && result.none { it.name.equals(f.name, ignoreCase = true) }) {
+                        result.add(ExistingMediaFile(f.name, f.length(), f.lastModified()))
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return result
+    }
+
     fun isDownloading(url: String): Boolean {
         val clean = url.trim()
         return activeJobs[clean]?.isActive == true
     }
 
-    fun startDownload(context: Context, rawUrl: String, suggestedTitle: String) {
+    fun startDownload(
+        context: Context,
+        rawUrl: String,
+        suggestedTitle: String,
+        sourceKey: String = rawUrl,
+        isRedownload: Boolean = false
+    ) {
         val cleanUrl = rawUrl.trim()
         if (cleanUrl.isBlank()) return
         if (isDownloading(cleanUrl)) return
 
         val appCtx = context.applicationContext
-        val displayTitle = suggestedTitle.trim().ifBlank { "Stream_${System.currentTimeMillis() / 1000}" }
+        ensureInitialized(appCtx)
+
+        val baseTitle = suggestedTitle.trim().ifBlank { "Stream_${System.currentTimeMillis() / 1000}" }
+        val effectiveTitle = if (isRedownload) {
+            val stamp = SimpleDateFormat("HHmmss", Locale.getDefault()).format(Date())
+            "${baseTitle}_$stamp"
+        } else baseTitle
+
         upsertTask(
             StreamDownloadTask(
                 url = cleanUrl,
-                title = displayTitle,
+                title = baseTitle,
                 progressPercent = 0,
                 statusMessage = "\u0110ang ph\u00E2n t\u00EDch lu\u1ED3ng...",
                 isRunning = true
@@ -107,9 +339,9 @@ object StreamDownloadManager {
 
                 val lowerPath = parsedHttpUrl.encodedPath.lowercase()
                 if (lowerPath.endsWith(".m3u8") || lowerPath.contains(".m3u8")) {
-                    downloadHlsStream(appCtx, cleanUrl, displayTitle)
+                    downloadHlsStream(appCtx, cleanUrl, effectiveTitle, sourceKey)
                 } else {
-                    downloadDirectOrDetectHls(appCtx, cleanUrl, displayTitle)
+                    downloadDirectOrDetectHls(appCtx, cleanUrl, effectiveTitle, sourceKey)
                 }
             } catch (ce: CancellationException) {
                 removeTask(cleanUrl)
@@ -153,7 +385,7 @@ object StreamDownloadManager {
             .build()
     }
 
-    private fun sanitizeFileName(raw: String): String {
+    fun sanitizeFileName(raw: String): String {
         val stripped = raw.replace(Regex("""[\\/:*?"<>|\r\n]"""), "_").trim().trim('.')
         return stripped.take(64).ifBlank { "Video_${System.currentTimeMillis() / 1000}" }
     }
@@ -171,7 +403,7 @@ object StreamDownloadManager {
         return if (mb >= 1024f) "%.2f GB".format(mb / 1024f) else "%.1f MB".format(mb)
     }
 
-    private suspend fun downloadDirectOrDetectHls(context: Context, url: String, title: String) {
+    private suspend fun downloadDirectOrDetectHls(context: Context, url: String, title: String, sourceKey: String) {
         client.newCall(buildRequest(url)).execute().use { response ->
             if (!response.isSuccessful) {
                 throw Exception("M\u00E1y ch\u1EE7 tr\u1EA3 l\u1ED7i HTTP ${response.code}")
@@ -179,10 +411,9 @@ object StreamDownloadManager {
             val contentType = response.header("Content-Type").orEmpty().lowercase()
             val body = response.body ?: throw Exception("Kh\u00F4ng c\u00F3 d\u1EEF li\u1EC7u t\u1EEB m\u00E1y ch\u1EE7")
 
-            // Neu may chu tra ve playlist m3u8 du URL khong co duoi .m3u8
             if (contentType.contains("mpegurl") || contentType.contains("vnd.apple.mpegurl")) {
                 val text = body.string()
-                processHlsPlaylistText(context, url, text, title)
+                processHlsPlaylistText(context, url, text, title, sourceKey)
                 return
             }
 
@@ -232,8 +463,9 @@ object StreamDownloadManager {
                         out.flush()
                     }
                 }
-                finalizeMoviesOutputTarget(context, outputTarget, mime)
+                val actualSavedName = finalizeMoviesOutputTarget(context, outputTarget, mime)
                 completedOk = true
+                recordDownloadSuccess(context, sourceKey, url, title, actualSavedName, downloaded)
                 updateTask(url) {
                     it.copy(
                         progressPercent = 100,
@@ -242,8 +474,8 @@ object StreamDownloadManager {
                         speedText = "",
                         isRunning = false,
                         isCompleted = true,
-                        savedFileName = outputTarget.finalName,
-                        statusMessage = "\u0110\u00E3 l\u01B0u v\u00E0o Movies/VideoPlayerPro (${formatSize(downloaded)})"
+                        savedFileName = actualSavedName,
+                        statusMessage = "\u0110\u00E3 l\u01B0u: $actualSavedName (${formatSize(downloaded)})"
                     )
                 }
             } finally {
@@ -254,16 +486,15 @@ object StreamDownloadManager {
         }
     }
 
-    private suspend fun downloadHlsStream(context: Context, url: String, title: String) {
+    private suspend fun downloadHlsStream(context: Context, url: String, title: String, sourceKey: String) {
         val text = fetchText(url)
-        processHlsPlaylistText(context, url, text, title)
+        processHlsPlaylistText(context, url, text, title, sourceKey)
     }
 
-    private suspend fun processHlsPlaylistText(context: Context, initialUrl: String, initialText: String, title: String) {
+    private suspend fun processHlsPlaylistText(context: Context, initialUrl: String, initialText: String, title: String, sourceKey: String) {
         var mediaUrl = initialUrl
         var mediaText = initialText
 
-        // 1. Neu la Master Playlist (#EXT-X-STREAM-INF), tu dong chon bien the co BANDWIDTH cao nhat
         if (mediaText.contains("#EXT-X-STREAM-INF", ignoreCase = true)) {
             updateTask(initialUrl) { it.copy(statusMessage = "\u0110ang ch\u1ECDn ch\u1EA5t l\u01B0\u1EE3ng cao nh\u1EA5t...") }
             val bestVariantUrl = pickBestMasterVariant(mediaUrl, mediaText)
@@ -272,7 +503,6 @@ object StreamDownloadManager {
             mediaText = fetchText(mediaUrl)
         }
 
-        // 2. Phan tich danh sach phan doan (Segments) & khoa AES-128 neu co
         val baseUrl = mediaUrl.toHttpUrlOrNull() ?: throw Exception("URL playlist kh\u00F4ng h\u1EE3p l\u1EC7")
         val lines = mediaText.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
         val hasEndList = lines.any { it.startsWith("#EXT-X-ENDLIST", ignoreCase = true) }
@@ -338,7 +568,6 @@ object StreamDownloadManager {
             throw Exception("\u0110\u00E2y l\u00E0 lu\u1ED3ng tr\u1EF1c ti\u1EBFp (Live TV), kh\u00F4ng c\u00F3 \u0111i\u1EC3m k\u1EBFt th\u00FAc \u0111\u1EC3 t\u1EA3i tr\u1ECDn g\u00F3i")
         }
 
-        // 3. Tai da luong 5 ket noi song song vao thu muc tam
         val tempDir = File(context.cacheDir, "hls_dl_${System.currentTimeMillis()}_${initialUrl.hashCode()}").apply { mkdirs() }
         val keyCache = ConcurrentHashMap<String, ByteArray>()
         val downloadedBytes = AtomicLong(0L)
@@ -349,7 +578,6 @@ object StreamDownloadManager {
         var finishedOk = false
 
         try {
-            // Tai init segment neu la fMP4 HLS
             var initFile: File? = null
             if (!initMapUrl.isNullOrBlank()) {
                 val f = File(tempDir, "init.bin")
@@ -359,7 +587,6 @@ object StreamDownloadManager {
                 initFile = f
             }
 
-            // Tai truoc cac key AES-128 (neu co)
             segments.mapNotNull { it.keyUri }.distinct().forEach { kUrl ->
                 currentCoroutineContext().ensureActive()
                 val keyBytes = fetchBytes(kUrl)
@@ -398,7 +625,6 @@ object StreamDownloadManager {
                 jobs.awaitAll()
             }
 
-            // 4. Ghep cac phan doan theo dung thu tu vao Movies/VideoPlayerPro
             updateTask(initialUrl) {
                 it.copy(
                     progressPercent = 96,
@@ -431,8 +657,9 @@ object StreamDownloadManager {
                 }
             }
 
-            finalizeMoviesOutputTarget(context, outputTarget, mime)
+            val actualSavedName = finalizeMoviesOutputTarget(context, outputTarget, mime)
             finishedOk = true
+            recordDownloadSuccess(context, sourceKey, initialUrl, title, actualSavedName, totalMerged)
             updateTask(initialUrl) {
                 it.copy(
                     progressPercent = 100,
@@ -441,8 +668,8 @@ object StreamDownloadManager {
                     speedText = "",
                     isRunning = false,
                     isCompleted = true,
-                    savedFileName = outputTarget.finalName,
-                    statusMessage = "\u0110\u00E3 gh\u00E9p xong & l\u01B0u v\u00E0o Movies/VideoPlayerPro (${formatSize(totalMerged)})"
+                    savedFileName = actualSavedName,
+                    statusMessage = "\u0110\u00E3 gh\u00E9p & l\u01B0u: $actualSavedName (${formatSize(totalMerged)})"
                 )
             }
         } finally {
@@ -583,13 +810,28 @@ object StreamDownloadManager {
         }
     }
 
-    private fun finalizeMoviesOutputTarget(context: Context, target: MoviesOutputTarget, mimeType: String) {
+    private fun finalizeMoviesOutputTarget(context: Context, target: MoviesOutputTarget, mimeType: String): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && target.mediaStoreUri != null) {
             val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
             context.contentResolver.update(target.mediaStoreUri, values, null, null)
+            try {
+                context.contentResolver.query(
+                    target.mediaStoreUri,
+                    arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { c ->
+                    if (c.moveToFirst()) {
+                        val realName = c.getString(0)
+                        if (!realName.isNullOrBlank()) return realName
+                    }
+                }
+            } catch (_: Exception) {}
         } else if (target.directFile != null) {
             MediaScannerConnection.scanFile(context, arrayOf(target.directFile.absolutePath), arrayOf(mimeType), null)
         }
+        return target.finalName
     }
 
     private fun abortMoviesOutputTarget(context: Context, target: MoviesOutputTarget) {
